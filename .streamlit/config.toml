@@ -1,0 +1,10 @@
+# Radar Tokenized Stocks — presentation theme (ACC design 2026-10-24).
+# Paper-light editorial theme, single burnt-orange accent. Streamlit
+# Community Cloud reads this file from the repo root.
+[theme]
+base = "light"
+backgroundColor = "#FAF8F5"
+secondaryBackgroundColor = "#F3EFE9"
+textColor = "#16130F"
+primaryColor = "#C2410C"
+font = "sans serif"
