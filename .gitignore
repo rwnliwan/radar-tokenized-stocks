@@ -1,0 +1,15 @@
+# Radar Tokenized Stocks — never commit runtime state or secrets.
+.venv/
+__pycache__/
+*/__pycache__/
+*.pyc
+raw/
+logs/
+*.log
+*.gz
+poller.lock
+state.json
+verify_*.py
+tests_fase2/
+BUILD_LOG*.md
+/tmp/
