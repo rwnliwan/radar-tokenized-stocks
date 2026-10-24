@@ -1,12 +1,15 @@
 """Radar Tokenized Stocks — public dashboard (presentation rewrite).
 
-ACC design (2026-10-24): anti-AI-slop editorial template, paper-light
-theme, single burnt-orange accent, native Streamlit interactivity ONLY
-(no custom JavaScript, no custom components — inline <script> does not
-execute in Streamlit). All user-facing strings come from i18n.py; all
-pure logic from logic.py / risk.py; all Turso access from turso_read.py
-(SELECT-only reads + the single waitlist INSERT). Data layer untouched
-— this file is presentation only.
+ACC design (2026-10-24) + v2 delta "Radar hidup": anti-AI-slop
+editorial template, paper-light theme, burnt-orange accent for
+deviation/signal + disciplined deep teal for depth/exit elements ONLY
+(no green/red, no third color, no gradients), native Streamlit
+interactivity ONLY (no custom JavaScript, no custom components —
+inline <script> does not execute in Streamlit; Altair ships with
+Streamlit and is not a new dependency). All user-facing strings come
+from i18n.py; all pure logic from logic.py / risk.py; all Turso access
+from turso_read.py (SELECT-only reads + the single waitlist INSERT).
+Data layer untouched — this file is presentation only.
 
 Test-only hook: env RADAR_TEST_HEALTH_JSON, when set to a JSON list of
 {cycle_ts, cycles_ok} rows, replaces the live poller_health read so the
@@ -20,6 +23,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -47,10 +51,21 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif !important; color: #16130
 .card { border: 1px solid #E5E0D8; border-radius: 10px; padding: 14px 16px;
   background: #FFFFFF; margin-bottom: 12px; }
 .livedot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  background: #C2410C; margin-right: 6px; vertical-align: middle; }
+  background: #C2410C; margin-right: 6px; vertical-align: middle;
+  animation: pulse-dot 2s ease-in-out infinite; }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(1.4); } }
 .accent { color: #C2410C; }
-div.stButton > button { border-color: #E5E0D8; color: #16130F; }
+.hero-num { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular,
+  Menlo, monospace; font-size: clamp(44px, 7vw, 76px); font-weight: 500;
+  line-height: 1.05; color: #C2410C; }
+.depth-num { color: #0F766E; font-family: 'IBM Plex Mono', ui-monospace,
+  SFMono-Regular, Menlo, monospace; }
+.depth-rule { border-top: 3px solid #0F766E; margin: 10px 0 2px 0; }
+div.stButton > button { border-color: #E5E0D8; color: #16130F;
+  transition: border-color .2s ease, color .2s ease; }
 div.stButton > button:hover { border-color: #C2410C; color: #C2410C; }
+[data-testid="stMetricValue"] { font-size: 36px !important; }
 @media (max-width: 640px) { .wordmark { font-size: 22px; } }
 </style>
 """
@@ -149,6 +164,25 @@ def get_sim_history(ticker):
         "AND dev_vs_median_pct IS NOT NULL ORDER BY ts ASC LIMIT 9000",
         [ticker, cutoff],
     )
+
+
+@st.cache_data(ttl=300)
+def get_weekly_top():
+    """Largest |deviation| event of the last 7 days (single row).
+
+    Editorial fuel for the weekly story — computed from data, never
+    hand-written. Returns None when no non-null deviation exists.
+    """
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows = query(
+        "SELECT ticker_id, ts, dev_vs_median_pct, qualifying_depth_usd, "
+        "pools_used FROM deviations WHERE ts >= ? "
+        "AND dev_vs_median_pct IS NOT NULL "
+        "ORDER BY ABS(dev_vs_median_pct) DESC LIMIT 1",
+        [cutoff],
+    )
+    return rows[0] if rows else None
 
 
 @st.cache_data(ttl=300)
@@ -300,6 +334,141 @@ def render_risk_breakdown(lang, score):
     st.caption(t(lang, "risk_method"))
 
 
+def render_pulse(lang, latest):
+    """v2 live pulse: largest current |deviation| as hero numbers.
+
+    Uses the same latest-deviations dict as the table — never invented.
+    Depth is shown in disciplined teal; the deviation hero stays orange.
+    """
+    st.subheader(t(lang, "pulse_title"))
+    with_dev = [(tid, d) for tid, d in latest.items()
+                if d.get("dev_vs_median_pct") is not None]
+    if not with_dev:
+        st.markdown(t(lang, "pulse_no_data"))
+        return
+    tid, d = max(with_dev, key=lambda kv: abs(kv[1]["dev_vs_median_pct"]))
+    dev = float(d["dev_vs_median_pct"])
+    st.markdown(f'<div class="hero-num">{dev:+.2f}%</div>',
+                unsafe_allow_html=True)
+    st.markdown(f"**{tid}** — {t(lang, 'pulse_biggest')}")
+    depth = d.get("qualifying_depth_usd")
+    pools = d.get("pools_used")
+    st.markdown(
+        f"{t(lang, 'col_depth')}: "
+        f"<span class=\"depth-num\">${depth:,.2f}</span>"
+        if depth is not None else
+        f"{t(lang, 'col_depth')}: —",
+        unsafe_allow_html=True)
+    st.markdown(
+        f"{pools} {t(lang, 'col_pools')} · "
+        f"{t(lang, 'pulse_asof', time=fmt_wita(d.get('ts'), lang))}")
+
+
+def render_dev_map(lang, latest):
+    """v2 deviation map: Altair scatter (native, no custom JavaScript).
+
+    x = deviation vs median (%), y = qualifying depth (log scale),
+    bubble size = pools, color = |deviation| on the burnt-orange scale.
+    HONESTY RULE: tickers with NULL deviation (single pool) are NEVER
+    plotted at x=0 — that would fake a zero deviation. They appear as
+    a dimmed list below with the reason stated. Bubble click navigates
+    via Altair on_select with a change-guard (mirrors the table guard);
+    the selectbox + button below is the guaranteed fallback.
+    """
+    st.subheader(t(lang, "map_title"))
+    st.markdown(t(lang, "map_note"))
+    plotted, nodata = [], []
+    for tid, d in latest.items():
+        dev = d.get("dev_vs_median_pct")
+        depth = d.get("qualifying_depth_usd")
+        if dev is not None and depth:
+            plotted.append({"ticker": tid, "dev": float(dev),
+                            "absdev": abs(float(dev)),
+                            "depth": float(depth),
+                            "pools": int(d.get("pools_used") or 0)})
+        elif dev is None:
+            nodata.append(tid)
+    if plotted:
+        df = pd.DataFrame(plotted)
+        pick = alt.selection_point(fields=["ticker"], name="pick")
+        chart = alt.Chart(df).mark_circle().encode(
+            x=alt.X("dev:Q", title=t(lang, "map_x")),
+            y=alt.Y("depth:Q", scale=alt.Scale(type="log"),
+                    title=t(lang, "map_y"),
+                    axis=alt.Axis(titleColor="#0F766E")),
+            size=alt.Size("pools:Q", title=t(lang, "col_pools"),
+                          scale=alt.Scale(range=[60, 420])),
+            color=alt.Color("absdev:Q",
+                            scale=alt.Scale(range=["#FBE9DF", "#C2410C"]),
+                            legend=None),
+            tooltip=[alt.Tooltip("ticker:N"),
+                     alt.Tooltip("dev:Q", format="+.2f"),
+                     alt.Tooltip("depth:Q", format="$,.0f"),
+                     alt.Tooltip("pools:Q")],
+        ).properties(height=380).add_params(pick)
+        st.altair_chart(chart, width="stretch",
+                        on_select="rerun", key="devmap")
+        sel = st.session_state.get("devmap")
+        chosen = None
+        if isinstance(sel, dict):
+            for v in (sel.get("selection") or {}).values():
+                if (isinstance(v, list) and v
+                        and isinstance(v[0], dict) and v[0].get("ticker")):
+                    chosen = v[0]["ticker"]
+                    break
+        last = st.session_state.get("_map_last_sel")
+        if chosen and chosen != last and chosen in latest:
+            st.session_state["_map_last_sel"] = chosen
+            st.session_state["page"] = "ticker"
+            st.session_state["ticker_target"] = chosen
+            st.rerun()
+    if nodata:
+        st.markdown(f"**{t(lang, 'map_nodata_title')}**")
+        st.markdown(t(lang, "map_nodata_note"))
+        st.markdown(", ".join(sorted(nodata)))
+    pick_ticker = st.selectbox(t(lang, "map_select"),
+                               sorted(latest.keys()), key="map_pick")
+    if st.button(t(lang, "map_open"), key="map_open_btn"):
+        st.session_state["page"] = "ticker"
+        st.session_state["ticker_target"] = pick_ticker
+        st.rerun()
+
+
+def render_weekly_story(lang, latest):
+    """v2 editorial weekly story — computed from data, never hand-written.
+
+    Three factual lines: the week's largest |deviation| event, depth at
+    the time, and where that ticker stands now — plus its 7-day chart.
+    A calm week (no event >= 1%) is stated honestly first, with the
+    week's largest sub-threshold event as context, not as a scare.
+    """
+    st.subheader(t(lang, "story_title"))
+    top = get_weekly_top()
+    if top is None:
+        st.markdown(t(lang, "story_calm"))
+        return
+    dev = float(top["dev_vs_median_pct"])
+    tid = top["ticker_id"]
+    if abs(dev) < 1.0:
+        st.markdown(t(lang, "story_calm"))
+    st.markdown(t(lang, "story_event", ticker=tid, dev=f"{dev:+.2f}%",
+                            time=fmt_wita(top["ts"], lang)))
+    depth = top.get("qualifying_depth_usd")
+    st.markdown(t(lang, "story_depth",
+                        depth=f"${depth:,.2f}" if depth is not None else "—"))
+    now_dev = latest.get(tid, {}).get("dev_vs_median_pct")
+    st.markdown(t(lang, "story_now", ticker=tid,
+                            dev=f"{now_dev:+.2f}%"
+                            if now_dev is not None else "—"))
+    series = get_chart_series(tid, 168)
+    if len(series) >= 2:
+        sdf = pd.DataFrame(
+            {"ts": pd.to_datetime([s[0] for s in series]),
+             t(lang, "dev_median"): [s[1] for s in series]}).set_index("ts")
+        st.line_chart(sdf, width="stretch")
+        st.caption(t(lang, "story_chart"))
+
+
 # ---------------------------------------------------------------- session
 if "page" not in st.session_state:
     st.session_state.page = "home"
@@ -432,6 +601,7 @@ def home_table_block(lang):
             selection_mode="single-row", on_select="rerun",
             key="home_table", width="stretch", hide_index=True)
         st.caption(t(lang, "home_table_note"))
+        st.caption(t(lang, "home_table_hint"))
         sel = st.session_state.get("home_table")
         rows_sel = []
         if isinstance(sel, dict):
@@ -453,8 +623,12 @@ def home_table_block(lang):
 if page == "home":
     st.markdown(f"**{t(lang, 'app_tagline')}**")
     st.markdown(t(lang, "landing_line"))
+    latest_home = get_latest_deviations()
+    render_pulse(lang, latest_home)
+    render_dev_map(lang, latest_home)
     st.subheader(t(lang, "heatmap_title"))
     home_table_block(lang)
+    render_weekly_story(lang, latest_home)
 
     uni = {u["ticker_id"]: u for u in get_universe()}
     latest = get_latest_deviations()
@@ -477,6 +651,7 @@ if page == "home":
         else:
             st.markdown(t(lang, "no_data"))
     with ncol:
+        st.markdown('<div class="depth-rule"></div>', unsafe_allow_html=True)
         st.subheader(t(lang, "narrowest_title"))
         st.caption(t(lang, "narrowest_note"))
         narrow = sorted(with_depth,
@@ -627,6 +802,7 @@ elif page == "ticker":
         else:
             st.markdown(t(lang, "no_data"))
         # 5. best exit venue by size (original 9-block structure, kept)
+        st.markdown('<div class="depth-rule"></div>', unsafe_allow_html=True)
         st.subheader(t(lang, "exit_title"))
         exits = best_exit_venues(venues)
         if exits:
