@@ -57,8 +57,9 @@ h1, h2, h3 { font-family: 'Newsreader', Georgia, serif !important; color: #16130
   50% { opacity: 0.45; transform: scale(1.4); } }
 .accent { color: #C2410C; }
 .hero-num { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular,
-  Menlo, monospace; font-size: clamp(44px, 7vw, 76px); font-weight: 500;
-  line-height: 1.05; color: #C2410C; }
+  Menlo, monospace; font-size: clamp(32px, 11vw, 76px); font-weight: 500;
+  line-height: 1.05; color: #C2410C; max-width: 100%;
+  overflow-wrap: anywhere; }
 .depth-num { color: #0F766E; font-family: 'IBM Plex Mono', ui-monospace,
   SFMono-Regular, Menlo, monospace; }
 .depth-rule { border-top: 3px solid #0F766E; margin: 10px 0 2px 0; }
@@ -76,6 +77,34 @@ footer { visibility: hidden; }
 [data-testid="stToolbar"] { visibility: hidden; }
 [data-testid="stDeployButton"] { visibility: hidden; }
 [data-testid="stDecoration"] { visibility: hidden; }
+/* v3.1 responsive: Streamlit columns do NOT stack by themselves — without
+   this, header/nav/filters/movers/footer stay squeezed side by side on
+   phones instead of stacking. The 768px breakpoint is the task's spec. */
+.radar-header { display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: 6px 16px; max-width: 100%; }
+.radar-live { white-space: nowrap; font-size: 14px; color: #6B655C; }
+img { max-width: 100%; height: auto; }
+[data-testid="stDataFrame"] { min-width: 0; }
+[data-testid="stVegaLiteChart"] { min-width: 0; max-width: 100%; }
+@media (max-width: 768px) {
+  [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; }
+  [data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+    flex: 1 1 100% !important; min-width: 0 !important;
+    max-width: 100% !important; }
+  .radar-header { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .wordmark { font-size: 22px; }
+}
+/* v3.1 Cloud chrome: stAppDeployButton is the 1.66.1 deploy/manage button
+   testid (proven in the installed frontend bundle — the old
+   stDeployButton name no longer matches, which is why v3 missed it). */
+[data-testid="stAppDeployButton"] { display: none !important; }
+/* Best-effort, UNVERIFIED against live DOM: the creator avatar is
+   Cloud-injected (absent from local boots and from the 1.66.1 frontend
+   bundle), and the live app shell does not render through the sandbox
+   MITM relay, so no exact selector could be read — parent live check
+   must confirm the avatar is gone and iterate if it is not. */
+a[aria-label="App Creator Avatar"] { display: none !important; }
+img[alt="App Creator Avatar"] { display: none !important; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -505,6 +534,7 @@ def render_dev_map(lang, latest):
     a dimmed list below with the reason stated. Bubble click navigates
     via Altair on_select with a change-guard (mirrors the table guard);
     the selectbox + button below is the guaranteed fallback.
+    v3.1: the 3 largest-|dev| bubbles carry on-chart ticker labels.
     """
     st.subheader(t(lang, "map_title"))
     st.markdown(t(lang, "map_note"))
@@ -553,6 +583,22 @@ def render_dev_map(lang, latest):
                      alt.Tooltip("pools:Q")],
         ).add_params(pick)
         layers = [circles]
+        # v3.1: ticker labels on the bubbles (top 3 by |dev| only —
+        # labeling all 10 would collide where bubbles cluster near 0,
+        # especially on narrow screens; every bubble keeps its tooltip).
+        top_lab = sorted(in_range, key=lambda p: p["absdev"],
+                         reverse=True)[:3]
+        layers.append(
+            alt.Chart(pd.DataFrame([
+                {"x": p["dev"], "depth": p["depth"], "label": p["ticker"]}
+                for p in top_lab])).mark_text(
+                size=11, fontWeight="bold", color="#16130F",
+                dx=8, dy=-8).encode(
+                x=alt.X("x:Q",
+                        scale=alt.Scale(domain=domain) if domain
+                        else alt.Scale()),
+                y=alt.Y("depth:Q", scale=alt.Scale(type="log")),
+                text="label:N"))
         if offscale:
             for side, al, dx in (("pos", "right", -8), ("neg", "left", 8)):
                 rows = []
@@ -661,15 +707,14 @@ lang = "id" if st.session_state.get("lang_select", "EN") == "ID" else "en"
 st.session_state.lang = lang
 
 # ---------------------------------------------------------------- header
-# One grouped header bar (wordmark + LIVE + language, then a divider
-# rule) — not three items stretched to opposite edges. The trailing
-# spacer column keeps the group tight on the left.
-col_word, col_live, col_lang, _hsp = st.columns([2.2, 1.6, 1.6, 2.6],
-                                                gap="small")
-with col_word:
-    st.markdown(f'<div class="wordmark">{t(lang, "wordmark")}</div>',
-                unsafe_allow_html=True)
-with col_live:
+# Header v3.1: wordmark + LIVE as ONE HTML block (tight, never stretched
+# across the row the way three columns were). The language selectbox MUST
+# stay a Streamlit widget — HTML cannot change session state without
+# JavaScript, which is forbidden — so it sits in a narrow adjacent
+# column; the 768px media query stacks header + language on narrow
+# screens (wordmark on top, LIVE + language below it).
+hdr_html, hdr_lang = st.columns([4, 1], gap="small")
+with hdr_html:
     live_time = None
     try:
         _h = get_health(os.environ.get("RADAR_TEST_HEALTH_JSON", ""))
@@ -683,8 +728,9 @@ with col_live:
     _live_txt = (f'<span class="livedot"></span> {t(lang, "live_label")} · {live_time}'
                  if live_time else
                  f'<span class="livedot"></span> {t(lang, "live_label")}')
-    st.markdown(_live_txt, unsafe_allow_html=True)
-with col_lang:
+    st.markdown(f'<div class="radar-header"><span class="wordmark">{t(lang, "wordmark")}</span><span class="radar-live">{_live_txt}</span></div>',
+                unsafe_allow_html=True)
+with hdr_lang:
     st.selectbox(t(lang, "lang_label"), ["EN", "ID"],
                  index=0 if lang == "en" else 1, key="lang_select")
     # Re-derive: the widget state above already reflects the new choice
