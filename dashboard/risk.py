@@ -12,6 +12,10 @@ Formula (documented interpretation where the design leaves a gap):
   None = NOT counted (excluded, not zeroed).
 Total = sum of available components; max_possible = sum of the maxima
 of available components (65 when redemption + PoR are both unknown).
+v3.2 normalizes to 0-100 (score_100 = total / max_possible * 100) so
+tickers with different missing components are comparable — the raw
+total / max_possible pair is kept for backward compatibility, and a
+partial score always reports how many of the 4 components are present.
 The score is ALWAYS labeled "experimental" until calibrated on >= 8
 weekends (design §5.5). Method version: weekend_risk_v1.
 """
@@ -57,7 +61,8 @@ def por_component(age_hours):
 
 
 def weekend_risk_score(dev_pct, depth_usd, redemption_status, por_age_hours):
-    """Returns dict with components, total, max_possible, partial flag."""
+    """Returns dict with components, total, max_possible, the 0-100
+    normalized score, component counts, and the partial flag."""
     comps = {
         "deviation": dev_component(dev_pct),
         "depth": depth_component(depth_usd),
@@ -68,10 +73,15 @@ def weekend_risk_score(dev_pct, depth_usd, redemption_status, por_age_hours):
     avail = {k: v for k, v in comps.items() if v is not None}
     total = round(sum(avail.values()), 1)
     max_possible = sum(maxima[k] for k in avail)
+    score_100 = (round(total / max_possible * 100.0, 1)
+                 if max_possible else None)
     return {
         "components": comps,
         "total": total,
         "max_possible": max_possible,
+        "score_100": score_100,
+        "components_present": len(avail),
+        "components_total": 4,
         "partial": len(avail) < 4,
         "method_version": METHOD_VERSION,
     }

@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS redemption_windows (
   asset TEXT NOT NULL,
   status TEXT NOT NULL,
   window_note TEXT,
+  window_note_en TEXT, -- EN twin of window_note (added 2026-10-25; live ALTER, backfilled row id=1)
   observed_at TEXT NOT NULL,
   source TEXT,
   next_open_at TEXT

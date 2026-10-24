@@ -74,6 +74,24 @@ def freshness_status(health_rows, now_utc):
             "failed_streak": streak, "stale": stale}
 
 
+def fmt_abbr(v):
+    """'$1.40M' / '$312K' / '$2.38B' or '—' for None. KPI cards only —
+    tables keep the full comma format (v3 rule)."""
+    if v is None:
+        return "—"
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    if abs(x) >= 1e9:
+        return f"${x / 1e9:,.2f}B"
+    if abs(x) >= 1e6:
+        return f"${x / 1e6:,.2f}M"
+    if abs(x) >= 1e3:
+        return f"${x / 1e3:,.0f}K"
+    return f"${x:,.0f}"
+
+
 def best_exit_venues(venue_rows, sizes=(1000, 5000, 10000)):
     """venue_rows: latest snapshot per pool with reserve_usd + dex + price.
 
