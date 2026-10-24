@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd
 import streamlit as st
 
-from i18n import SIZE_BUCKETS, t
+from i18n import DONATE_ADDRESS, DONATE_PAY_URL, SIZE_BUCKETS, t
 from logic import best_exit_venues, fmt_wita, freshness_status
 from risk import weekend_risk_score
 from turso_read import insert_waitlist, query
@@ -152,6 +152,11 @@ def render_footer():
     st.markdown(t(lang, "policy_text").replace("\n", "\n\n"))
     st.subheader(t(lang, "donate_title"))
     st.markdown(t(lang, "donate_note"))
+    qr_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "donate_qr.png")
+    if os.path.exists(qr_path):
+        st.image(qr_path, width=220)
+    st.code(DONATE_ADDRESS)
+    st.markdown(f"[Solana Pay]({DONATE_PAY_URL})")
     st.caption(t(lang, "disclaimer"))
     st.caption(t(lang, "footer_note"))
 

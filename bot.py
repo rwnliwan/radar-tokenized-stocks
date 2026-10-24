@@ -46,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard"))
-from i18n import t as _t  # noqa: E402  (pure strings, no Streamlit import)
+from i18n import DONATE_PAY_URL, t as _t  # noqa: E402  (pure strings, no Streamlit import)
 
 # --- Turso (DB token: vault custom.turso-radar; same pattern as poller) ---
 TURSO_HOST = "radar-tokenized-stocks-trisaktipan.aws-ap-northeast-1.turso.io"
@@ -407,7 +407,7 @@ def handle_command(text, lang="en"):
     if cmd == "/id":
         return ("Bahasa diatur ke Indonesia. Gunakan /help untuk melihat perintah.", "id")
     if cmd == "/donate":
-        return (f"{_t(lang, 'donate_title')}\n{_t(lang, 'donate_note')}", lang)
+        return (f"{_t(lang, 'donate_title')}\n{_t(lang, 'donate_note')}\nPay link: {DONATE_PAY_URL}", lang)
     if cmd == "/help":
         if lang == "id":
             return ("Perintah: /start (pilih bahasa), /en, /id, /donate, /help.", lang)

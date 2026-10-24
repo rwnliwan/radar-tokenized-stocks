@@ -5,6 +5,11 @@ The conflict-of-interest text (policy_text) is the design §11 text:
 Indonesian is verbatim from the design; English is a faithful
 translation of the same five points.
 """
+DONATE_ADDRESS = "6GvKCpEYqjzLQqu6WLedwWArhBi33CDRh4UPpPQa2qnv"
+DONATE_PAY_URL = (
+    "solana:" + DONATE_ADDRESS
+    + "?label=Radar%20Tokenized%20Stocks&message=Support%20development"
+)
 STR = {
     "en": {
         "app_title": "Radar Tokenized Stocks",
@@ -74,7 +79,7 @@ STR = {
         "f_error": "Please fill in contact, position size, venue/issuer, and tick the consent box.",
         "f_error_save": "Could not save — please try again in a moment.",
         "donate_title": "Support development — voluntary donation",
-        "donate_note": "Solana Pay USDC address to follow. Donations do not unlock any features.",
+        "donate_note": "Send USDC on Solana (Solana Pay) to:\n6GvKCpEYqjzLQqu6WLedwWArhBi33CDRh4UPpPQa2qnv\nDonations do not unlock any features.",
         "disclaimer": "Not financial advice. Prices are market data, not recommendations.",
         "policy_title": "Signal & conflict-of-interest policy",
         "policy_text": (
@@ -162,7 +167,7 @@ STR = {
         "f_error": "Mohon isi kontak, ukuran posisi, venue/issuer, dan centang kotak persetujuan.",
         "f_error_save": "Gagal menyimpan — silakan coba lagi sebentar lagi.",
         "donate_title": "Dukung pengembangan — donasi sukarela",
-        "donate_note": "Alamat Solana Pay USDC menyusul. Donasi tidak membuka fitur apa pun.",
+        "donate_note": "Kirim USDC di Solana (Solana Pay) ke:\n6GvKCpEYqjzLQqu6WLedwWArhBi33CDRh4UPpPQa2qnv\nDonasi tidak membuka fitur apa pun.",
         "disclaimer": "Bukan nasihat keuangan. Harga adalah data pasar, bukan rekomendasi.",
         "policy_title": "Kebijakan sinyal & konflik kepentingan",
         "policy_text": (
