@@ -201,6 +201,12 @@ STR = {
         "story_now": "Now: {ticker} at {dev}.",
         "story_chart": "Deviation history, last 7 days",
         "home_table_hint": "Tip: click the checkbox at the left edge of a row to open that ticker's detail page.",
+        # --- v3 fixes (ACC 2026-10-24): ADDITIVE keys only.
+        "map_clamp_note": "Plot range clamped to ±3%: tickers beyond it are labeled at the edge with their true deviation.",
+        "pools_excluded_note": "{n} pool(s) excluded from the calculation (unreasonable quote).",
+        "risk_footnote": "— means that component is excluded from the score, not counted as zero.",
+        "donate_send": "Send USDC on Solana (Solana Pay) to:",
+        "donate_nofeatures": "Donations do not unlock any features.",
     },
     "id": {
         "app_title": "Radar Tokenized Stocks",
@@ -392,6 +398,12 @@ STR = {
         "story_now": "Saat ini: {ticker} di {dev}.",
         "story_chart": "Riwayat deviasi 7 hari terakhir",
         "home_table_hint": "Tips: klik checkbox di tepi kiri baris untuk membuka halaman detail ticker.",
+        # --- v3 fixes (ACC 2026-10-24): ADDITIVE keys only.
+        "map_clamp_note": "Rentang plot dijepit ke ±3%: ticker di luarnya dilabel di tepi dengan deviasi sebenarnya.",
+        "pools_excluded_note": "{n} pool dikecualikan dari perhitungan (quote tidak wajar).",
+        "risk_footnote": "— berarti komponen itu dikeluarkan dari skor, bukan dihitung nol.",
+        "donate_send": "Kirim USDC di Solana (Solana Pay) ke:",
+        "donate_nofeatures": "Donasi tidak membuka fitur apa pun.",
     },
 }
 

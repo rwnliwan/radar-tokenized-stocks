@@ -244,24 +244,44 @@ def run_cycle(cycle_dt):
         if price is not None and reserve is not None and reserve >= LIQ_MIN:
             per_ticker.setdefault(pl["ticker_id"], []).append((price, reserve))
 
+    guard_notes = []
     for ticker, lst in per_ticker.items():
-        depth = sum(r for _, r in lst)
-        dw = sum(pr * r for pr, r in lst) / depth if depth else None
-        prices = [pr for pr, _ in lst]
+        # Price-sanity guard (2026-10-24: SPYx showed -25.9% from ONE bad
+        # upstream quote, $0.10 vs ~$762 on 4 sibling pools, reserve intact).
+        # With >=3 qualifying pools, drop prices deviating >25% from the
+        # cross-pool median; excluded pools contribute neither price nor
+        # depth. With <3 pools no consensus exists, so the guard is skipped
+        # (documented limitation). Fallback to lst if exclusion empties kept.
+        kept, n_excluded = lst, 0
+        if len(lst) >= 3:
+            med_all = statistics.median([pr for pr, _ in lst])
+            if med_all:
+                kept = [(pr, r) for pr, r in lst
+                        if abs(pr - med_all) / med_all <= 0.25]
+                n_excluded = len(lst) - len(kept)
+                if not kept:
+                    kept, n_excluded = lst, 0
+        if n_excluded:
+            guard_notes.append(f"{ticker}:{n_excluded}")
+        depth = sum(r for _, r in kept)
+        dw = sum(pr * r for pr, r in kept) / depth if depth else None
+        prices = [pr for pr, _ in kept]
         median = statistics.median(prices) if len(prices) >= 2 else None
         dev_med = ((dw - median) / median * 100.0) if (median and dw) else None
         stmts.append((
             "INSERT INTO deviations (ticker_id, ts, depth_weighted_price,"
             " dev_vs_close_pct, dev_vs_median_pct, qualifying_depth_usd,"
-            " pools_used, redemption_status, por_age_hours,"
-            " weekend_risk_score, method_version) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            [ticker, cycle_ts, dw, None, dev_med, depth, len(lst),
-             None, None, None, "v1-median-only"],
+            " pools_used, pools_excluded, redemption_status, por_age_hours,"
+            " weekend_risk_score, method_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            [ticker, cycle_ts, dw, None, dev_med, depth, len(kept),
+             n_excluded, None, None, None, "v1-median-only"],
         ))
 
     # Hourly slot: redemption & PoR (no automated source configured yet).
     state = load_state()
     gap_bits = []
+    if guard_notes:
+        gap_bits.append(f"price-guard excluded pool(s): {', '.join(guard_notes)}")
     if fallback_used:
         gap_bits.append("dexscreener batch incomplete; per-token fallback used")
     if missing_now:
@@ -292,7 +312,8 @@ def run_cycle(cycle_dt):
     pipeline(stmts)
     log(f"CYCLE {cycle_ts} OK tight={tight} snapshots={n_snap} "
         f"deviations={len(per_ticker)} missing={len(missing_now)} "
-        f"fallback={fallback_used}")
+        f"fallback={fallback_used} "
+        f"guard={';'.join(guard_notes) if guard_notes else '-'}")
     return True
 
 

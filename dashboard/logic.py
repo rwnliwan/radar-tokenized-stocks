@@ -33,13 +33,19 @@ def parse_ts(iso):
 
 
 def fmt_wita(iso, lang="en"):
-    """'24 Oct 2026 19:11 WITA' (en) / '24 Okt 2026 19:11 WITA' (id)."""
+    """'24 Oct 2026 19:11 WITA' (en) / '24 Okt 2026 19:11 WITA' (id).
+
+    The space between time and zone is a non-breaking space (U+00A0)
+    so the two can never collapse or wrap apart in rendering ('23:36
+    WITA' must read as one stamp, never '23:36WITA').
+    """
     dt = parse_ts(iso)
     if dt is None:
         return "—"
     w = dt.astimezone(WITA)
     months = MONTHS_ID if lang == "id" else MONTHS_EN
-    return f"{w.day} {months[w.month - 1]} {w.year} {w.hour:02d}:{w.minute:02d} WITA"
+    return (f"{w.day} {months[w.month - 1]} {w.year} "
+            f"{w.hour:02d}:{w.minute:02d} WITA")
 
 
 def freshness_status(health_rows, now_utc):

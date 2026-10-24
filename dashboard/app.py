@@ -67,6 +67,15 @@ div.stButton > button { border-color: #E5E0D8; color: #16130F;
 div.stButton > button:hover { border-color: #C2410C; color: #C2410C; }
 [data-testid="stMetricValue"] { font-size: 36px !important; }
 @media (max-width: 640px) { .wordmark { font-size: 22px; } }
+.header-rule { border-top: 2px solid #16130F; margin: 2px 0 14px 0; }
+.page-end { height: 36px; }
+.stApp a { color: #16130F !important; text-decoration: underline;
+  text-decoration-color: #C2410C; text-underline-offset: 2px; }
+#MainMenu { visibility: hidden; }
+footer { visibility: hidden; }
+[data-testid="stToolbar"] { visibility: hidden; }
+[data-testid="stDeployButton"] { visibility: hidden; }
+[data-testid="stDecoration"] { visibility: hidden; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -94,6 +103,18 @@ def get_universe():
 
 @st.cache_data(ttl=300)
 def get_latest_deviations():
+    # Test-only hook: env RADAR_TEST_LATEST_JSON, when set to a JSON
+    # {ticker: row} object, replaces the live read (mirrors the
+    # RADAR_TEST_HEALTH_JSON hook). Lets AppTest execute branches that
+    # need specific data (e.g. a map outlier) without touching Turso.
+    # Off by default.
+    override = os.environ.get("RADAR_TEST_LATEST_JSON", "")
+    if override:
+        import json
+        try:
+            return json.loads(override)
+        except (TypeError, ValueError):
+            pass
     rows = query(
         "SELECT ticker_id, ts, depth_weighted_price, dev_vs_close_pct, "
         "dev_vs_median_pct, qualifying_depth_usd, pools_used, method_version "
@@ -104,6 +125,45 @@ def get_latest_deviations():
         if r["ticker_id"] not in seen:
             seen[r["ticker_id"]] = r
     return seen
+
+
+@st.cache_data(ttl=300)
+def get_pools_excluded():
+    """Latest pools_excluded per ticker — defensive by design.
+
+    The column is added separately from this file; if it is missing
+    (or the query fails) this returns {} and the ticker-page note
+    simply does not render. Never raises. Values arrive as strings
+    from Hrana, so coerce to int ('0' is truthy — it must not leak
+    through as a visible zero-count note).
+
+    Test-only hook: env RADAR_TEST_POOLS_EXCLUDED_JSON, when set to a
+    JSON {ticker: count} object, replaces the live read (mirrors the
+    RADAR_TEST_HEALTH_JSON hook). Off by default.
+    """
+    override = os.environ.get("RADAR_TEST_POOLS_EXCLUDED_JSON", "")
+    if override:
+        import json
+        try:
+            raw = json.loads(override)
+            return {k: int(v) for k, v in raw.items()}
+        except (TypeError, ValueError):
+            return {}
+    try:
+        rows = query(
+            "SELECT ticker_id, pools_excluded FROM deviations "
+            "ORDER BY ts DESC, id DESC LIMIT 500"
+        )
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        if r["ticker_id"] not in out:
+            try:
+                out[r["ticker_id"]] = int(r.get("pools_excluded") or 0)
+            except (TypeError, ValueError):
+                out[r["ticker_id"]] = 0
+    return out
 
 
 @st.cache_data(ttl=300)
@@ -143,14 +203,19 @@ def get_chart_series(ticker, hours):
             [ticker, cutoff],
         )
         return [(r["ts"], float(r["dev_vs_median_pct"])) for r in rows]
+    # v3 fix: the bucket alias MUST NOT be named 'ts' — SQLite resolves
+    # GROUP BY ts to the input column deviations.ts (per-cycle rows,
+    # 60 rows with 6 repeated bucket labels, as seen live), not to the
+    # strftime alias. Aliasing it 'bucket' (no such input column) makes
+    # GROUP BY aggregate truly hourly.
     rows = query(
-        "SELECT strftime('%Y-%m-%dT%H:00:00Z', ts) AS ts, "
+        "SELECT strftime('%Y-%m-%dT%H:00:00Z', ts) AS bucket, "
         "AVG(dev_vs_median_pct) AS dev FROM deviations "
         "WHERE ticker_id = ? AND ts >= ? "
-        "AND dev_vs_median_pct IS NOT NULL GROUP BY ts ORDER BY ts ASC",
+        "AND dev_vs_median_pct IS NOT NULL GROUP BY bucket ORDER BY bucket ASC",
         [ticker, cutoff],
     )
-    return [(r["ts"], float(r["dev"])) for r in rows if r.get("dev") is not None]
+    return [(r["bucket"], float(r["dev"])) for r in rows if r.get("dev") is not None]
 
 
 @st.cache_data(ttl=300)
@@ -255,16 +320,72 @@ def cross_venue_spread(venues, dw_price):
 
 def tint_dev(series):
     """Single-accent tint for the deviation column: burnt orange whose
-    opacity scales with |deviation| (percent units), capped at 0.85."""
+    opacity scales with |deviation| (percent units), capped at 0.85.
+    Accepts display strings ('+0.24', '-25.97', '—') as well as
+    numbers — the tables now store formatted strings, not raw floats."""
     out = []
     for v in series:
         try:
-            a = min(abs(float(v)) / 2.0, 0.85)
+            a = min(abs(float(str(v).replace("%", "").replace("+", ""))) / 2.0, 0.85)
         except (TypeError, ValueError):
             a = 0.0
         out.append(f"background-color: rgba(194, 65, 12, {a:.2f})"
                    if a > 0.02 else "")
     return out
+
+
+def fmt_usd(v, decimals=2):
+    """'$4,875,369.02' or '—' for None (audit: no raw floats in tables)."""
+    if v is None:
+        return "—"
+    try:
+        return f"${float(v):,.{decimals}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def fmt_dev(v, pct=False):
+    """Deviation cells: '+0.24' / '-25.97' / '0.00' (no sign on a value
+    that rounds to zero — the audit's '-0.00'/' +0.00' complaint).
+
+    pct=True appends '%' for standalone figures (pulse hero, metrics,
+    story lines) where no column header carries the unit.
+    """
+    if v is None:
+        return "—"
+    try:
+        r = round(float(v), 2)
+    except (TypeError, ValueError):
+        return "—"
+    if r == 0:
+        return "0.00%" if pct else "0.00"
+    return f"{r:+.2f}%" if pct else f"{r:+.2f}"
+
+
+_SPARK_CHARS = "▁▂▃▄▅▆▇█"
+
+
+def spark_text(series, width=32):
+    """Unicode sparkline for a numeric series; '—' when empty.
+
+    Text cells (unlike LineChartColumn) never clip at cell edges and
+    render an explicit dash for missing data instead of a blank cell.
+    Long series are evenly sampled to at most `width` characters.
+    """
+    vals = [float(x) for x in (series or []) if x is not None]
+    if not vals:
+        return "—"
+    if len(vals) > width:
+        step = len(vals) / float(width)
+        vals = [vals[int(i * step)] for i in range(width)]
+    lo, hi = min(vals), max(vals)
+    if hi == lo:
+        return "▅" * len(vals)
+    out = []
+    for x in vals:
+        idx = int((x - lo) / (hi - lo) * 7.999)
+        out.append(_SPARK_CHARS[idx])
+    return "".join(out)
 
 
 def row_ticker(displayed_tickers, row_idx):
@@ -295,20 +416,30 @@ def render_freshness(lang):
 
 
 def render_footer(lang):
+    """Footer v3: QR + text side by side (2 columns), the wallet
+    address in its own copyable block with a line break BEFORE the
+    'donations do not unlock features' sentence (the audit's run-on
+    sentence), links in ink with an orange underline (not bright blue),
+    and bottom padding that closes the page."""
     st.markdown("---")
     st.subheader(t(lang, "policy_title"))
     st.markdown(t(lang, "policy_text").replace("\n", "\n\n"))
     st.subheader(t(lang, "donate_title"))
-    st.markdown(t(lang, "donate_note"))
-    qr_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                           "assets", "donate_qr.png")
-    if os.path.exists(qr_path):
-        st.image(qr_path, width=220)
-    st.code(DONATE_ADDRESS)
-    st.markdown(f"[{t(lang, 'donate_pay_link')}]({DONATE_PAY_URL})")
-    st.markdown(f"[{t(lang, 'linkedin_label')}]({LINKEDIN_URL})")
+    qcol, tcol = st.columns([1, 3], gap="medium")
+    with qcol:
+        qr_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "assets", "donate_qr.png")
+        if os.path.exists(qr_path):
+            st.image(qr_path, width=220)
+    with tcol:
+        st.markdown(t(lang, "donate_send"))
+        st.code(DONATE_ADDRESS)
+        st.markdown(t(lang, "donate_nofeatures"))
+        st.markdown(f"[{t(lang, 'donate_pay_link')}]({DONATE_PAY_URL})")
+        st.markdown(f"[{t(lang, 'linkedin_label')}]({LINKEDIN_URL})")
     st.caption(t(lang, "disclaimer"))
     st.caption(t(lang, "footer_note"))
+    st.markdown('<div class="page-end"></div>', unsafe_allow_html=True)
 
 
 def render_risk_breakdown(lang, score):
@@ -325,7 +456,7 @@ def render_risk_breakdown(lang, score):
     for k in ("deviation", "depth", "redemption", "por"):
         v = comp[k]
         parts.append(f"{labels[k]}: {v:.1f}" if v is not None
-                     else f"{labels[k]}: {t(lang, 'risk_excluded')}")
+                     else f"{labels[k]}: —")
     st.markdown(f"**{t(lang, 'risk_total_label')}: {score['total']:.1f} / "
                 f"{score['max_possible']:.0f}** (method {score['method_version']})")
     st.markdown(" · ".join(parts))
@@ -348,14 +479,14 @@ def render_pulse(lang, latest):
         return
     tid, d = max(with_dev, key=lambda kv: abs(kv[1]["dev_vs_median_pct"]))
     dev = float(d["dev_vs_median_pct"])
-    st.markdown(f'<div class="hero-num">{dev:+.2f}%</div>',
+    st.markdown(f'<div class="hero-num">{fmt_dev(dev, pct=True)}</div>',
                 unsafe_allow_html=True)
     st.markdown(f"**{tid}** — {t(lang, 'pulse_biggest')}")
     depth = d.get("qualifying_depth_usd")
     pools = d.get("pools_used")
     st.markdown(
         f"{t(lang, 'col_depth')}: "
-        f"<span class=\"depth-num\">${depth:,.2f}</span>"
+        f"<span class=\"depth-num\">{fmt_usd(depth)}</span>"
         if depth is not None else
         f"{t(lang, 'col_depth')}: —",
         unsafe_allow_html=True)
@@ -389,10 +520,25 @@ def render_dev_map(lang, latest):
         elif dev is None:
             nodata.append(tid)
     if plotted:
-        df = pd.DataFrame(plotted)
+        # Outlier clamp: the alert-relevant band is ±3%. A ticker beyond
+        # it (seen live: a -26% bad quote) would stretch the axis into
+        # an empty grid, so it is labeled at the clamped edge with its
+        # true deviation instead of being plotted off-scale. When every
+        # ticker is inside the band, the axis stays automatic.
+        CLAMP = 3.0
+        in_range = [p for p in plotted if abs(p["dev"]) <= CLAMP]
+        offscale = [p for p in plotted if abs(p["dev"]) > CLAMP]
+        if offscale and in_range:
+            domain = [-CLAMP, CLAMP]
+        else:
+            domain = None
+            offscale = []
+            in_range = plotted
+        df = pd.DataFrame(in_range)
         pick = alt.selection_point(fields=["ticker"], name="pick")
-        chart = alt.Chart(df).mark_circle().encode(
-            x=alt.X("dev:Q", title=t(lang, "map_x")),
+        circles = alt.Chart(df).mark_circle().encode(
+            x=alt.X("dev:Q", title=t(lang, "map_x"),
+                    scale=alt.Scale(domain=domain) if domain else alt.Scale()),
             y=alt.Y("depth:Q", scale=alt.Scale(type="log"),
                     title=t(lang, "map_y"),
                     axis=alt.Axis(titleColor="#0F766E")),
@@ -405,8 +551,33 @@ def render_dev_map(lang, latest):
                      alt.Tooltip("dev:Q", format="+.2f"),
                      alt.Tooltip("depth:Q", format="$,.0f"),
                      alt.Tooltip("pools:Q")],
-        ).properties(height=380).add_params(pick)
-        st.altair_chart(chart, width="stretch",
+        ).add_params(pick)
+        layers = [circles]
+        if offscale:
+            for side, al, dx in (("pos", "right", -8), ("neg", "left", 8)):
+                rows = []
+                for p in offscale:
+                    if (side == "pos") != (p["dev"] > 0):
+                        continue
+                    edge = CLAMP if p["dev"] > 0 else -CLAMP
+                    rows.append({
+                        "x": edge, "depth": p["depth"],
+                        "label": f"{p['ticker']} "
+                                 f"{fmt_dev(p['dev'], pct=True)} "
+                                 f"{'→' if p['dev'] > 0 else '←'}",
+                    })
+                if rows:
+                    layers.append(
+                        alt.Chart(pd.DataFrame(rows)).mark_text(
+                            color="#C2410C", fontWeight="bold", size=12,
+                            align=al, dx=dx).encode(
+                            x=alt.X("x:Q", scale=alt.Scale(domain=domain)),
+                            y=alt.Y("depth:Q", scale=alt.Scale(type="log")),
+                            text="label:N"))
+        chart = layers[0]
+        for extra in layers[1:]:
+            chart = chart + extra
+        st.altair_chart(chart.properties(height=380), width="stretch",
                         on_select="rerun", key="devmap")
         sel = st.session_state.get("devmap")
         chosen = None
@@ -422,16 +593,24 @@ def render_dev_map(lang, latest):
             st.session_state["page"] = "ticker"
             st.session_state["ticker_target"] = chosen
             st.rerun()
+        if offscale:
+            st.caption(t(lang, "map_clamp_note"))
     if nodata:
         st.markdown(f"**{t(lang, 'map_nodata_title')}**")
         st.markdown(t(lang, "map_nodata_note"))
         st.markdown(", ".join(sorted(nodata)))
-    pick_ticker = st.selectbox(t(lang, "map_select"),
-                               sorted(latest.keys()), key="map_pick")
-    if st.button(t(lang, "map_open"), key="map_open_btn"):
-        st.session_state["page"] = "ticker"
-        st.session_state["ticker_target"] = pick_ticker
-        st.rerun()
+    pcol, bcol = st.columns([3, 1], gap="small")
+    with pcol:
+        pick_ticker = st.selectbox(t(lang, "map_select"),
+                                   sorted(latest.keys()), key="map_pick")
+    with bcol:
+        # Spacer matches the selectbox label height so the button sits
+        # level with the input, not above it.
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        if st.button(t(lang, "map_open"), key="map_open_btn"):
+            st.session_state["page"] = "ticker"
+            st.session_state["ticker_target"] = pick_ticker
+            st.rerun()
 
 
 def render_weekly_story(lang, latest):
@@ -451,21 +630,25 @@ def render_weekly_story(lang, latest):
     tid = top["ticker_id"]
     if abs(dev) < 1.0:
         st.markdown(t(lang, "story_calm"))
-    st.markdown(t(lang, "story_event", ticker=tid, dev=f"{dev:+.2f}%",
+    st.markdown(t(lang, "story_event", ticker=tid, dev=fmt_dev(dev, pct=True),
                             time=fmt_wita(top["ts"], lang)))
     depth = top.get("qualifying_depth_usd")
-    st.markdown(t(lang, "story_depth",
-                        depth=f"${depth:,.2f}" if depth is not None else "—"))
+    st.markdown(t(lang, "story_depth", depth=fmt_usd(depth)))
     now_dev = latest.get(tid, {}).get("dev_vs_median_pct")
     st.markdown(t(lang, "story_now", ticker=tid,
-                            dev=f"{now_dev:+.2f}%"
-                            if now_dev is not None else "—"))
+                            dev=fmt_dev(now_dev, pct=True)))
+    # 7-day series is hourly-averaged by get_chart_series (hours > 24
+    # branch). Plain Altair, deliberately NOT .interactive(): wheel
+    # scrolling must move the page, never zoom the chart (audit).
     series = get_chart_series(tid, 168)
     if len(series) >= 2:
         sdf = pd.DataFrame(
             {"ts": pd.to_datetime([s[0] for s in series]),
-             t(lang, "dev_median"): [s[1] for s in series]}).set_index("ts")
-        st.line_chart(sdf, width="stretch")
+             "dev": [s[1] for s in series]})
+        schart = alt.Chart(sdf).mark_line(color="#C2410C").encode(
+            x=alt.X("ts:T", title=None),
+            y=alt.Y("dev:Q", title=t(lang, "dev_median")))
+        st.altair_chart(schart, width="stretch")
         st.caption(t(lang, "story_chart"))
 
 
@@ -478,7 +661,11 @@ lang = "id" if st.session_state.get("lang_select", "EN") == "ID" else "en"
 st.session_state.lang = lang
 
 # ---------------------------------------------------------------- header
-col_word, col_live, col_lang = st.columns([2, 2, 1])
+# One grouped header bar (wordmark + LIVE + language, then a divider
+# rule) — not three items stretched to opposite edges. The trailing
+# spacer column keeps the group tight on the left.
+col_word, col_live, col_lang, _hsp = st.columns([2.2, 1.6, 1.6, 2.6],
+                                                gap="small")
 with col_word:
     st.markdown(f'<div class="wordmark">{t(lang, "wordmark")}</div>',
                 unsafe_allow_html=True)
@@ -490,7 +677,7 @@ with col_live:
         _dt = parse_ts(_s["last_ts"]) if _s["last_ts"] else None
         if _dt is not None:
             _w = _dt.astimezone(ZoneInfo("Asia/Makassar"))
-            live_time = f"{_w.hour:02d}:{_w.minute:02d} WITA"
+            live_time = f"{_w.hour:02d}:{_w.minute:02d} WITA"
     except Exception:
         live_time = None
     _live_txt = (f'<span class="livedot"></span> {t(lang, "live_label")} · {live_time}'
@@ -502,9 +689,11 @@ with col_lang:
                  index=0 if lang == "en" else 1, key="lang_select")
     # Re-derive: the widget state above already reflects the new choice
     # on the rerun triggered by the toggle, so `lang` is current.
+st.markdown('<div class="header-rule"></div>', unsafe_allow_html=True)
 
 # ---------------------------------------------------------------- nav
-nav_c1, nav_c2, nav_c3 = st.columns(3)
+# Tight button group (spacer takes the rest) — not stretched apart.
+nav_c1, nav_c2, nav_c3, _nsp = st.columns([1, 1, 1, 5], gap="small")
 with nav_c1:
     if st.button(t(lang, "nav_home"), key="nav_home_btn"):
         st.session_state.page = "home"
@@ -537,22 +726,29 @@ def home_table_block(lang):
     # previous language's formatted values after a toggle. Scoping the key
     # by lang forces fresh widgets (and fresh labels) on toggle, while
     # timer refreshes within one language keep the user's choices.
-    sort_choice = st.selectbox(
-        t(lang, "sort_label"), ["dev", "depth", "name"],
-        format_func=lambda v: {"dev": t(lang, "sort_dev"),
-                               "depth": t(lang, "sort_depth"),
-                               "name": t(lang, "sort_name")}[v],
-        key=f"home_sort_{lang}")
-    tier_choice = st.selectbox(
-        t(lang, "tier_filter"), ["all", "1", "2"],
-        format_func=lambda v: t(lang, "tier_all") if v == "all"
-        else f"{t(lang, 'meta_tier')} {v}",
-        key=f"home_tier_{lang}")
-    window_choice = st.selectbox(
-        t(lang, "window_label"), [24, 168],
-        format_func=lambda v: t(lang, "window_24h") if v == 24
-        else t(lang, "window_7d"),
-        key=f"home_window_{lang}")
+    # v3: the three filters share ONE row (not three stacked full-width
+    # rows) and the table stores display strings, not raw floats — so
+    # AppTest and the browser see exactly the same formatted values.
+    f1, f2, f3 = st.columns(3, gap="small")
+    with f1:
+        sort_choice = st.selectbox(
+            t(lang, "sort_label"), ["dev", "depth", "name"],
+            format_func=lambda v: {"dev": t(lang, "sort_dev"),
+                                   "depth": t(lang, "sort_depth"),
+                                   "name": t(lang, "sort_name")}[v],
+            key=f"home_sort_{lang}")
+    with f2:
+        tier_choice = st.selectbox(
+            t(lang, "tier_filter"), ["all", "1", "2"],
+            format_func=lambda v: t(lang, "tier_all") if v == "all"
+            else f"{t(lang, 'meta_tier')} {v}",
+            key=f"home_tier_{lang}")
+    with f3:
+        window_choice = st.selectbox(
+            t(lang, "window_label"), [24, 168],
+            format_func=lambda v: t(lang, "window_24h") if v == 24
+            else t(lang, "window_7d"),
+            key=f"home_window_{lang}")
 
     uni = {u["ticker_id"]: u for u in get_universe()}
     latest = get_latest_deviations()
@@ -569,7 +765,6 @@ def home_table_block(lang):
             "depth": d.get("qualifying_depth_usd"),
             "pools": d.get("pools_used"),
             "spark": sparks.get(tid, []),
-            "updated": fmt_wita(d.get("ts"), lang),
         })
     if sort_choice == "dev":
         items.sort(key=lambda r: abs(r["dev"]) if r["dev"] is not None else -1,
@@ -581,28 +776,21 @@ def home_table_block(lang):
         items.sort(key=lambda r: r["ticker"])
     tickers = [r["ticker"] for r in items]
     if items:
+        # No Updated column (v3): freshness already lives in the header
+        # "Last updated" line — the column only repeated one identical
+        # timestamp 13 times. None never renders as the string "None".
         df = pd.DataFrame([{
             t(lang, "col_ticker"): r["ticker"],
-            t(lang, "col_tier"): r["tier"],
-            t(lang, "col_price"): r["price"],
-            t(lang, "col_dev"): r["dev"],
-            t(lang, "col_depth"): r["depth"],
-            t(lang, "col_pools"): r["pools"],
-            t(lang, "col_spark"): r["spark"],
-            t(lang, "col_updated"): r["updated"],
+            t(lang, "col_tier"): (r["tier"] if r["tier"] is not None else "—"),
+            t(lang, "col_price"): fmt_usd(r["price"]),
+            t(lang, "col_dev"): fmt_dev(r["dev"]),
+            t(lang, "col_depth"): fmt_usd(r["depth"]),
+            t(lang, "col_pools"): (r["pools"] if r["pools"] is not None else "—"),
+            t(lang, "col_spark"): spark_text(r["spark"]),
         } for r in items])
         styled = df.style.apply(tint_dev, subset=[t(lang, "col_dev")])
         st.dataframe(
             styled,
-            column_config={
-                t(lang, "col_ticker"): st.column_config.TextColumn(t(lang, "col_ticker")),
-                t(lang, "col_price"): st.column_config.NumberColumn(t(lang, "col_price"), format="$%.2f"),
-                t(lang, "col_dev"): st.column_config.NumberColumn(t(lang, "col_dev"), format="%+.2f"),
-                t(lang, "col_depth"): st.column_config.NumberColumn(t(lang, "col_depth"), format="$%.2f"),
-                t(lang, "col_pools"): st.column_config.NumberColumn(t(lang, "col_pools"), format="%d"),
-                t(lang, "col_spark"): st.column_config.LineChartColumn(t(lang, "col_spark")),
-                t(lang, "col_updated"): st.column_config.TextColumn(t(lang, "col_updated")),
-            },
             selection_mode="single-row", on_select="rerun",
             key="home_table", width="stretch", hide_index=True)
         st.caption(t(lang, "home_table_note"))
@@ -641,8 +829,12 @@ if page == "home":
                 if d.get("dev_vs_median_pct") is not None]
     with_depth = [(tid, d) for tid, d in latest.items()
                   if d.get("qualifying_depth_usd") is not None]
+    # v3: identical structure in both columns (teal rule above BOTH
+    # headings) so the two tables start at the same height — the audit's
+    # single stray rule made the right column sit visibly lower.
     mcol, ncol = st.columns(2)
     with mcol:
+        st.markdown('<div class="depth-rule"></div>', unsafe_allow_html=True)
         st.subheader(t(lang, "movers_title"))
         st.caption(t(lang, "movers_note"))
         movers = sorted(with_dev, key=lambda kv: abs(kv[1]["dev_vs_median_pct"]),
@@ -650,8 +842,8 @@ if page == "home":
         if movers:
             st.dataframe(pd.DataFrame([{
                 t(lang, "col_ticker"): tid,
-                t(lang, "col_dev"): d["dev_vs_median_pct"],
-                t(lang, "col_depth"): d.get("qualifying_depth_usd"),
+                t(lang, "col_dev"): fmt_dev(d["dev_vs_median_pct"]),
+                t(lang, "col_depth"): fmt_usd(d.get("qualifying_depth_usd")),
             } for tid, d in movers]), width="stretch", hide_index=True)
         else:
             st.markdown(t(lang, "no_data"))
@@ -664,15 +856,14 @@ if page == "home":
         if narrow:
             st.dataframe(pd.DataFrame([{
                 t(lang, "col_ticker"): tid,
-                t(lang, "col_dev"): d.get("dev_vs_median_pct"),
-                t(lang, "col_depth"): d["qualifying_depth_usd"],
+                t(lang, "col_dev"): fmt_dev(d.get("dev_vs_median_pct")),
+                t(lang, "col_depth"): fmt_usd(d["qualifying_depth_usd"]),
             } for tid, d in narrow]), width="stretch", hide_index=True)
         else:
             st.markdown(t(lang, "no_data"))
 
     st.subheader(t(lang, "coverage_title"))
     st.info(t(lang, "coverage_text"))
-    st.caption(t(lang, "coverage_short"))
 
     if market_is_open(datetime.now(timezone.utc)):
         st.info(t(lang, "market_open"))
@@ -693,8 +884,11 @@ if page == "home":
             scored.append((tid, s))
         scored.sort(key=lambda kv: kv[1]["total"], reverse=True)
         if scored:
+            # v3: excluded components show '—' in the cells; the
+            # explanation lives in ONE footnote below, not repeated
+            # across two columns six times (audit).
             def _comp(v):
-                return f"{v:.1f}" if v is not None else t(lang, "risk_excluded")
+                return f"{v:.1f}" if v is not None else "—"
             st.dataframe(pd.DataFrame([{
                 t(lang, "col_ticker"): tid,
                 t(lang, "risk_total_label"): f"{s['total']:.1f} / {s['max_possible']:.0f}",
@@ -703,6 +897,9 @@ if page == "home":
                 t(lang, "risk_red_label"): _comp(s["components"]["redemption"]),
                 t(lang, "risk_por_label"): _comp(s["components"]["por"]),
             } for tid, s in scored[:3]]), width="stretch", hide_index=True)
+            if any(v is None for _, s in scored[:3]
+                   for v in s["components"].values()):
+                st.caption(t(lang, "risk_footnote"))
             st.caption(t(lang, "risk_method"))
         else:
             st.markdown(t(lang, "no_data"))
@@ -745,11 +942,16 @@ elif page == "ticker":
                           if latest.get("depth_weighted_price") is not None else "—")
             with c2:
                 dev = latest.get("dev_vs_median_pct")
-                st.metric(t(lang, "dev_median"),
-                          f"{dev:+.2f}%" if dev is not None else "—")
+                st.metric(t(lang, "dev_median"), fmt_dev(dev, pct=True))
             with c3:
                 st.metric(t(lang, "dev_close"), t(lang, "close_pending"))
             st.info(t(lang, "close_note"))
+            # v3 data-quality note: pools excluded from the deviation
+            # calculation (unreasonable quotes). Defensive: absent when
+            # the column is missing or the count is zero.
+            excl = get_pools_excluded().get(ticker, 0)
+            if excl and excl > 0:
+                st.info(t(lang, "pools_excluded_note", n=excl))
         else:
             st.markdown(t(lang, "no_data"))
         # 3. deviation chart
@@ -762,11 +964,16 @@ elif page == "ticker":
             horizontal=True, key="chart_window")
         hours = {"24h": 24, "7d": 168, "30d": 720}[window]
         series = get_chart_series(ticker, hours)
+        # Plain Altair, deliberately NOT .interactive(): wheel scrolling
+        # must move the page, never zoom the chart (audit).
         if len(series) >= 2:
             cdf = pd.DataFrame(
                 {"ts": pd.to_datetime([s[0] for s in series]),
-                 t(lang, "dev_median"): [s[1] for s in series]}).set_index("ts")
-            st.line_chart(cdf, width="stretch")
+                 "dev": [s[1] for s in series]})
+            cchart = alt.Chart(cdf).mark_line(color="#C2410C").encode(
+                x=alt.X("ts:T", title=None),
+                y=alt.Y("dev:Q", title=t(lang, "dev_median")))
+            st.altair_chart(cchart, width="stretch")
         else:
             st.markdown(t(lang, "no_data"))
         st.caption(t(lang, "chart_note"))
@@ -782,9 +989,9 @@ elif page == "ticker":
                 vrows.append({
                     t(lang, "col_dex"): v.get("dex"),
                     t(lang, "col_chain"): v.get("chain"),
-                    t(lang, "col_price_usd"): v.get("price_usd"),
-                    t(lang, "col_reserve"): reserve,
-                    t(lang, "col_vol"): v.get("volume_24h_usd"),
+                    t(lang, "col_price_usd"): fmt_usd(v.get("price_usd")),
+                    t(lang, "col_reserve"): fmt_usd(reserve),
+                    t(lang, "col_vol"): fmt_usd(v.get("volume_24h_usd")),
                     t(lang, "col_status"): status,
                     t(lang, "col_updated"): fmt_wita(v.get("ts"), lang),
                     t(lang, "dex_link_label"): (
@@ -793,12 +1000,6 @@ elif page == "ticker":
             st.dataframe(
                 pd.DataFrame(vrows),
                 column_config={
-                    t(lang, "col_price_usd"): st.column_config.NumberColumn(
-                        t(lang, "col_price_usd"), format="$%.2f"),
-                    t(lang, "col_reserve"): st.column_config.NumberColumn(
-                        t(lang, "col_reserve"), format="$%.2f"),
-                    t(lang, "col_vol"): st.column_config.NumberColumn(
-                        t(lang, "col_vol"), format="$%.2f"),
                     t(lang, "dex_link_label"): st.column_config.LinkColumn(
                         t(lang, "dex_link_label"),
                         display_text=t(lang, "dex_link_label")),
@@ -832,8 +1033,7 @@ elif page == "ticker":
             st.markdown(t(lang, "market_open"))
             dw = latest.get("depth_weighted_price") if latest else None
             spread = cross_venue_spread(venues, dw)
-            st.metric(t(lang, "spread_label"),
-                      f"{spread:+.2f}%" if spread is not None else "—")
+            st.metric(t(lang, "spread_label"), fmt_dev(spread, pct=True))
             st.caption(t(lang, "spread_note"))
         else:
             st.subheader(t(lang, "risk_title"))
@@ -861,11 +1061,11 @@ elif page == "ticker":
                     t(lang, "alert_col_type"): type_map.get(
                         (a.get("alert_type") or "").lower(),
                         a.get("alert_type") or "—"),
-                    t(lang, "alert_col_threshold"): a.get("threshold_pct"),
-                    t(lang, "alert_col_dev"): a.get("dev_at_alert_pct"),
-                    t(lang, "alert_col_depth"): a.get("depth_at_alert_usd"),
-                    t(lang, "alert_col_message"): a.get("message_text"),
-                    t(lang, "alert_col_outcome"): a.get("outcome"),
+                    t(lang, "alert_col_threshold"): fmt_dev(a.get("threshold_pct")),
+                    t(lang, "alert_col_dev"): fmt_dev(a.get("dev_at_alert_pct")),
+                    t(lang, "alert_col_depth"): fmt_usd(a.get("depth_at_alert_usd")),
+                    t(lang, "alert_col_message"): a.get("message_text") or "—",
+                    t(lang, "alert_col_outcome"): a.get("outcome") or "—",
                 })
             st.dataframe(pd.DataFrame(arows), width="stretch", hide_index=True)
         else:
@@ -940,7 +1140,16 @@ elif page == "ticker":
                     {pd.to_datetime(ts): v for ts, v in pts}, name=name))
         if frames:
             wide = pd.concat(frames, axis=1).sort_index()
-            st.line_chart(wide, width="stretch")
+            # Long form for one Altair overlay (plain, not interactive —
+            # same wheel-scroll rule as every other chart here). NaNs
+            # stay in place so lines break at gaps instead of bridging.
+            long = wide.reset_index().melt(
+                id_vars="index", var_name="ticker", value_name="dev")
+            ochart = alt.Chart(long).mark_line().encode(
+                x=alt.X("index:T", title=None),
+                y=alt.Y("dev:Q", title=t(lang, "dev_median")),
+                color=alt.Color("ticker:N", legend=alt.Legend(title=None)))
+            st.altair_chart(ochart, width="stretch")
         else:
             st.markdown(t(lang, "no_data"))
 
