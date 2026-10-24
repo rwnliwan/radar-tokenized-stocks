@@ -532,22 +532,27 @@ def home_table_block(lang):
     because those widgets live inside the fragment. Row click navigates
     to the ticker page; the guard below fires only when the selection
     actually changes, so returning home never re-navigates by itself."""
+    # Widget keys are language-scoped: Streamlit reuses a keyed widget's
+    # rendered labels across reruns, so a bare key would keep showing the
+    # previous language's formatted values after a toggle. Scoping the key
+    # by lang forces fresh widgets (and fresh labels) on toggle, while
+    # timer refreshes within one language keep the user's choices.
     sort_choice = st.selectbox(
         t(lang, "sort_label"), ["dev", "depth", "name"],
         format_func=lambda v: {"dev": t(lang, "sort_dev"),
                                "depth": t(lang, "sort_depth"),
                                "name": t(lang, "sort_name")}[v],
-        key="home_sort")
+        key=f"home_sort_{lang}")
     tier_choice = st.selectbox(
         t(lang, "tier_filter"), ["all", "1", "2"],
         format_func=lambda v: t(lang, "tier_all") if v == "all"
         else f"{t(lang, 'meta_tier')} {v}",
-        key="home_tier")
+        key=f"home_tier_{lang}")
     window_choice = st.selectbox(
         t(lang, "window_label"), [24, 168],
         format_func=lambda v: t(lang, "window_24h") if v == 24
         else t(lang, "window_7d"),
-        key="home_window")
+        key=f"home_window_{lang}")
 
     uni = {u["ticker_id"]: u for u in get_universe()}
     latest = get_latest_deviations()

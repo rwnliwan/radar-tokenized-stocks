@@ -229,7 +229,7 @@ STR = {
         "col_ticker": "Ticker",
         "col_tier": "Tier",
         "col_price": "Harga tertimbang kedalaman",
-        "col_dev": "Dev vs median %",
+        "col_dev": "Deviasi vs median %",
         "col_depth": "Kedalaman lolos",
         "col_pools": "Pool",
         "col_updated": "Diperbarui",
