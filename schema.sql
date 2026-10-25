@@ -90,9 +90,14 @@ CREATE TABLE IF NOT EXISTS por_feeds (
   checked_at TEXT NOT NULL
 );
 
+-- NOTE (Wave 3, 2026-10-25): alert_log.ticker_id deliberately has NO
+-- REFERENCES universe(ticker_id). The log legitimately records aggregate
+-- keys such as 'ALL' for batched alerts, which are not universe rows;
+-- the FK made every batch record fail (first live batch, 2026-10-25).
+-- pools/deviations keep their FK: they only ever carry real tickers.
 CREATE TABLE IF NOT EXISTS alert_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  ticker_id TEXT NOT NULL REFERENCES universe(ticker_id),
+  ticker_id TEXT NOT NULL,
   alert_ts TEXT NOT NULL,
   alert_type TEXT NOT NULL,
   threshold_pct REAL,
