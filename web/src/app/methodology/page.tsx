@@ -194,7 +194,7 @@ export default function MethodologyPage() {
   };
 
   return (
-    <div className="wrap method-wrap">
+    <div className="wrap">
       <Header lang={lang} onLangChange={toggleLang} active="methodology" />
       <h1>{t(lang, "methodology_title")}</h1>
       <p className="method-intro">{t(lang, "methodology_intro")}</p>

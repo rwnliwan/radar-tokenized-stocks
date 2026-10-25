@@ -43,7 +43,7 @@ export default function DonatePage() {
   };
 
   return (
-    <div className="wrap method-wrap">
+    <div className="wrap">
       <Header lang={lang} onLangChange={toggleLang} active="donate" />
       <h1>{t(lang, "donate_title")}</h1>
       <p>{t(lang, "donate_send")}</p>

@@ -30,7 +30,7 @@ export default function WaitlistPage() {
   };
 
   return (
-    <div className="wrap method-wrap">
+    <div className="wrap">
       <Header lang={lang} onLangChange={toggleLang} active="waitlist" />
       <h1>{t(lang, "waitlist_title")}</h1>
       <p>{t(lang, "waitlist_intro")}</p>
