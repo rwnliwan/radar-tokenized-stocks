@@ -283,3 +283,18 @@ begitu token asli terpasang.
   headers CORS})`.
 - Verifikasi hotfix: OPTIONS → 204 + header CORS; chunk homepage
   baru mengandung URL Worker; cek browser ulang daftar tahap 2.
+
+### Verifikasi hotfix (2026-10-25, lanjutan)
+- Deploy Pages PERTAMA salah direktori: `.vercel/output` (bukan
+  `.vercel/output/static`) → produksi 404 + chunk campur (bukti:
+  chunk cb09f7 tak dikenal, /ticker & /methodology 404, padahal
+  preview deploy juga 404). Pelajaran permanen: next-on-pages
+  WAJIB deploy `.vercel/output/static` (di sanalah _worker.js
+  tinggal; rute dinamis /ticker/[id] tidak di-prerender, jadi
+  tanpa worker rute itu tidak bisa tampil).
+- Deploy Ulang `.vercel/output/static` → Worker ter-compile
+  ("Compiled Worker successfully", _routes.json ter-upload).
+  Setelah jeda propagasi ~35 dtk, produksi BENAR: / 200 + chunk
+  homepage baru page-99d1b6ea89de5737.js (mengandung URL Worker),
+  /ticker 200, /ticker/TSLAx 200, /methodology 200.
+  Cek browser ulang daftar tahap 2 menyusul deploy ini.
