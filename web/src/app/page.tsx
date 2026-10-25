@@ -169,6 +169,14 @@ export default function Home() {
     verdictFacts.push(
       `${u(lang, "verdict_depth_min")}: ${minDepth.ticker} ${fmtDepth(minDepth.depth_usd)}`,
     );
+  /* Coverage honesty (QA 25 Okt): the verdict skips tickers without a
+     deviation, so say so in the card itself, counted live. */
+  if (data)
+    verdictFacts.push(
+      u(lang, "verdict_coverage")
+        .replace("{n}", String(data.tickers.filter((r) => r.dev_bps != null).length))
+        .replace("{total}", String(data.tickers.length)),
+    );
   const blips = useMemo(() => {
     const list = (data?.tickers ?? [])
       .filter((r) => r.dev_bps != null)
