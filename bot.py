@@ -169,16 +169,25 @@ def send_message(chat_id, text, dry_run=False):
     payload = json.dumps({
         "chat_id": chat_id, "text": text,
         "disable_web_page_preview": True,
-    }).encode()
-    req = urllib.request.Request(
-        f"https://api.telegram.org/bot{token}/sendMessage",
-        data=payload, headers={"Content-Type": "application/json"},
+    })
+    # curl, NOT urllib: urllib times out to api.telegram.org through this
+    # VM's egress proxy (verified 2026-10-25: two 30s timeouts), while
+    # curl succeeds in ~2s. Same pattern as _db_pipeline above.
+    r = subprocess.run(
+        ["curl", "-s", "--max-time", "30",
+         f"https://api.telegram.org/bot{token}/sendMessage",
+         "-H", "Content-Type: application/json",
+         "-d", payload],
+        capture_output=True, text=True,
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Telegram send HTTP {e.code}") from e
+        data = json.loads(r.stdout)
+    except ValueError:
+        raise RuntimeError(
+            f"Telegram send transport failure (curl rc={r.returncode})")
+    if not data.get("ok"):
+        raise RuntimeError(f"Telegram send error: {data}")
+    return data
 
 
 # --- Market calendar (same NYSE list as the poller) ---
