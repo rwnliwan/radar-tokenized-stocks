@@ -113,15 +113,41 @@ export default function Home() {
     return w;
   }, [data]);
 
-  /* v3: exit verdict from the worst deviation (display-only) + radar
-     blips for the whole universe (unfiltered — the scope shows all). */
+  /* v3.1 (opsi A, ACC Septian 25 Okt): DEX verdict from THREE signals, not
+     deviation alone — a low deviation must not certify an exit when the
+     spread is wide or depth is thin. Danger comes only from deviation
+     (≥100 bps, the established tier); spread ≥1% and depth <$250k demote
+     to caution at most — no invented thresholds. Missing signals are
+     skipped, never zeroed. Redemption and PoR stay out of this verdict
+     and are shown separately (stat strip below). */
+  const worstSpread = useMemo(() => {
+    let w: TickerRow | null = null;
+    for (const r of data?.tickers ?? []) {
+      if (r.spread_pct == null) continue;
+      if (!w || r.spread_pct > (w.spread_pct ?? 0)) w = r;
+    }
+    return w;
+  }, [data]);
+  const minDepth = useMemo(() => {
+    let m: TickerRow | null = null;
+    for (const r of data?.tickers ?? []) {
+      if (r.depth_usd == null) continue;
+      if (!m || r.depth_usd < (m.depth_usd ?? Infinity)) m = r;
+    }
+    return m;
+  }, [data]);
   const verdict = useMemo(() => {
-    if (!worst || worst.dev_bps == null) return null;
-    const a = Math.abs(worst.dev_bps);
-    if (a < 50) return "safe";
-    if (a < 100) return "caution";
-    return "danger";
-  }, [worst]);
+    const wd = worst != null ? Math.abs(worst.dev_bps ?? 0) : null;
+    if (wd == null && worstSpread == null && minDepth == null) return null;
+    if (wd != null && wd >= 100) return "danger";
+    if (
+      (wd != null && wd >= 50) ||
+      (worstSpread != null && (worstSpread.spread_pct ?? 0) >= 1) ||
+      (minDepth != null && (minDepth.depth_usd ?? Infinity) < 250000)
+    )
+      return "caution";
+    return "safe";
+  }, [worst, worstSpread, minDepth]);
   const verdictText =
     verdict == null
       ? "—"
@@ -130,22 +156,19 @@ export default function Home() {
         : verdict === "caution"
           ? u(lang, "verdict_caution")
           : u(lang, "verdict_danger");
-  const counts = useMemo(() => {
-    const ts = data?.tickers ?? [];
-    return {
-      watch: ts.filter((r) => r.status === "watch").length,
-      alert: ts.filter((r) => r.status === "alert").length,
-    };
-  }, [data]);
-  const verdictSummary =
-    counts.watch === 0 && counts.alert === 0
-      ? u(lang, "verdict_all_ok")
-      : [
-          counts.watch > 0 ? `${counts.watch} Watch` : null,
-          counts.alert > 0 ? `${counts.alert} Alert` : null,
-        ]
-          .filter((x): x is string => x != null)
-          .join(", ");
+  const verdictFacts: string[] = [];
+  if (worst)
+    verdictFacts.push(
+      `${u(lang, "verdict_dev_worst")}: ${worst.ticker} ${fmtSigned1(worst.dev_bps)} bps`,
+    );
+  if (worstSpread)
+    verdictFacts.push(
+      `${u(lang, "verdict_spread_worst")}: ${worstSpread.ticker} ${worstSpread.spread_pct?.toFixed(2)}%`,
+    );
+  if (minDepth)
+    verdictFacts.push(
+      `${u(lang, "verdict_depth_min")}: ${minDepth.ticker} ${fmtDepth(minDepth.depth_usd)}`,
+    );
   const blips = useMemo(() => {
     const list = (data?.tickers ?? [])
       .filter((r) => r.dev_bps != null)
@@ -351,14 +374,7 @@ export default function Home() {
               <div className={`vtext ${verdict ?? ""}`}>{verdictText}</div>
               <div className="worst">{worst ? fmtSigned1(worst.dev_bps) + " bps" : "—"}</div>
               <div className="sub">
-                {worst
-                  ? t(lang, "kpi_worst_sub", {
-                      ticker: worst.ticker,
-                      depth: fmtDepth(worst.depth_usd),
-                    })
-                  : t(lang, "no_data")}
-                <br />
-                {verdictSummary}
+                {verdictFacts.length ? verdictFacts.join(" · ") : t(lang, "no_data")}
               </div>
               <div className="rule">{u(lang, "verdict_rule")}</div>
             </div>
