@@ -363,3 +363,16 @@ begitu token asli terpasang.
 - Rollback (bila cutover bermasalah): CNAME kembali ke
   radar-redirect.rwnliwan.workers.dev + route dihidupkan lagi
   (keduanya via dashboard); Streamlit tetap live sebagai fallback.
+
+## Perbaikan metodologi — teks "numpuk" (feedback Septian 2026-10-25)
+
+- Keluhan: halaman /methodology = intro + 10 paragraf panjang yang
+  hanya dipisah <hr /> — tembok teks tanpa hierarki.
+- Perbaikan (struktur saja, kata paragraf TIDAK diubah): 10 paragraf
+  dikelompokkan ke 9 seksi berjudul (Deviasi & spread [2 paragraf],
+  Kedalaman, Redemption, Proof of reserve, Status & alert, Sumber &
+  data, Batasan, Metodologi diperiksa manusia, Segera hadir) via
+  kunci UI method_h_* EN+ID; lebar baca dipersempit ke 820px;
+  spasi antar-seksi 38px, antar-paragraf 16px; <hr /> hanya sebelum
+  footer. Berlaku di Pages sekarang; ikut ke radar.omdanny.site
+  setelah cutover (deployment yang sama).

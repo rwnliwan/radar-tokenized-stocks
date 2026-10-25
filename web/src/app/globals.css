@@ -204,7 +204,10 @@ nav a:hover { color: #e6eaf2; text-decoration: underline; }
 .formerror { color: #fca5a5; font-size: 14px; margin: 0; }
 
 .method-intro { font-size: 16px; line-height: 1.65; color: #e6eaf2; }
-.method { font-size: 15px; line-height: 1.7; color: #cbd5e1; }
+.method { font-size: 15px; line-height: 1.7; color: #cbd5e1; margin: 0 0 16px; }
+.method-wrap { max-width: 820px; }
+.method-section { margin: 38px 0 8px; }
+.method-section h2 { font-size: 19px; color: #f1f5f9; margin: 0 0 12px; }
 hr { border: 0; border-top: 1px solid #1e293b; margin: 22px 0; }
 section#waitlist { margin-top: 26px; }
 
