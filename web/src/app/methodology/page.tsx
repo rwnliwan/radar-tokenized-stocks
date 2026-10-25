@@ -201,7 +201,9 @@ const SECTIONS: { id: string; heading: string; keys: string[] }[] = [
 // Live alert history (ACC design): 30 latest rows from /api/alerts.
 // Unknown recorded types render as-is (legacy batch rows); rows without a
 // valid ticker page (e.g. the aggregate 'ALL' batch key) get no link.
-const TICKER_RE = /^[A-Z0-9]+X$/;
+// NOTE: DB tickers are mixed-case ('TSLAx'), so the check must allow a
+// lowercase x — unlike the Worker's uppercased param check.
+const TICKER_RE = /^[A-Z0-9]+x$/;
 
 const HIST_TYPE_KEYS: Record<string, string> = {
   spread: "hist_type_spread",
