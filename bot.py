@@ -282,6 +282,7 @@ DEPTH_MIN = 250000.0
 POR_STALE_HOURS = 72.0
 DEDUP_HOURS = 24.0
 STALE_MINUTES = 30.0
+SEND_DELAY_S = 2  # ACC 25 Okt: short pause between alert sends (was back-to-back)
 
 
 def evaluate_alerts(tickers_data, market_open):
@@ -799,6 +800,7 @@ def main():
                         sent_any = True
                         print(f"ALERT sent ({lang}): "
                               f"{a['type']} {a['ticker']}")
+                        time.sleep(SEND_DELAY_S)
                     except Exception as e:
                         print(f"ALERT send failed ({lang}): "
                               f"{a['type']} {a['ticker']}: {e}")
