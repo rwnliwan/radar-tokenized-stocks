@@ -35,6 +35,12 @@ header{display:flex;justify-content:space-between;align-items:center;flex-wrap:w
 .logo b{color:var(--accent)}
 nav{display:flex;gap:18px;color:var(--muted);font-size:14px}
 nav b{color:var(--text)}
+/* v1.1: top nav as ONE segmented button container (not loose text links). */
+.navseg{display:inline-flex;gap:2px;border:1px solid var(--border);border-radius:8px;padding:2px}
+.navseg a,.navseg span{color:var(--muted);text-decoration:none;cursor:pointer;
+  padding:4px 12px;border-radius:6px;font-size:14px;white-space:nowrap}
+.navseg a:hover,.navseg span:hover{color:var(--text)}
+.navseg .active{background:var(--border);color:var(--text);font-weight:600}
 .seg{display:inline-flex;gap:2px;border:1px solid var(--border);border-radius:8px;padding:2px}
 .seg button{background:none;border:0;color:var(--muted);cursor:pointer;padding:3px 9px;border-radius:6px;font-size:13px}
 .seg button[aria-pressed="true"]{background:var(--border);color:var(--text)}
@@ -74,6 +80,9 @@ tbody tr:hover td{background:var(--surface2);filter:brightness(1.15)}
 .foot{color:var(--muted);font-size:13px;line-height:1.6;border-top:1px solid var(--border);margin-top:26px;padding-top:14px}
 /* Row-cards on narrow portrait phones (replaces horizontal table swipe). */
 .rowcards{display:none}
+@media (max-width:400px){
+  .navseg a{padding:4px 8px;font-size:13px}
+}
 @media (max-width:520px){
   .hero{grid-template-columns:1fr}
   .tblwrap{display:none}
@@ -95,11 +104,11 @@ tbody tr:hover td{background:var(--surface2);filter:brightness(1.15)}
 </style>
 </head>
 <body>
-<div class="badge-mock">MOCKUP DESAIN v1 — DATA CONTOH, BUKAN SITUS LIVE</div>
+<div class="badge-mock">MOCKUP DESAIN v1.1 — NAV SEGMENTED · DATA CONTOH, BUKAN SITUS LIVE</div>
 <div class="wrap">
   <header>
     <div class="logo">EXIT <b>RADAR</b></div>
-    <nav><b>Home</b><span>Ticker</span><span>Methodology</span><span>Waitlist</span></nav>
+    <nav class="navseg"><a class="active">Home</a><a>Ticker</a><a>Methodology</a><a>Waitlist</a></nav>
     <div class="seg" role="group" aria-label="Tema">
       <button id="btn-dark" aria-pressed="true" onclick="setTheme('dark')">Gelap</button>
       <button id="btn-light" aria-pressed="false" onclick="setTheme('light')">Terang</button>
