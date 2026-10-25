@@ -11,8 +11,9 @@ Rhythm (design §3.1):
   is observed since Wave 3 (A+B, ACC'd): schedule-derived status from
   the official xStocks 24/5 rule + NYSE calendar, with an hourly
   on-chain pause/supply check over the 13 mints via PUBLIC Solana RPC
-  (no keys). PoR still has no automated source, so that half of the
-  slot still only records the fact (see HOURLY note below).
+  (no keys). PoR is observed since v1 (ACC'd): hourly freshness from
+  the public xStocks PoR API (no keys), one issuer-level row, age set
+  by the stalest token.
 - Equity close: once per NYSE day after close. No licensed equity source
   is configured (median-only mode per parent decision), so the slot only
   records that fact; dev_vs_close_pct stays NULL.
@@ -236,6 +237,94 @@ def run_hourly_redemption(cycle_dt, state, dry_run=False):
     return ""
 
 
+POR_API_BASE = "https://api.xstocks.fi/api/v2/public/proof-of-reserves"
+
+
+def por_symbol_info(symbol):
+    """(record_or_None, err_or_None) via the public xStocks PoR API.
+    No auth, no key. Never raises, never fabricates."""
+    url = f"{POR_API_BASE}/{symbol}"
+    err = ""
+    for _attempt in range(2):
+        r = subprocess.run(
+            ["curl", "-s", "--max-time", "15", url],
+            capture_output=True, text=True)
+        try:
+            d = json.loads(r.stdout)
+            if d.get("symbol") == symbol and d.get("timestamp"):
+                return d, ""
+            err = f"unexpected payload for {symbol}"
+        except Exception as e:
+            err = f"PoR API error: {e}"
+        time.sleep(3)
+    return None, err
+
+
+def parse_por_ts(ts):
+    """ISO 8601 with millis + Z -> aware UTC datetime (None on failure)."""
+    try:
+        return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+    except Exception:
+        try:
+            return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+
+def run_hourly_por(cycle_dt, state, dry_run=False):
+    """One hourly PoR observation (v1, ACC'd): freshness only.
+
+    Fetches the public xStocks PoR API per symbol (13 requests, no auth)
+    — the list endpoint paginates and page 1 holds none of our 13
+    tickers, so per-symbol calls are the reliable shape. Writes ONE
+    issuer-level row to por_feeds (existing table — no schema
+    migration) in its own pipeline call, so a failure here never breaks
+    the deviation cycle. Age is set by the STALEST token, not the
+    average, so one stale token alone trips the 72h bot trigger.
+    With dry_run=True nothing is written and the row is printed.
+    Returns a gap_note fragment ('' when unremarkable)."""
+    now_utc = datetime.now(UTC)
+    recs, missing = {}, []
+    for tick in XSTOCKS_MINTS:
+        rec, _err = por_symbol_info(tick)
+        if rec:
+            recs[tick] = rec
+        else:
+            missing.append(tick)
+        time.sleep(0.2)
+    stamps = []
+    for tick, rec in recs.items():
+        dt = parse_por_ts(rec["timestamp"])
+        if dt:
+            stamps.append((dt, rec["timestamp"]))
+    if not stamps:
+        return "hourly PoR fetch failed: no usable token timestamps"
+    oldest_dt, oldest_ts = min(stamps)
+    age = max(0.0, round((now_utc - oldest_dt).total_seconds() / 3600, 1))
+    cycle_ts = cycle_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    row = ["xStocks", POR_API_BASE, oldest_ts, age, None, cycle_ts]
+    if dry_run:
+        print(f"DRY-RUN por tokens={len(recs)}/13 missing={missing or '-'} "
+              f"oldest={oldest_ts} age_h={age}")
+        print(f"DRY-RUN row={row}")
+        return ""
+    try:
+        pipeline([(
+            "INSERT INTO por_feeds (issuer, feed_address, last_update_ts,"
+            " age_hours, reserves_vs_supply_note, checked_at)"
+            " VALUES (?,?,?,?,?,?)",
+            row,
+        )])
+    except Exception as e:
+        log(f"HOURLY PoR write FAILED: {e}")
+        return f"hourly PoR write failed: {e}"
+    log(f"HOURLY PoR tokens={len(recs)}/13 missing={missing or '-'} "
+        f"oldest={oldest_ts} age_h={age}")
+    if missing:
+        return f"hourly PoR missing tokens: {', '.join(missing)}"
+    return ""
+
+
 def in_tight_window(now_utc):
     """True if now falls in +/-30 min around 09:30 or 16:00 ET on a trading day."""
     et = now_utc.astimezone(ET)
@@ -436,7 +525,7 @@ def run_cycle(cycle_dt):
              n_excluded, None, None, None, "v1-median-only"],
         ))
 
-    # Hourly slot: redemption & PoR (no automated source configured yet).
+    # Hourly slot: redemption & PoR (both automated since Wave 3 / PoR v1).
     state = load_state()
     gap_bits = []
     if guard_notes:
@@ -453,13 +542,19 @@ def run_cycle(cycle_dt):
         # A failure here must never break the deviation cycle, so the
         # hourly write lives in its own pipeline call inside
         # run_hourly_redemption; only its gap fragment lands here.
-        # NOTE: PoR still has no automated source (unchanged).
         try:
             _frag = run_hourly_redemption(cycle_dt, state)
             if _frag:
                 gap_bits.append(_frag)
         except Exception as _e:
             gap_bits.append(f"hourly redemption failed: {_e}")
+        # PoR v1 (ACC'd): same isolation pattern as redemption.
+        try:
+            _frag = run_hourly_por(cycle_dt, state)
+            if _frag:
+                gap_bits.append(_frag)
+        except Exception as _e:
+            gap_bits.append(f"hourly PoR failed: {_e}")
         state["last_hourly_check"] = now_iso
     # Equity-close slot: once per NYSE day after 16:30 ET (median-only mode).
     et = cycle_dt.astimezone(ET)
@@ -490,6 +585,7 @@ def main():
         # (live public-RPC reads) and print it WITHOUT writing anything.
         now = datetime.now(UTC).replace(second=0, microsecond=0)
         run_hourly_redemption(now, {}, dry_run=True)
+        run_hourly_por(now, {}, dry_run=True)
         return 0
     if "--test-windows" in sys.argv:
         cases = [
