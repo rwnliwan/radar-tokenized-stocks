@@ -1,0 +1,4 @@
+name = "radar-api"
+main = "worker.js"
+compatibility_date = "2026-10-25"
+# Secrets (never in this file): TURSO_AUTH_TOKEN via `wrangler secret put`.
