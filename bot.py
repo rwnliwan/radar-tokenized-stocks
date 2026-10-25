@@ -8,10 +8,10 @@ notes below):
   deviation alert. Median basis is labeled as such: vs-close is NULL
   in median-only mode (license pending), so no vs-close alert fires.
 - Redemption: live rule fires on latest status closed/gated/paused
-  (24h dedup). BATCHED: all tickers sharing one status are sent as
-  ONE message per status group (ticker key 'ALL'), never one
-  message per ticker — a closed Sunday is 1 message per channel,
-  not 13. ADAPTATION: the schema has no close-time column, so
+  (24h dedup). PER-TICKER (un-batched 2026-10-25, Septian's call):
+  one message per ticker — a closed Sunday is 13 messages per
+  channel per day (24h dedup re-fires daily while closed).
+  ADAPTATION: the schema has no close-time column, so
   the design's "closing within <=24h" rule cannot be computed live
   yet; it needs a future next_close_at column. The dry-run scenario
   demonstrates the intended <=24h message format with synthetic data.
@@ -22,14 +22,12 @@ notes below):
   which does not exist yet — the condition is logged, not sent).
 
 Dedup: same (ticker, alert_type) is not re-sent within 24h of a
-logged alert (any outcome). A redemption batch dedups on the key
-('ALL', 'redemption_batch') — one alert_log row per batch; while a
-batch is within its 24h window no per-ticker repeat of it can fire,
-because per-ticker redemption alerts are no longer emitted at all.
-A paused batch uses a DISTINCT key ('ALL', 'redemption_batch_paused')
-so a closed batch recorded within 24h can never suppress a paused
-alert (and vice versa). Paused is HIGH priority: red head marker,
-same severity vocabulary as the deviation_high alert.
+logged alert (any outcome). Redemption dedups per ticker:
+('TSLAx', 'redemption') and ('TSLAx', 'redemption_paused') are
+DISTINCT keys, so a recorded closed alert never suppresses a
+paused alert for the same ticker (and vice versa). Paused is HIGH
+priority: red head marker, same severity vocabulary as the
+deviation_high alert.
 Accuracy outcomes (§5.4) are evaluated
 by a later job, not here; new rows start as 'pending'.
 
@@ -292,14 +290,12 @@ def evaluate_alerts(tickers_data, market_open):
     pools_used, median, redemption_status, redemption_note, next_open_at,
     por_age_hours, por_last_update.
     Returns list of alert dicts (no I/O, no sends).
-    Redemption alerts are BATCHED: per-ticker candidates with status
-    closed/gated/paused are grouped by status into ONE batch alert
-    per group (ticker key 'ALL', members listed inside). Closed and
-    gated batches use type 'redemption_batch'; a paused batch uses
-    type 'redemption_batch_paused' so its 24h dedup key is distinct
-    from a closed batch's key. Other alert types stay per-ticker."""
+    Redemption alerts are PER-TICKER (un-batched 2026-10-25): one
+    alert per ticker with status closed/gated (type 'redemption')
+    or paused (type 'redemption_paused', a distinct dedup key so a
+    closed alert never suppresses a paused alert for the same
+    ticker). Other alert types stay per-ticker as before."""
     alerts = []
-    red_groups = {}
     for d in tickers_data:
         venues = [v for v in d.get("venues", [])
                   if v.get("price") is not None and v.get("reserve") is not None]
@@ -329,10 +325,19 @@ def evaluate_alerts(tickers_data, market_open):
                 "depth": depth, "pools_used": d.get("pools_used"),
             })
         status = (d.get("redemption_status") or "").lower()
-        if status in ("closed", "gated", "paused"):
-            red_groups.setdefault(status, []).append({
-                "ticker": d["ticker"],
-                "issuer": d.get("issuer"),
+        if status in ("closed", "gated"):
+            alerts.append({
+                "type": "redemption", "ticker": d["ticker"],
+                "issuer": d.get("issuer"), "status": status,
+                "next_open_at": d.get("next_open_at"),
+                "closes_within_24h": d.get("closes_within_24h", False),
+                "dw": d.get("dw"), "depth": depth,
+                "pools_used": d.get("pools_used"),
+            })
+        elif status == "paused":
+            alerts.append({
+                "type": "redemption_paused", "ticker": d["ticker"],
+                "issuer": d.get("issuer"), "status": status,
                 "next_open_at": d.get("next_open_at"),
                 "closes_within_24h": d.get("closes_within_24h", False),
                 "dw": d.get("dw"), "depth": depth,
@@ -347,29 +352,9 @@ def evaluate_alerts(tickers_data, market_open):
                 "dw": d.get("dw"), "depth": depth,
                 "pools_used": d.get("pools_used"),
             })
-    # One batch alert per redemption status group (empty group = no
-    # alert; mixed statuses = separate batches). The note is NOT
-    # carried per ticker: the DB window_note is Indonesian, and the
-    # batch format uses a fixed language-appropriate sentence per
-    # channel instead (see format_alert), so EN never leaks ID text.
-    for status, members in red_groups.items():
-        nxt = next((m["next_open_at"] for m in members
-                    if m.get("next_open_at")), None)
-        # Paused gets its own alert type so its dedup key
-        # ('ALL', 'redemption_batch_paused') is distinct from a
-        # closed batch's key ('ALL', 'redemption_batch').
-        alerts.append({
-            "type": ("redemption_batch_paused" if status == "paused"
-                     else "redemption_batch"),
-            "ticker": "ALL",
-            "issuer": members[0].get("issuer"),
-            "status": status,
-            "tickers": [m["ticker"] for m in members],
-            "members": members,
-            "next_open_at": nxt,
-            "closes_within_24h": any(m.get("closes_within_24h")
-                                     for m in members),
-        })
+    # Note: the DB window_note is Indonesian, so it is NOT carried
+    # into messages; format_alert uses a fixed language-appropriate
+    # sentence per channel instead, so EN never leaks ID text.
     return alerts
 
 
@@ -392,22 +377,18 @@ BOT_STR = {
                     "Note: vs-close is unavailable (data license pending), "
                     "so this alert uses the median basis."),
         "red_head": "🟡 REDEMPTION — {ticker} ({issuer})",
+        "red_paused_head": "🔴 REDEMPTION PAUSED — {ticker} ({issuer})",
         "red_body": ("Redemption window status: {status}\n"
                     "Depth-weighted price: ${dw:,.2f} · "
                     "Qualifying depth: ${depth:,.0f} across {n} pools\n"
                     "{note}\n"
                     "Next opening: {nxt}\n"
                     "Tracked venues for this ticker are listed on its page."),
-        "red_batch_head": "🟡 REDEMPTION — {n} tickers ({issuer})",
-        "red_batch_status": "Redemption window status: {status}",
         "red_batch_status_closed": "closed",
         "red_batch_status_gated": "gated",
-        "red_batch_tickers": "Tickers:",
-        "red_batch_next": "Next opening: {nxt}",
         "red_batch_within24h": "within 24h",
         "red_batch_note": ("Status derived from the official 24/5 schedule "
                            "and NYSE calendar — not confirmed live by the issuer."),
-        "red_batch_paused_head": "🔴 REDEMPTION PAUSED — {n} tickers ({issuer})",
         "red_batch_paused_priority": ("High priority: on-chain pause detected — "
                                       "redemption is halted regardless of schedule."),
         "red_batch_status_paused": "paused (on-chain)",
@@ -439,22 +420,18 @@ BOT_STR = {
                     "Catatan: vs-close belum tersedia (lisensi menunggu), "
                     "jadi alert ini memakai basis median."),
         "red_head": "🟡 REDEMPTION — {ticker} ({issuer})",
+        "red_paused_head": "🔴 REDEMPTION DIJEDA — {ticker} ({issuer})",
         "red_body": ("Status jendela redemption: {status}\n"
                     "Harga tertimbang kedalaman: ${dw:,.2f} · "
                     "Kedalaman lolos: ${depth:,.0f} di {n} pool\n"
                     "{note}\n"
                     "Pembukaan berikutnya: {nxt}\n"
                     "Venue yang dilacak untuk ticker ini ada di halamannya."),
-        "red_batch_head": "🟡 REDEMPTION — {n} ticker ({issuer})",
-        "red_batch_status": "Status jendela redemption: {status}",
         "red_batch_status_closed": "tutup",
         "red_batch_status_gated": "terbatas (KYC)",
-        "red_batch_tickers": "Ticker:",
-        "red_batch_next": "Pembukaan berikutnya: {nxt}",
         "red_batch_within24h": "dalam 24 jam",
         "red_batch_note": ("Status dihitung dari jadwal resmi 24/5 "
                            "dan kalender NYSE — bukan konfirmasi live dari issuer."),
-        "red_batch_paused_head": "🔴 REDEMPTION DIJEDA — {n} ticker ({issuer})",
         "red_batch_paused_priority": ("Prioritas tinggi: jeda on-chain terdeteksi — "
                                       "redemption berhenti apa pun jadwalnya."),
         "red_batch_status_paused": "dijeda (on-chain)",
@@ -492,13 +469,22 @@ def format_alert(alert, lang="en"):
             dw=alert["dw"], dev=alert["dev_pct"], thr=DEV_HIGH_THRESHOLD,
             depth=alert["depth"] or 0, n=alert["pools_used"] or 0,
             median=alert["median"])
-    elif alert["type"] == "redemption":
-        head = s["red_head"].format(ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
-        nxt = alert.get("next_open_at") or ("within 24h" if alert.get("closes_within_24h") else "—")
+    elif alert["type"] in ("redemption", "redemption_paused"):
+        paused = alert["type"] == "redemption_paused"
+        head = (s["red_paused_head"] if paused else s["red_head"]).format(
+            ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
+        status_txt = (s["red_batch_status_paused"] if paused
+                      else s.get("red_batch_status_" + alert["status"],
+                                 alert["status"]))
+        note = s["red_batch_paused_note"] if paused else s["red_batch_note"]
+        nxt = alert.get("next_open_at") or (
+            s["red_batch_within24h"] if alert.get("closes_within_24h") else "—")
         body = s["red_body"].format(
-            status=alert["status"], note=alert.get("note") or "", nxt=nxt,
+            status=status_txt, note=note, nxt=nxt,
             dw=alert.get("dw") or 0, depth=alert.get("depth") or 0,
             n=alert.get("pools_used") or 0)
+        if paused:
+            body = s["red_batch_paused_priority"] + "\n" + body
     elif alert["type"] == "por":
         head = s["por_head"].format(ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
         body = s["por_body"].format(
@@ -506,42 +492,6 @@ def format_alert(alert, lang="en"):
             upd=alert.get("last_update") or "—",
             dw=alert.get("dw") or 0, depth=alert.get("depth") or 0,
             n=alert.get("pools_used") or 0)
-    elif alert["type"] in ("redemption_batch", "redemption_batch_paused"):
-        members = alert["members"]
-        paused = alert["type"] == "redemption_batch_paused"
-        head = (s["red_batch_paused_head"] if paused
-                else s["red_batch_head"]).format(
-            n=len(members), issuer=alert.get("issuer") or "—")
-        status_txt = s["red_batch_status_" + alert["status"]]
-        nxt = alert.get("next_open_at")
-        if not nxt:
-            nxt = s["red_batch_within24h"] if alert.get("closes_within_24h") else "—"
-        lines = []
-        if paused:
-            lines.append(s["red_batch_paused_priority"])
-        lines.append(s["red_batch_status"].format(status=status_txt))
-        lines.append(f"{s['red_batch_tickers']} {', '.join(alert['tickers'])}")
-        for m in members:
-            parts = [m["ticker"]]
-            if lang == "id":
-                if m.get("dw") is not None:
-                    parts.append(f"Harga tertimbang kedalaman: ${m['dw']:,.2f}")
-                if m.get("depth") is not None:
-                    parts.append(f"Kedalaman lolos: ${m['depth']:,.0f} "
-                                 f"di {m.get('pools_used') or 0} pool")
-            else:
-                if m.get("dw") is not None:
-                    parts.append(f"Depth-weighted price: ${m['dw']:,.2f}")
-                if m.get("depth") is not None:
-                    parts.append(f"Qualifying depth: ${m['depth']:,.0f} "
-                                 f"across {m.get('pools_used') or 0} pools")
-            lines.append(" — ".join(parts))
-        lines.append(s["red_batch_next"].format(nxt=nxt))
-        lines.append(s["red_batch_paused_note"] if paused else s["red_batch_note"])
-        body = "\n".join(lines)
-        # A batch covers many tickers: link the dashboard home, not a
-        # single ticker page (and never a bogus .../ALL page).
-        link = TICKER_PAGE_BASE + "/"
     else:
         raise ValueError(f"unknown alert type {alert['type']}")
     return f"{head}\n{body}\n{link}\n{s['disclaimer']}"
