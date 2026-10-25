@@ -313,6 +313,9 @@ nav a:hover { color: var(--text); text-decoration: underline; }
 
 .method-intro { font-size: 16px; line-height: 1.65; color: var(--text); }
 .method { font-size: 15px; line-height: 1.7; color: var(--text2); margin: 0 0 20px; }
+.method-list { font-size: 15px; line-height: 1.7; color: var(--text2); margin: 0 0 20px 1.25em; padding: 0; }
+.method-list li { margin: 0 0 8px; }
+.method-label { font-size: 15px; font-weight: 600; color: var(--text); margin: 0 0 6px; }
 .method-wrap { max-width: 820px; }
 /* Anti-pile, 2026-10-25: each section gets a visible rule above it, so
    sections read as separate blocks instead of one stacked wall. Words
@@ -356,6 +359,7 @@ table.thresh th { color: var(--muted); font-size: 12px; letter-spacing: 0.06em; 
 .qrbox img { display: block; }
 @media (max-width: 760px) {
   .method { font-size: 16px; line-height: 1.8; }
+  .method-list, .method-label { font-size: 16px; line-height: 1.8; }
   .method-section { padding-top: 26px; }
 }
 hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
