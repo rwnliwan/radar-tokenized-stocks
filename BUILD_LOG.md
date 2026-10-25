@@ -455,3 +455,14 @@ begitu token asli terpasang.
   deployment preview 7c91fe69.pages.dev 200 (shell SPA — grep
   "All tickers" 0 normal untuk SPA, bukan bukti error).
   Penentu: hasil buka HP Septian + status monitor UptimeRobot.
+
+### Recheck pasca pasang-ulang domain (2026-10-25 12:58 WITA)
+- Domain baru (id 18435cec) status ACTIVE + verifikasi ACTIVE,
+  tapi jalur VM MASIH 404. Pasang ulang saja tidak memperbaiki.
+- Cek Page Rules / Ruleset TERBLOKIR token (9109/10000) — tidak
+  bisa disingkirkan dari sisi induk; bukan tersangka utama.
+- Langkah berikut (butuh action Septian, sesuai permintaannya):
+  toggle CNAME radar Proxied -> DNS-only, tunggu ~1 menit, cek
+  dari HP. Alasan: memisahkan apakah tepi proxy zona yang menelan
+  request vs binding Pages yang rusak. Aman + reversibel (satu
+  klik kembali ke Proxied).
