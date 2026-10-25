@@ -511,3 +511,11 @@ begitu token asli terpasang.
   (desktop gelap/terang, HP portrait gelap) — keduanya
   terverifikasi render sebelum dikirim. Toggle tema jalan di
   file HTML; kartu baris HP portrait tampil benar.
+
+### Mockup desain v2 — versi terbaik (2026-10-25 13:21 WITA)
+- Font asli Inter + JetBrains Mono (Google Fonts, fallback
+  sistem); KPI 4 kartu -> hero band + strip ramping (PERUBAHAN
+  dari strip KPI v3.2 yang di-ACC — bisa diveto Septian);
+  halaman ticker penuh (metrics + chart + venue + redemption
+  + skor risiko); seksi metodologi contoh. 4 tangkapan
+  (desktop gelap/terang, HP gelap/terang) terverifikasi render.
