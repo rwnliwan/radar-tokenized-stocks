@@ -265,7 +265,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                   </tbody>
                 </table>
               </div>
-              <p className="hint">{u(lang, "venues_note")}</p>
+              <p className="hint tbl-note">{u(lang, "venues_note")}</p>
             </>
           ) : (
             <p className="hint">{t(lang, "no_data")}</p>

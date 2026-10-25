@@ -134,6 +134,9 @@ nav .soon { color: var(--muted); }
 
 h2 { font-size: 17px; margin: 22px 0 10px; }
 .hint { color: var(--muted); font-size: 13px; margin: -4px 0 10px; line-height: 1.5; }
+/* Notes directly under a table (venues note): the base .hint pulls -4px
+   up, which reads as cramped against the table border — give it a real gap. */
+.tbl-note { margin-top: 12px; }
 .controls { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin: 0 0 12px; }
 .seg { display: inline-flex; gap: 2px; border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
 .seg button {
