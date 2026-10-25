@@ -40,8 +40,6 @@ import os
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -188,6 +186,46 @@ def send_message(chat_id, text, dry_run=False):
     if not data.get("ok"):
         raise RuntimeError(f"Telegram send error: {data}")
     return data
+
+
+def tg_api(method, params):
+    """Telegram Bot API call via curl (urllib times out via this VM's proxy)."""
+    token = get_bot_token()
+    qs = "&".join(f"{k}={v}" for k, v in params.items())
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    if qs:
+        url += "?" + qs
+    r = subprocess.run(["curl", "-s", "--max-time", "40", url],
+                       capture_output=True, text=True)
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        raise RuntimeError(f"Telegram API transport failure ({method})")
+    if not data.get("ok"):
+        raise RuntimeError(f"Telegram API error ({method}): {data}")
+    return data
+
+
+def load_update_state(path):
+    try:
+        with open(path) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def save_update_state(path, offset, lang_by_chat):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump({"offset": offset,
+                   "lang": {str(k): v for k, v in lang_by_chat.items()}}, f)
+    os.replace(tmp, path)
+
+
+def default_offset_path():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        ".bot_updates.json")
 
 
 # --- Market calendar (same NYSE list as the poller) ---
@@ -579,6 +617,12 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--evaluate-live", action="store_true")
     ap.add_argument("--live", action="store_true")
+    ap.add_argument("--once", action="store_true",
+                    help="one alert pass for cron: drain commands, then "
+                    "evaluate + send once, then exit")
+    ap.add_argument("--offset-file", default=None,
+                    help="getUpdates offset state file "
+                    "(default: .bot_updates.json next to bot.py)")
     args = ap.parse_args()
     if args.dry_run:
         dry_run_scenarios()
@@ -599,6 +643,74 @@ def main():
             print(f"--- {a['type']} {a['ticker']} (dedup suppressed: {dup}) ---")
             if not dup:
                 print(format_alert(a, "en"))
+        return 0
+    if args.once:
+        offset_path = args.offset_file or default_offset_path()
+        state = load_update_state(offset_path)
+        offset = state.get("offset")
+        lang_by_chat = {int(k): v for k, v in
+                         (state.get("lang") or {}).items()
+                         if str(k).lstrip("-").isdigit()}
+        # 1) Drain queued commands (replies work even on stale data).
+        try:
+            params = {"timeout": 10}
+            if offset:
+                params["offset"] = offset
+            data = tg_api("getUpdates", params)
+            for upd in data.get("result", []):
+                offset = upd["update_id"] + 1
+                msg = upd.get("message") or {}
+                chat_id = (msg.get("chat") or {}).get("id")
+                text = msg.get("text") or ""
+                if not chat_id or not text.startswith("/"):
+                    continue
+                reply, new_lang = handle_command(
+                    text, lang_by_chat.get(chat_id, "en"))
+                lang_by_chat[chat_id] = new_lang
+                try:
+                    send_message(chat_id, reply)
+                    print(f"command reply sent to {chat_id}: {text}")
+                except Exception as e:
+                    print(f"command reply failed ({chat_id}): {e}")
+        except Exception as e:
+            print(f"updates error: {type(e).__name__}: {e}")
+        save_update_state(offset_path, offset, lang_by_chat)
+        # 2) One alert pass (same gates as the live loop).
+        now = datetime.now(UTC)
+        try:
+            age = load_health_age_minutes(now)
+            if age is None or age > STALE_MINUTES:
+                print("STALE GATE: skipping alert evaluation (no fresh data).")
+                return 0
+            tickers = load_live_tickers()
+            channels = alert_channels()
+            sent = 0
+            for a in evaluate_alerts(tickers, is_market_open(now)):
+                if recent_alert_exists(a["ticker"], a["type"]):
+                    print(f"ALERT suppressed (dedup 24h): "
+                          f"{a['type']} {a['ticker']}")
+                    continue
+                if not channels:
+                    print(f"ALERT (no channel configured, not sent): "
+                          f"{a['type']} {a['ticker']}")
+                    continue
+                sent_any = False
+                for lang, cid in channels:
+                    try:
+                        send_message(cid, format_alert(a, lang))
+                        sent_any = True
+                        print(f"ALERT sent ({lang}): "
+                              f"{a['type']} {a['ticker']}")
+                    except Exception as e:
+                        print(f"ALERT send failed ({lang}): "
+                              f"{a['type']} {a['ticker']}: {e}")
+                if sent_any:
+                    record_alert(a, format_alert(a, "en"),
+                                 now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                    sent += 1
+            print(f"once done: alerts sent: {sent}")
+        except Exception as e:
+            print(f"evaluation error: {type(e).__name__}: {e}")
         return 0
     if args.live:
         # Fail fast when the bot token is missing — never loop blind.
@@ -655,11 +767,10 @@ def main():
                     print(f"evaluation error: {type(e).__name__}: {e}")
             # Long-poll updates (30s) for commands.
             try:
-                token = get_bot_token()
-                url = (f"https://api.telegram.org/bot{token}/getUpdates"
-                       f"?timeout=30" + (f"&offset={offset}" if offset else ""))
-                with urllib.request.urlopen(url, timeout=40) as resp:
-                    data = json.loads(resp.read().decode())
+                params = {"timeout": 30}
+                if offset:
+                    params["offset"] = offset
+                data = tg_api("getUpdates", params)
                 for upd in data.get("result", []):
                     offset = upd["update_id"] + 1
                     msg = upd.get("message") or {}
