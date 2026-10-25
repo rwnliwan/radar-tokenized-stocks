@@ -161,7 +161,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
           <div className="cover">{t(lang, "coverage_short")}</div>
 
           <h2>{t(lang, "block_dev")}</h2>
-          <div className="metrics">
+          <div className="metrics metrics-3">
             <div className="metric">
               <small>{t(lang, "dw_price")}</small>
               <div className="v">{fmtUsd(detail.dw_price)}</div>
@@ -275,7 +275,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             <>
               <h2>{t(lang, "market_title")}</h2>
               <p>{t(lang, "market_open")}</p>
-              <div className="metrics">
+              <div className="metrics metrics-1">
                 <div className="metric">
                   <small>{t(lang, "spread_label")}</small>
                   <div className="v">

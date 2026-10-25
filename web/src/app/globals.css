@@ -169,7 +169,14 @@ nav a:hover { color: #e6eaf2; text-decoration: underline; }
 .metrics {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0;
 }
-.metric { background: #111827; border: 1px solid #1e293b; border-radius: 12px; padding: 14px 16px; }
+.metric { background: #111827; border: 1px solid #1e293b; border-radius: 12px; padding: 14px 16px; min-width: 0; overflow-wrap: anywhere; }
+/* Ticker page has exactly 3 metric cards: equal thirds on desktop,
+   one full-width centered stack on phones (never the 4-col grid's
+   leftover column, never a 2+1 orphan). */
+.metrics-3 { grid-template-columns: repeat(3, 1fr); }
+/* Single-card block (market-open spread): full width, never a 4-col
+   grid with three empty columns. */
+.metrics-1 { grid-template-columns: 1fr; }
 .metric small { color: #8a93a6; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
 .metric .v { font-size: 22px; font-weight: 700; margin: 4px 0; font-variant-numeric: tabular-nums; }
 .metric .s { color: #8a93a6; font-size: 13px; }
@@ -213,4 +220,13 @@ section#waitlist { margin-top: 26px; }
 
 @media (max-width: 760px) {
   .metrics { grid-template-columns: 1fr 1fr; }
+}
+
+/* Ticker metric cards on phones: one equal full-width card per row,
+   content centered, so the group reads balanced instead of clipped. */
+@media (max-width: 760px) {
+  .metrics-3 { grid-template-columns: 1fr; }
+  .metrics-3 .metric { text-align: center; }
+  .metrics-3 .metric small { font-size: 11px; letter-spacing: 0.04em; }
+  .metrics-3 .metric .v { font-size: 20px; }
 }

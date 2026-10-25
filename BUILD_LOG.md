@@ -376,3 +376,24 @@ begitu token asli terpasang.
   spasi antar-seksi 38px, antar-paragraf 16px; <hr /> hanya sebelum
   footer. Berlaku di Pages sekarang; ikut ke radar.omdanny.site
   setelah cutover (deployment yang sama).
+
+## Perbaikan layout mobile halaman ticker (feedback Septian 2026-10-25)
+
+- Keluhan (screenshot COINx di HP): kotak Main deviation tidak sama
+  besar/tidak seimbang + teks area merah "tumpuk" (terpotong di tepi
+  kanan). Vonis: "design kamu bisa lebih baik dari ini".
+- Diagnosis (satu akar, banyak gejala): .metrics memakai grid 4 kolom
+  untuk SEMUA blok ticker — Main deviation (3 kartu) menyisakan 1
+  kolom kosong, di HP jadi 2 kolom + 1 kartu yatim; blok spread
+  (1 kartu) menyisakan 3 kolom kosong. Kartu grid default
+  min-width:auto sehingga label panjang ("DEVIATION VS
+  CROSS-VENUE MEDIAN") memaksa grid lebih lebar dari layar HP ->
+  SELURUH halaman meluber, semua teks tampak terpotong di tepi.
+  Tabel venue sendiri tidak bersalah (sudah di .tblwrap scroll
+  internal); chart SVG sudah width:100%.
+- Perbaikan: varian grid per jumlah kartu — metrics-3 (3 kolom
+  desktop, 1 kolom penuh + konten tengah di HP) untuk Main
+  deviation; metrics-1 (penuh) untuk blok spread; blok Changes
+  (4 kartu) tetap grid 4/2x2 yang memang seimbang. .metric
+  ditambah min-width:0 + overflow-wrap agar label melipat, bukan
+  memaksa lebar. Kata/nilai tidak diubah.
