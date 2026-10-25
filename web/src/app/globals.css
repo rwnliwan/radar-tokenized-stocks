@@ -294,7 +294,9 @@ tr.detail-row td { white-space: normal; background: var(--surface2); }
   .rowcards { display: grid; gap: 10px; }
 }
 @media (max-width: 400px) {
-  .navseg a { padding: 4px 8px; font-size: 13px; }
+  /* Tightened so the 5-item nav fits a 390px phone column in full
+     (no mid-word cut on Donate); smaller phones still scroll it. */
+  .navseg a { padding: 4px 6px; font-size: 13px; }
 }
 
 /* Stage 2: ticker pages, history chart, waitlist form, methodology. */
@@ -498,4 +500,27 @@ h2.sec::before {
   .verdict-hero .vtext { font-size: 26px; }
   /* The worst-deviation number must not outgrow the verdict on phones. */
   .verdict-hero .worst { font-size: 20px; }
+}
+/* Middle widths (portrait tablets, landscape phones, 521-820px): the
+   desktop hero does not fit a narrow column — the 300px scope gets
+   clipped at the card's right edge and crowds the 44px verdict text.
+   Apply the centered-scope hero treatment here (the <=520px block
+   above keeps its smaller sizes on phones). */
+@media (min-width: 521px) and (max-width: 820px) {
+  .verdict-hero { text-align: center; }
+  .verdict-hero .scope-bg { position: static; transform: none; opacity: .8; margin: 0 auto 8px; }
+  .verdict-hero .scope-bg svg { width: 240px; height: 240px; }
+  .verdict-hero .lbl { justify-content: center; }
+  .verdict-hero .vtext { font-size: 32px; }
+  .verdict-hero .worst { font-size: 24px; }
+}
+/* Narrow header: the 5-item segmented nav is wider than a phone column
+   and would clip at the right edge. Keep it one scrollable row instead
+   of dropping/stacking — swipe sideways to reach Waitlist/Donate. */
+@media (max-width: 820px) {
+  .navseg { max-width: 100%; overflow-x: auto; }
+  /* The live controls always wrap to their own row at these widths
+     (logo + nav + live never fit one row); right-align that row so it
+     reads as a deliberate status line, not a stray drop. */
+  .live { margin-left: auto; }
 }
