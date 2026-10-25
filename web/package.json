@@ -1,6 +1,6 @@
 {
   "dependencies": {
-    "next": "15.5.2",
+    "next": "^15.5.7",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
@@ -9,6 +9,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vercel/next": "^4.12.4",
     "typescript": "^5",
     "wrangler": "4.149.0"
   },
