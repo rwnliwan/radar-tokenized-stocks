@@ -169,7 +169,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             <div className="metric">
               <small>{t(lang, "dev_median")}</small>
               <div className="v">
-                {detail.dev_pct != null ? `${detail.dev_pct >= 0 ? "+" : ""}${(detail.dev_pct * 100).toFixed(2)}%` : "—"}
+                {detail.dev_pct != null ? `${detail.dev_pct >= 0 ? "+" : ""}${detail.dev_pct.toFixed(3)}%` : "—"}
               </div>
               <div className="s">
                 {detail.dev_bps != null ? `${fmtSigned1(detail.dev_bps)} bps` : ""}{" "}
@@ -301,7 +301,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                           ? "—"
                           : `${risk.score_100.toFixed(1)}${risk.partial ? ` (${risk.components_present}/4)` : ""}`}
                       </b>{" "}
-                      (method weekend_risk_v1)
+                      ({u(lang, "risk_method_short")})
                     </p>
                     <p>
                       {t(lang, "risk_dev_label")}:{" "}

@@ -298,3 +298,29 @@ begitu token asli terpasang.
   homepage baru page-99d1b6ea89de5737.js (mengandung URL Worker),
   /ticker 200, /ticker/TSLAx 200, /methodology 200.
   Cek browser ulang daftar tahap 2 menyusul deploy ini.
+
+## Hotfix 2 — display bugs from Stage 2 browser re-check (parent fix, 2026-10-25)
+
+- CSV TERVERIFIKASI (bukan bug): berkas unduhan browser (2 KB)
+  dibaca induk — header ticker,tier,dw_price,dev_bps,spread_pct,
+  depth_usd,pools_used,redemption_status,por_age_hours,status,
+  change_1h_bps + 13 baris nilai live (GOOGLx -42,19 bps, TSLAx
+  0,52 bps; single-pool kosong di dev/spread/change). Browser
+  hanya tidak bisa menampilkan isi berkas.
+- Chart 7d BUKAN bug: /api/history 7d dan 24h mengembalikan 17
+  titik identik (24 Okt 11:00Z → 25 Okt 03:00Z) karena riwayat baru
+  ~17 jam — keduanya divergen seiring riwayat tumbuh. Metodologi
+  sudah menyatakan data mulai 24 Okt 2026.
+- BUG NYATA 1 — persen headline kartu ticker 100x terlalu besar:
+  `dev_pct * 100` padahal dev_pct sudah dalam satuan persen
+  (0,0053 = 0,0053% = 0,53 bps) → tampil "+0,52%" berdampingan
+  "+0,5 bps" (0,52% = 52 bps). Skor risiko TIDAK kena (risk.ts
+  memakai rumus risk.py verbatim: |dev_pct|*10 cap 40).
+  Perbaikan: headline persen = dev_pct.toFixed(3) + "%"
+  (0,001% = 0,1 bp resolusi; konsisten dengan bps).
+- BUG KECIL 2 — label "Last:" chart hardcoded Inggris → kunci
+  UI chart_last ("Last:" / "Terakhir:").
+- POLES 3 — identifier internal "weekend_risk_v1" tampil di halaman
+  publik (2 tempat) → label manusia "Weekend exit-risk method v1"
+  / "Metode risiko akhir pekan v1" (nilai risk_method port + kunci
+  UI risk_method_short baru; dashboard Streamlit tidak diubah).

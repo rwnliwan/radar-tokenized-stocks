@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { fmtWITA } from "../../lib/format";
-import type { Lang } from "../../lib/i18n";
+import { u, type Lang } from "../../lib/i18n";
 import type { HistoryPoint } from "../../lib/api";
 
 const W = 640;
@@ -133,7 +133,7 @@ export default function HistoryChart({
       <div className="hchart-tip" aria-live="off">
         {hp
           ? `${fmtWITA(hp.ts, lang)} · ${hp.v >= 0 ? "+" : ""}${hp.v.toFixed(1)} bps`
-          : `Last: ${pts[pts.length - 1].v >= 0 ? "+" : ""}${pts[pts.length - 1].v.toFixed(1)} bps`}
+          : `${u(lang, "chart_last")} ${pts[pts.length - 1].v >= 0 ? "+" : ""}${pts[pts.length - 1].v.toFixed(1)} bps`}
       </div>
     </div>
   );
