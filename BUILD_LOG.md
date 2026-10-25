@@ -407,3 +407,20 @@ begitu token asli terpasang.
   manusia, Segera hadir); kalimat pembuka intro + paragraf pertama
   seksi deviasi utuh (kata tidak berubah); layout terbaca sebagai
   seksi terpisah, tanpa overflow/clipping.
+
+### Verifikasi cutover — BELUM EFEKTIF (2 jalur independen, 2026-10-25)
+- Jalur curl induk + jalur browser independen SAMA-SAMA mendapat
+  halaman placeholder Cloudflare di radar.omdanny.site ("There is
+  nothing here yet" / "If you expect something to be here, it may
+  take some time." / "Powered by CLOUDFLARE") — BUKAN dashboard,
+  BUKAN redirect Streamlit. URL tetap di radar.omdanny.site.
+- State API terkonfirmasi: route Worker radar SUDAH terhapus (hanya
+  kantor tersisa); custom domain Pages status ACTIVE. Satu-satunya
+  bagian yang tidak bisa dibaca induk: isi record CNAME radar
+  (API DNS ditolak token; DNS publik menyembunyikan target karena
+  Proxied). Penyebab paling mungkin: target CNAME belum mengarah
+  ke exit-radar.pages.dev (edit belum tersimpan / record keliru),
+  bukan propagasi (sudah >10 menit sejak domain dibuat; dua jalur
+  sepakat). Langkah berikut: Septian membaca balik target CNAME
+  dari dashboard. Rollback bila perlu: CNAME kembali ke
+  radar-redirect.rwnliwan.workers.dev + route dihidupkan lagi.
