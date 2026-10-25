@@ -504,3 +504,10 @@ begitu token asli terpasang.
 - Monitor UptimeRobot Exit Radar: UP. radar.omdanny.site bisa
   diakses dari HP Septian. Cutover TUNTAS di semua jalur (curl
   VM, render browser, HP, UptimeRobot). Sisa hanya deploy padding.
+
+### Mockup desain v1 (2026-10-25 13:12 WITA)
+- Atas permintaan Septian: mockup HTML/CSS interaktif (bukan
+  situs live; data contoh) + 3 tangkapan layar headless
+  (desktop gelap/terang, HP portrait gelap) — keduanya
+  terverifikasi render sebelum dikirim. Toggle tema jalan di
+  file HTML; kartu baris HP portrait tampil benar.

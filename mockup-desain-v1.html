@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EXIT RADAR — Mockup Desain v1 (data contoh)</title>
+<style>
+/* MOCKUP ONLY — not the live site. Palettes = design plan v1 (25 Okt 2026). */
+:root{
+  --bg:#070b12; --surface:#0f172a; --surface2:#111827; --border:#1e293b;
+  --text:#e6eaf2; --muted:#8a93a6; --accent:#2dd4bf; --accent-dim:#0f766e;
+  --green:#34d399; --green-bg:#123326; --red:#f87171; --red-bg:#3f1210;
+  --orange:#fb923c; --orange-bg:#3a2312; --chart:#e07b4a; --grid:#1e293b;
+}
+[data-theme="light"]{
+  --bg:#f6f7f9; --surface:#ffffff; --surface2:#ffffff; --border:#e2e8f0;
+  --text:#0f172a; --muted:#64748b; --accent:#0f766e; --accent-dim:#0f766e;
+  --green:#15803d; --green-bg:#dcfce7; --red:#dc2626; --red-bg:#fee2e2;
+  --orange:#ea580c; --orange-bg:#ffedd5; --chart:#c2410c; --grid:#e2e8f0;
+}
+*{box-sizing:border-box}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--text);
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-variant-numeric:tabular-nums}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 20px 40px}
+.badge-mock{position:fixed;top:0;left:0;right:0;text-align:center;z-index:50;
+  background:var(--orange);color:#111;font-size:12px;font-weight:700;
+  letter-spacing:.08em;padding:5px 8px}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;
+  border-bottom:1px solid var(--border);padding:34px 0 14px}
+.logo{font-size:22px;font-weight:800;letter-spacing:.14em}
+.logo b{color:var(--accent)}
+nav{display:flex;gap:18px;color:var(--muted);font-size:14px}
+nav b{color:var(--text)}
+.seg{display:inline-flex;gap:2px;border:1px solid var(--border);border-radius:8px;padding:2px}
+.seg button{background:none;border:0;color:var(--muted);cursor:pointer;padding:3px 9px;border-radius:6px;font-size:13px}
+.seg button[aria-pressed="true"]{background:var(--border);color:var(--text)}
+.live{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green);animation:pl 1.6s infinite}
+@keyframes pl{0%,100%{opacity:1}50%{opacity:.35}}
+.hero{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:18px 0}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.kpi small{color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.kpi .v{font-size:26px;font-weight:700;margin:4px 0}
+.kpi .s{color:var(--muted);font-size:13px}
+.kpi.hero-card{border-color:var(--red)}
+.kpi.hero-card .v{font-size:34px;color:var(--red)}
+h2{font-size:17px;margin:22px 0 4px}
+.hint{color:var(--muted);font-size:13px;margin:0 0 10px;line-height:1.5}
+.tblwrap{overflow:auto;border:1px solid var(--border);border-radius:12px}
+table{width:100%;border-collapse:collapse;font-size:14px;background:var(--surface)}
+th{text-align:left;padding:10px 12px;color:var(--muted);font-size:12px;letter-spacing:.05em;
+  text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody tr:hover td{background:var(--surface2);filter:brightness(1.15)}
+.num{text-align:right}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600}
+.pill.ok{background:var(--green-bg);color:var(--green)}
+.pill.watch{background:var(--orange-bg);color:var(--orange)}
+.pill.alert{background:var(--red-bg);color:var(--red)}
+.pill.closed{background:var(--border);color:var(--muted)}
+.spark{letter-spacing:1px;color:var(--accent)}
+.detail{color:var(--accent);cursor:pointer}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;min-width:0;overflow-wrap:anywhere}
+.metric small{color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.metric .v{font-size:22px;font-weight:700;margin:4px 0}
+.metric .s{color:var(--muted);font-size:13px}
+.chart{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px}
+.chart svg{width:100%;height:auto;display:block}
+.foot{color:var(--muted);font-size:13px;line-height:1.6;border-top:1px solid var(--border);margin-top:26px;padding-top:14px}
+/* Row-cards on narrow portrait phones (replaces horizontal table swipe). */
+.rowcards{display:none}
+@media (max-width:520px){
+  .hero{grid-template-columns:1fr}
+  .tblwrap{display:none}
+  .rowcards{display:grid;gap:10px}
+  .rc{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+  .rc .top{display:flex;justify-content:space-between;align-items:center}
+  .rc .top b{font-size:16px}
+  .rc .mid{display:flex;justify-content:space-between;margin-top:8px;font-size:14px}
+  .metrics{grid-template-columns:1fr}
+  .metrics .metric{text-align:center}
+}
+@media (max-width:760px) and (min-width:521px){
+  .hero{grid-template-columns:1fr 1fr}
+}
+@media (orientation:landscape) and (max-width:950px){
+  .wrap{padding:16px 16px 40px}
+  .hero{grid-template-columns:repeat(4,1fr)}
+}
+</style>
+</head>
+<body>
+<div class="badge-mock">MOCKUP DESAIN v1 — DATA CONTOH, BUKAN SITUS LIVE</div>
+<div class="wrap">
+  <header>
+    <div class="logo">EXIT <b>RADAR</b></div>
+    <nav><b>Home</b><span>Ticker</span><span>Methodology</span><span>Waitlist</span></nav>
+    <div class="seg" role="group" aria-label="Tema">
+      <button id="btn-dark" aria-pressed="true" onclick="setTheme('dark')">Gelap</button>
+      <button id="btn-light" aria-pressed="false" onclick="setTheme('light')">Terang</button>
+    </div>
+  </header>
+  <div class="live" style="margin-top:14px"><span class="dot"></span><span>LIVE</span>
+    <span>Last updated: 25 Oct 2026, 13:01 WITA</span><span>VENUES LIVE 35/35</span></div>
+
+  <div class="hero">
+    <div class="kpi hero-card"><small>Worst deviation now</small>
+      <div class="v mono">−44,6 bps</div><div class="s">GOOGLx · depth $1,36M</div></div>
+    <div class="kpi"><small>Tickers tracked</small><div class="v mono">13</div><div class="s">11 Tier 1 · 2 Tier 2</div></div>
+    <div class="kpi"><small>Venues live</small><div class="v mono">35/35</div><div class="s">Raydium 27 · Orca 7 · Meteora 1</div></div>
+    <div class="kpi"><small>Alerts (24h)</small><div class="v mono">0</div><div class="s">Threshold 1,0% · bot standby</div></div>
+  </div>
+
+  <h2>All tickers — latest deviation</h2>
+  <p class="hint">Harga depth-weighted lintas venue. Status: OK &lt;50 bps · Watch &gt;50 bps · Alert &gt;100 bps. Data contoh.</p>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Ticker</th><th class="num">Price</th><th class="num">Deviation</th>
+      <th>24h spark</th><th class="num">Depth</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      <tr><td><b>GOOGLx</b></td><td class="num mono">$271,44</td><td class="num"><span class="pill alert mono">−44,6 bps</span></td><td class="spark">▃▅▂▁▂▁▁</td><td class="num mono">$1,36M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>SPYx</b></td><td class="num mono">$512,08</td><td class="num"><span class="pill ok mono">+12,4 bps</span></td><td class="spark">▂▃▄▃▅▆▅</td><td class="num mono">$2,10M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>CRCLx</b></td><td class="num mono">$187,90</td><td class="num"><span class="pill watch mono">+58,1 bps</span></td><td class="spark">▁▂▃▅▆▇▆</td><td class="num mono">$0,84M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>TSLAx</b></td><td class="num mono">$371,81</td><td class="num"><span class="pill ok mono">+3,2 bps</span></td><td class="spark">▃▃▃▄▃▃▃</td><td class="num mono">$1,92M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>GLDx</b></td><td class="num mono">$244,17</td><td class="num"><span class="pill ok mono">−8,7 bps</span></td><td class="spark">▃▂▃▂▃▂▃</td><td class="num mono">$1,05M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>NVDAx</b></td><td class="num mono">$189,33</td><td class="num"><span class="pill ok mono">+21,9 bps</span></td><td class="spark">▂▃▅▃▅▆▅</td><td class="num mono">$2,48M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>QQQx</b></td><td class="num mono">$601,55</td><td class="num"><span class="pill ok mono">−15,2 bps</span></td><td class="spark">▃▃▂▃▂▂▃</td><td class="num mono">$1,74M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>MSFTx</b></td><td class="num mono">$525,70</td><td class="num"><span class="pill ok mono">−0,1 bps</span></td><td class="spark">▃▃▃▃▃▃▃</td><td class="num mono">$1,58M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>AAPLx</b></td><td class="num mono">$268,41</td><td class="num"><span class="pill ok mono">+6,8 bps</span></td><td class="spark">▃▄▃▄▅▄▃</td><td class="num mono">$1,21M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>MSTRx</b></td><td class="num mono">$312,66</td><td class="num"><span class="pill ok mono">−19,3 bps</span></td><td class="spark">▃▂▃▂▁▂▃</td><td class="num mono">$0,96M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>COINx</b></td><td class="num mono">$163,84</td><td class="num"><span class="pill ok mono">+9,5 bps</span></td><td class="spark">▂▃▃▅▃▃▃</td><td class="num mono">$1,33M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>HOODx</b></td><td class="num mono">$118,29</td><td class="num"><span class="pill ok mono">−4,1 bps</span></td><td class="spark">▃▃▂▃▃▃▂</td><td class="num mono">$0,71M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+      <tr><td><b>METAx</b></td><td class="num mono">$664,02</td><td class="num"><span class="pill ok mono">+27,6 bps</span></td><td class="spark">▂▃▃▅▅▆▅</td><td class="num mono">$1,47M</td><td><span class="pill closed">Closed</span></td><td class="detail">Detail →</td></tr>
+    </tbody>
+  </table></div>
+  <div class="rowcards">
+    <div class="rc"><div class="top"><b>GOOGLx</b><span class="pill alert mono">−44,6 bps</span></div>
+      <div class="mid"><span class="mono">$271,44</span><span class="spark">▃▅▂▁▂▁▁</span><span class="mono">$1,36M</span></div></div>
+    <div class="rc"><div class="top"><b>TSLAx</b><span class="pill ok mono">+3,2 bps</span></div>
+      <div class="mid"><span class="mono">$371,81</span><span class="spark">▃▃▃▄▃▃▃</span><span class="mono">$1,92M</span></div></div>
+    <div class="rc"><div class="top"><b>MSFTx</b><span class="pill ok mono">−0,1 bps</span></div>
+      <div class="mid"><span class="mono">$525,70</span><span class="spark">▃▃▃▃▃▃▃</span><span class="mono">$1,58M</span></div></div>
+  </div>
+
+  <h2>Ticker preview — TSLAx</h2>
+  <div class="metrics">
+    <div class="metric"><small>Depth-weighted price</small><div class="v mono">$371,81</div><div class="s">4 venues qualifying</div></div>
+    <div class="metric"><small>Deviation vs cross-venue median</small><div class="v mono" style="color:var(--green)">+3,2 bps</div><div class="s">+0,032% · OK</div></div>
+    <div class="metric"><small>Deviation vs stock close</small><div class="v mono" style="color:var(--muted)">License pending</div><div class="s">Menunggu penyelesaian lisensi data</div></div>
+  </div>
+  <div class="chart">
+    <svg viewBox="0 0 600 160" role="img" aria-label="Deviation history (sample)">
+      <g stroke="var(--grid)" stroke-width="1">
+        <line x1="0" y1="40" x2="600" y2="40"/><line x1="0" y1="80" x2="600" y2="80"/><line x1="0" y1="120" x2="600" y2="120"/>
+      </g>
+      <line x1="0" y1="80" x2="600" y2="80" stroke="var(--muted)" stroke-width="1" stroke-dasharray="4 3"/>
+      <polyline fill="none" stroke="var(--chart)" stroke-width="2" stroke-linejoin="round"
+        points="0,78 50,84 100,76 150,88 200,72 250,82 300,74 350,90 400,70 450,80 500,76 550,84 600,78"/>
+    </svg>
+    <div class="mono" style="font-size:13px;margin-top:6px">Terakhir: +3,2 bps · 24h range −12 s.d. +28 bps (contoh)</div>
+  </div>
+
+  <div class="foot">Mockup desain v1 — hanya untuk dinilai. Bukan situs live; data contoh; tombol Detail tidak mengarah ke mana-mana.
+    Coba: tombol Gelap/Terang di header, putar HP portrait ↔ landscape, dan cubit-zoom tidak diperlukan.</div>
+</div>
+<script>
+function setTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('btn-dark').setAttribute('aria-pressed', t === 'dark');
+  document.getElementById('btn-light').setAttribute('aria-pressed', t === 'light');
+  try { localStorage.setItem('exitradar-mockup-theme', t); } catch(e) {}
+}
+(function(){
+  var p = new URLSearchParams(location.search).get('theme');
+  var saved = null;
+  try { saved = localStorage.getItem('exitradar-mockup-theme'); } catch(e) {}
+  setTheme(p === 'light' || p === 'dark' ? p : (saved || 'dark'));
+})();
+</script>
+</body>
+</html>
