@@ -215,6 +215,17 @@ tbody tr:hover td { background: var(--hover-row); }
 .pill.alert { background: var(--red-bg); color: var(--red); }
 .pill.na { background: var(--border); color: var(--muted); }
 .pill.paused { background: var(--red-bg); color: var(--red); }
+.redcard { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 10px 0 18px; }
+.redcard-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.redcard-next { font-size: 14px; }
+.redcard-timeline { display: flex; align-items: center; margin: 14px 6px 4px; }
+.redcard-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text2); flex: none; }
+.redcard-dot.next { background: transparent; border: 2px solid var(--text2); }
+.redcard-line { flex: 1; height: 2px; background: var(--border); }
+.redcard-timeline-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+.redcard-rows p { margin: 6px 0; }
+.redcard .small { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.redcard-por { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; font-size: 14px; }
 .detailbtn {
   background: none; border: 0; color: var(--accent-link); cursor: pointer; padding: 0; font-size: 14px;
 }

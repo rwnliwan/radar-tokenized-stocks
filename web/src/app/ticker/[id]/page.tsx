@@ -330,65 +330,70 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
 
           <h2>{t(lang, "redemption_title")}</h2>
           {detail.redemption_status != null ? (
-            <>
-              <p>
-                <b>{t(lang, "col_status")}:</b>{" "}
+            <section className="redcard">
+              <div className="redcard-head">
                 <span className={`pill ${redPill(detail.redemption_status)}`}>
                   {redLabel(lang, detail.redemption_status)}
                 </span>
-              </p>
+                {detail.redemption_next_open && (
+                  <span className="redcard-next">
+                    {t(lang, "next_open_label")}: {fmtWITA(detail.redemption_next_open, lang)}
+                  </span>
+                )}
+              </div>
+              {detail.redemption_next_open && (
+                <>
+                  <div className="redcard-timeline" aria-hidden="true">
+                    <span className="redcard-dot now" />
+                    <span className="redcard-line" />
+                    <span className="redcard-dot next" />
+                  </div>
+                  <div className="redcard-timeline-labels">
+                    <span>{redLabel(lang, detail.redemption_status)}</span>
+                    <span>{t(lang, "next_open_label")}</span>
+                  </div>
+                </>
+              )}
+              <div className="redcard-rows">
+                <p>
+                  <b>{t(lang, "obs_label")}:</b>{" "}
+                  {fmtWITA(detail.redemption_observed_at, lang)}
+                </p>
+                {detail.redemption_source && (
+                  <p>
+                    <b>{t(lang, "source_label")}:</b>{" "}
+                    {lang === "en" && detail.redemption_source === KNOWN_ID_SOURCE
+                      ? KNOWN_ID_SOURCE_EN
+                      : detail.redemption_source}
+                  </p>
+                )}
+              </div>
               {["open", "closed", "paused"].includes(detail.redemption_status) && (
-                <p>{t(lang, "redemption_window_note")}</p>
+                <p className="small">{t(lang, "redemption_window_note")}</p>
               )}
               {(() => {
                 const note = lang === "en" ? detail.redemption_note_en : detail.redemption_note;
-                return note ? <p>{note}</p> : null;
+                return note ? <p className="small">{note}</p> : null;
               })()}
-              {detail.redemption_status === "unknown" && <p>{t(lang, "redemption_doc_note")}</p>}
-              <p>
-                {t(lang, "obs_label")}: {fmtWITA(detail.redemption_observed_at, lang)}
-              </p>
-              {detail.redemption_source && (
-                <p>
-                  {t(lang, "source_label")}:{" "}
-                  {lang === "en" && detail.redemption_source === KNOWN_ID_SOURCE
-                    ? KNOWN_ID_SOURCE_EN
-                    : detail.redemption_source}
-                </p>
+              {detail.redemption_status === "unknown" && (
+                <p className="small">{t(lang, "redemption_doc_note")}</p>
               )}
-              {detail.redemption_next_open && (
-                <p>
-                  {t(lang, "next_open_label")}: {fmtWITA(detail.redemption_next_open, lang)}
-                </p>
-              )}
-            </>
+              <div className="redcard-por">
+                <b>{t(lang, "por_title")}:</b>{" "}
+                {detail.por_age_hours != null ? (
+                  <>
+                    {t(lang, "por_age_label")}: {detail.por_age_hours} h
+                  </>
+                ) : (
+                  <>{t(lang, "por_none")}</>
+                )}
+              </div>
+            </section>
           ) : (
             <p>{t(lang, "redemption_unknown")}</p>
           )}
 
-          <h2>{t(lang, "por_title")}</h2>
-          {detail.por_age_hours != null || detail.por_last_update || detail.por_feed_address ? (
-            <>
-              {detail.por_age_hours != null && (
-                <p>
-                  {t(lang, "por_age_label")}: {detail.por_age_hours} h
-                </p>
-              )}
-              {detail.por_last_update && (
-                <p>
-                  {t(lang, "por_last_label")}: {fmtWITA(detail.por_last_update, lang)}
-                </p>
-              )}
-              {detail.por_feed_address && (
-                <p>
-                  {t(lang, "por_feed_label")}: {detail.por_feed_address}
-                </p>
-              )}
-              {detail.por_note && <p>{detail.por_note}</p>}
-            </>
-          ) : (
-            <p>{t(lang, "por_none")}</p>
-          )}
+
 
           <h2>{u(lang, "change_title")}</h2>
           <div className="metrics">
