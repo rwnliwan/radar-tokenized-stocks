@@ -16,7 +16,7 @@ _DETAIL_RENDERER = AgJsCode("""
 class DetailLinkRenderer {
   init(params) {
     this.eGui = document.createElement('a');
-    this.eGui.innerText = params.value;
+    this.eGui.innerText = 'Detail';
     this.eGui.href = params.data._detail_url;
     this.eGui.style.color = '#16130F';
     this.eGui.style.textDecoration = 'underline';
