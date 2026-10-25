@@ -324,3 +324,18 @@ begitu token asli terpasang.
   publik (2 tempat) → label manusia "Weekend exit-risk method v1"
   / "Metode risiko akhir pekan v1" (nilai risk_method port + kunci
   UI risk_method_short baru; dashboard Streamlit tidak diubah).
+
+### Verifikasi hotfix 2 (2026-10-25, browser tertarget + grep chunk)
+- Deploy hotfix 2 (Worker bundle + _routes.json) → produksi /,
+  /ticker/TSLAx, /methodology semua 200.
+- Browser tertarget LOLOS 3/3: (1) persen vs bps konsisten —
+  TSLAx +0,009% / +0,9 bps, GOOGLx -0,422% / -42,2 bps
+  (data 12:21 WITA); (2) readout chart ID "Terakhir: +0,5 bps";
+  (3) label metode manusia EN+ID, "weekend_risk_v1" tidak
+  ditemukan di teks tampil. Grep chunk build induk: string baru
+  ada, "weekend_risk_v1" nol di semua chunk (termasuk source).
+- Status tahap 2: LIVE & TERVERIFIKASI PENUH (cek browser
+  daftar lengkap + hotfix 1 + hotfix 2). Sisa untuk vonis Septian
+  di HP/laptop: collapse mobile (tool browser tidak bisa resize —
+  desktop masih scroll horizontal) + penilaian visual keseluruhan.
+  Tahap 3 cutover menunggu ACC terpisah.
