@@ -524,3 +524,16 @@ h2.sec::before {
      reads as a deliberate status line, not a stray drop. */
   .live { margin-left: auto; }
 }
+
+/* Narrow desktop hero (821-1100px: Chrome desktop mode on phones, small
+   laptops, landscape tablets). Feedback Septian 2026-10-25: at these
+   widths the full-width verdict text runs OVER the scope circles and the
+   scope bleeds 40px past the card's right edge. Fix: keep the scope fully
+   inside the card (right:0, 260px) and give the text column a 20px gap
+   from it (max-width = content - 280px). Wide desktop (>1100px) keeps
+   the ACC'd mockup look untouched. */
+@media (min-width: 821px) and (max-width: 1100px) {
+  .verdict-hero .scope-bg { right: 0; }
+  .verdict-hero .scope-bg svg { width: 260px; height: 260px; }
+  .verdict-hero .verdict { max-width: calc(100% - 280px); }
+}
