@@ -424,3 +424,18 @@ begitu token asli terpasang.
   sepakat). Langkah berikut: Septian membaca balik target CNAME
   dari dashboard. Rollback bila perlu: CNAME kembali ke
   radar-redirect.rwnliwan.workers.dev + route dihidupkan lagi.
+
+### Verifikasi ticker mobile (browser, 2026-10-25)
+- Desktop LOLOS: Main deviation 3 kolom sama besar (Depth-weighted
+  $163,84 / dev median — / vs-close License pending); halaman muat
+  viewport tanpa scroll horizontal; paragraf utuh di dalam kolom
+  (vs-close note, risk, redemption lengkap); tabel venue muat
+  frame di desktop; nilai + risk 72,4 (2/4) + redemption Closed
+  + next open 26 Okt 12:00 WITA semua tampil.
+- BATAS ALAT: browser tidak bisa emulasi viewport HP (~390px) —
+  cek mobile (kartu susun penuh + tengah, tanpa meluber, tabel
+  scroll internal) TIDAK bisa dilakukan dari tool; CSS mobile
+  sudah terverifikasi ada di build (metrics-3 1 kolom + tengah).
+  Vonis HP Septian yang menentukan (halaman yang sama: COINx).
+  Blok spread 1-kartu absen karena bursa tutup — sesuai desain,
+  bukan kegagalan.
