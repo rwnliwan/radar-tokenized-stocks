@@ -490,3 +490,12 @@ begitu token asli terpasang.
   gagal routing ke binding Pages — bila placeholder muncul padahal
   semua state benar, toggle DNS-only adalah diagnostik + perbaikan
   pertama, bukan terakhir.
+
+### Verifikasi render cutover (browser, 2026-10-25 13:02 WITA)
+- LOLOS PENUH di radar.omdanny.site: homepage "All tickers —
+  latest deviation", worst -44,6 bps GOOGLx · depth $1,36M,
+  13 baris, LIVE, last updated 13:01 WITA, 35/35 venue; Detail
+  TSLAx -> halaman ticker asli ($371,81; +3,2 bps / +0,032% OK;
+  chart; 4 venue; redemption Closed); URL tetap di
+  radar.omdanny.site/ticker/TSLAx (tanpa redirect); tanpa
+  placeholder/error. Cutover DINYATAKAN SELESAI.
