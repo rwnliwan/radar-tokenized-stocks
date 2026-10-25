@@ -501,6 +501,24 @@ def record_alert(alert, message_text, alert_ts):
     )
 
 
+def alert_channels():
+    """(lang, chat_id) pairs for broadcast alerts.
+
+    Two slots (EN + ID channels, fixed language per channel):
+    RADAR_ALERT_CHAT_ID_EN, RADAR_ALERT_CHAT_ID_ID. The legacy single
+    RADAR_ALERT_CHAT_ID still works as the EN channel when the new
+    vars are absent, so an old invocation keeps working.
+    """
+    channels = []
+    en = os.environ.get("RADAR_ALERT_CHAT_ID_EN") or os.environ.get("RADAR_ALERT_CHAT_ID")
+    idn = os.environ.get("RADAR_ALERT_CHAT_ID_ID")
+    if en:
+        channels.append(("en", en))
+    if idn:
+        channels.append(("id", idn))
+    return channels
+
+
 # --- Dry-run scenarios (synthetic inputs, clearly labeled) ---
 def dry_run_scenarios():
     spread_data = {
@@ -594,25 +612,36 @@ def main():
                         print("STALE GATE: skipping alert evaluation (no fresh data).")
                     else:
                         tickers = load_live_tickers()
-                        channel = os.environ.get("RADAR_ALERT_CHAT_ID")
+                        channels = alert_channels()
                         for a in evaluate_alerts(tickers, is_market_open(now)):
                             if recent_alert_exists(a["ticker"], a["type"]):
                                 print(f"ALERT suppressed (dedup 24h): "
                                       f"{a['type']} {a['ticker']}")
                                 continue
-                            if not channel:
+                            if not channels:
                                 # No alert channel configured yet: log only.
                                 # Nothing is recorded in alert_log for an
                                 # alert that was never sent.
                                 print(f"ALERT (no channel configured, not sent): "
                                       f"{a['type']} {a['ticker']}")
                                 continue
-                            text = format_alert(a, "en")
-                            send_message(channel, text)
-                            record_alert(
-                                a, text,
-                                now.strftime("%Y-%m-%dT%H:%M:%SZ"))
-                            print(f"ALERT sent: {a['type']} {a['ticker']}")
+                            sent_any = False
+                            for lang, cid in channels:
+                                text = format_alert(a, lang)
+                                try:
+                                    send_message(cid, text)
+                                    sent_any = True
+                                    print(f"ALERT sent ({lang}): "
+                                          f"{a['type']} {a['ticker']}")
+                                except Exception as e:
+                                    print(f"ALERT send failed ({lang}): "
+                                          f"{a['type']} {a['ticker']}: {e}")
+                            if sent_any:
+                                # One alert_log row per alert (not per
+                                # channel); the stored text is the EN one.
+                                record_alert(
+                                    a, format_alert(a, "en"),
+                                    now.strftime("%Y-%m-%dT%H:%M:%SZ"))
                 except Exception as e:
                     print(f"evaluation error: {type(e).__name__}: {e}")
             # Long-poll updates (30s) for commands.
