@@ -255,9 +255,8 @@ STR = {
         "coming_text": (
             "Not yet connected — each keeps its honest label where it appears:\n"
             "- Deviation vs stock close — awaiting a data license.\n"
-            "- Live redemption status — no automated source yet.\n"
             "- PoR feed — not connected.\n"
-            "- Alert history — no alerts recorded yet; the log fills when the first alert fires."
+            "- Alert history — the log fills as alerts fire."
         ),
         "risk_partial_n": "Partial score — {n} of 4 components present (missing components excluded, not zeroed).",
         "risk_partial_list": "Partial scores: {items}",
@@ -276,7 +275,7 @@ STR = {
         "methodology_sources": "Sources: DexScreener pool data polled every 5 minutes (tighter 1-minute polling around the US open and close for Tier 1), stored in Turso, with a heartbeat row per cycle. Raw snapshots are kept 30 days, then hourly for 12 months, then daily. A quote more than 25% away from the cross-venue median is excluded from the calculation when at least 3 pools qualify (it is counted and noted, not silently dropped).",
         "methodology_limits": "Limitations. (1) Median-only mode: without a data license, vs-close deviation cannot be shown. (2) Market open/closed is derived from the New York clock and weekday only — exchange holidays are NOT distinguished, so on a US holiday the label may say 'open' while the market is closed. (3) Single-pool tickers have no median, no spread, and no deviation — they are listed, never plotted at zero. (4) Data is 5-minute snapshots, not tick-by-tick. (5) Gaps are shown as gaps, never interpolated. (6) History begins 24 October 2026.",
         "methodology_human": "What 'human-checked methodology' covers. Human: choosing the 13-ticker universe from 43 candidates against written criteria; designing and reviewing the price-guard rule; writing the coverage statements; reviewing the weekly-story template. Automated: polling, medians, depth weighting, score arithmetic, and the story's numbers. No individual price or deviation is hand-checked — the methodology is human-checked, the data feed is automated. That distinction is why the tagline says 'human-checked methodology', not 'human-verified data'.",
-        "methodology_coming": "Coming soon (not yet connected): deviation vs stock close (awaiting a data license); live redemption status (no automated source yet); a PoR feed (not connected); alert history (no alerts recorded yet — the log fills when the first alert fires). Each item keeps its honest per-place label until it connects; this list does not hide missing data.",
+        "methodology_coming": "Coming soon (not yet connected): deviation vs stock close (awaiting a data license); a PoR feed (not connected); alert history (the log fills as alerts fire). Redemption status is live since Wave 3 (schedule-derived, plus an hourly on-chain pause check — not issuer-confirmed). Each item keeps its honest per-place label until it connects; this list does not hide missing data.",
     },
     "id": {
         "app_title": "Radar Tokenized Stocks",
@@ -522,9 +521,8 @@ STR = {
         "coming_text": (
             "Belum terhubung — masing-masing tetap memakai label jujur di tempatnya:\n"
             "- Deviasi vs close saham — menunggu lisensi data.\n"
-            "- Status redemption live — belum ada sumber otomatis.\n"
             "- Feed PoR — belum terhubung.\n"
-            "- Riwayat alert — belum ada alert tercatat; log terisi saat alert pertama menyala."
+            "- Riwayat alert — log terisi saat alert menyala."
         ),
         "risk_partial_n": "Skor parsial — {n} dari 4 komponen tersedia (komponen yang hilang dikeluarkan, bukan dinolkan).",
         "risk_partial_list": "Skor parsial: {items}",
@@ -543,7 +541,7 @@ STR = {
         "methodology_sources": "Sumber: data pool DexScreener yang dipoll tiap 5 menit (poll 1 menit yang lebih rapat di sekitar buka dan tutup bursa AS untuk Tier 1), disimpan di Turso, dengan baris heartbeat per siklus. Snapshot mentah disimpan 30 hari, lalu per jam selama 12 bulan, lalu harian. Quote yang menyimpang lebih dari 25% dari median lintas-venue dikeluarkan dari perhitungan bila minimal 3 pool lolos (dihitung dan dicatat, bukan dibuang diam-diam).",
         "methodology_limits": "Batasan. (1) Mode median-only: tanpa lisensi data, deviasi vs-close tidak bisa ditampilkan. (2) Status buka/tutup bursa diturunkan dari jam New York dan hari kerja saja — hari libur bursa TIDAK dibedakan, jadi pada hari libur AS label bisa bertuliskan 'buka' padahal bursa tutup. (3) Ticker 1 pool tidak punya median, spread, maupun deviasi — mereka didaftar, tidak pernah diplot di nol. (4) Data adalah snapshot 5 menit, bukan tick-by-tick. (5) Celah tampil sebagai celah, tidak pernah diinterpolasi. (6) Riwayat dimulai 24 Oktober 2026.",
         "methodology_human": "Apa yang dicakup 'metodologi diperiksa manusia'. Manusia: memilih universe 13 ticker dari 43 kandidat berdasarkan kriteria tertulis; merancang dan meninjau aturan price-guard; menulis pernyataan cakupan; meninjau templat cerita mingguan. Otomatis: polling, median, pembobotan kedalaman, hitungan skor, dan angka-angka cerita. Tidak ada harga atau deviasi individual yang diperiksa tangan — metodologinya diperiksa manusia, feed datanya otomatis. Perbedaan itu alasan tagline bertuliskan 'metodologi diperiksa manusia', bukan 'data terverifikasi manusia'.",
-        "methodology_coming": "Segera hadir (belum terhubung): deviasi vs close saham (menunggu lisensi data); status redemption live (belum ada sumber otomatis); feed PoR (belum terhubung); riwayat alert (belum ada alert tercatat — log terisi saat alert pertama menyala). Setiap item tetap memakai label jujur di tempatnya sampai terhubung; daftar ini tidak menyembunyikan data yang hilang.",
+        "methodology_coming": "Segera hadir (belum terhubung): deviasi vs close saham (menunggu lisensi data); feed PoR (belum terhubung); riwayat alert (log terisi saat alert menyala). Status redemption live sejak Gelombang 3 (dari jadwal resmi, ditambah pemeriksaan jeda on-chain per jam — bukan konfirmasi issuer). Setiap item tetap memakai label jujur di tempatnya sampai terhubung; daftar ini tidak menyembunyikan data yang hilang.",
     },
 }
 
