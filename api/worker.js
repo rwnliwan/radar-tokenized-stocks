@@ -419,6 +419,25 @@ async function handleWaitlist(request, env) {
   return json({ ok: true, already: !!already });
 }
 
+async function loadAlerts(env) {
+  const [res] = await pipeline(env, [
+    [
+      "SELECT ticker_id, alert_ts, alert_type, " +
+        "COALESCE(dev_at_alert_pct, threshold_pct) AS figure " +
+        "FROM alert_log ORDER BY alert_ts DESC, id ASC LIMIT 30",
+      [],
+    ],
+  ]);
+  return {
+    alerts: rowsOf(res).map((r) => ({
+      ticker: r.ticker_id,
+      ts: r.alert_ts,
+      type: r.alert_type,
+      figure: r.figure != null ? Number(r.figure) : null,
+    })),
+  };
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -474,6 +493,9 @@ export default {
           return json({ error: "POST only" }, 405);
         return handleWaitlist(request, env);
       }
+      if (url.pathname === "/api/alerts") {
+        return json(await loadAlerts(env));
+      }
       if (url.pathname === "/api/health") {
         const { meta } = await loadLatest(env);
         const ageMin = meta.latest_ts
@@ -488,7 +510,7 @@ export default {
           venues_total: meta.venues_total,
         });
       }
-      return json({ error: "unknown route; see /api/latest, /api/history, /api/health" }, 404);
+      return json({ error: "unknown route; see /api/latest, /api/history, /api/alerts, /api/health" }, 404);
     } catch (e) {
       return json({ error: "upstream read failed" }, 502);
     }

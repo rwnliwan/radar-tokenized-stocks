@@ -3,6 +3,8 @@
 import { Fragment, useEffect, useState } from "react";
 import Header from "../Header";
 import { t, u, type Lang } from "../../lib/i18n";
+import { fetchAlerts, type AlertRow } from "../../lib/api";
+import { fmtWITA } from "../../lib/format";
 
 // Sections group the 10 approved methodology paragraphs under headings so
 // the page scans instead of reading as one wall of text. Paragraph wording
@@ -193,7 +195,88 @@ const SECTIONS: { id: string; heading: string; keys: string[] }[] = [
   { id: "limits", heading: "method_h_limits", keys: ["methodology_limits"] },
   { id: "human", heading: "method_h_human", keys: ["methodology_human"] },
   { id: "coming", heading: "method_h_coming", keys: ["methodology_coming"] },
+  { id: "alerts", heading: "method_h_alerts", keys: [] },
 ];
+
+// Live alert history (ACC design): 30 latest rows from /api/alerts.
+// Unknown recorded types render as-is (legacy batch rows); rows without a
+// valid ticker page (e.g. the aggregate 'ALL' batch key) get no link.
+const TICKER_RE = /^[A-Z0-9]+X$/;
+
+const HIST_TYPE_KEYS: Record<string, string> = {
+  spread: "hist_type_spread",
+  deviation_high: "hist_type_deviation",
+  redemption: "hist_type_redemption",
+  redemption_paused: "hist_type_redemption_paused",
+  por: "hist_type_por",
+};
+
+function fmtFigure(v: number | null, lang: Lang): string {
+  if (v == null) return "—";
+  const locale = lang === "id" ? "id-ID" : "en-GB";
+  return (
+    new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+      signDisplay: "exceptZero",
+    }).format(v) + "%"
+  );
+}
+
+function AlertHistory({ lang }: { lang: Lang }) {
+  const [rows, setRows] = useState<AlertRow[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchAlerts()
+      .then((d) => {
+        if (live) setRows(d.alerts);
+      })
+      .catch(() => {
+        /* leave null: no misleading empty state on fetch failure */
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (rows === null) return null;
+  if (rows.length === 0) return <p className="method">{u(lang, "hist_empty")}</p>;
+  return (
+    <div className="tblwrap">
+      <table className="thresh">
+        <thead>
+          <tr>
+            <th>{u(lang, "hist_col_time")}</th>
+            <th>{u(lang, "hist_col_ticker")}</th>
+            <th>{u(lang, "hist_col_type")}</th>
+            <th>{u(lang, "hist_col_figure")}</th>
+            <th>{u(lang, "hist_col_detail")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => {
+            const valid = TICKER_RE.test(r.ticker);
+            const label = HIST_TYPE_KEYS[r.type];
+            return (
+              <tr key={`${r.ts}-${r.ticker}-${i}`}>
+                <td>{fmtWITA(r.ts, lang)}</td>
+                <td>{r.ticker}</td>
+                <td>{label ? u(lang, label) : r.type}</td>
+                <td>{fmtFigure(r.figure, lang)}</td>
+                <td>
+                  {valid ? (
+                    <a href={`/ticker/${r.ticker}`}>{u(lang, "hist_col_detail")}</a>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // Threshold table rows: values copied from the approved paragraphs below
 // (display thresholds, bot alert thresholds, depth/pool floors) — no new
@@ -269,9 +352,13 @@ export default function MethodologyPage() {
       {SECTIONS.map((s) => (
         <section key={s.heading} id={s.id} className="method-section">
           <h2>{u(lang, s.heading)}</h2>
-          {s.keys.map((k) => (
-            <Fragment key={k}>{renderMethod(k, t(lang, k), lang)}</Fragment>
-          ))}
+          {s.id === "alerts" ? (
+            <AlertHistory lang={lang} />
+          ) : (
+            s.keys.map((k) => (
+              <Fragment key={k}>{renderMethod(k, t(lang, k), lang)}</Fragment>
+            ))
+          )}
         </section>
       ))}
       <hr />

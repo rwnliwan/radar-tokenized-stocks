@@ -40,6 +40,25 @@ export async function fetchLatest(signal?: AbortSignal): Promise<LatestResponse>
   return (await res.json()) as LatestResponse;
 }
 
+export type AlertRow = {
+  ticker: string;
+  ts: string;
+  type: string;
+  figure: number | null;
+};
+
+export type AlertsResponse = {
+  alerts: AlertRow[];
+};
+
+export async function fetchAlerts(signal?: AbortSignal): Promise<AlertsResponse> {
+  const base = process.env.NEXT_PUBLIC_RADAR_API_BASE;
+  if (!base) throw new Error("API base URL is not configured");
+  const res = await fetch(`${base}/api/alerts`, { cache: "no-store", signal });
+  if (!res.ok) throw new Error(`API HTTP ${res.status}`);
+  return (await res.json()) as AlertsResponse;
+}
+
 export type VenueRow = {
   dex: string;
   chain: string;

@@ -1,7 +1,7 @@
 """EXIT RADAR QA harness — recompute every published number from source.
 
 Chain verified: poller.py (DexScreener -> deviations/snapshots) ->
-api/worker.js (/api/latest, /api/ticker) -> web display.
+api/worker.js (/api/latest, /api/ticker, /api/alerts) -> web display.
 This script checks links (a) and (b); the browser check covers (c).
 
 Formulas replicated verbatim (do NOT "improve" them here — a mismatch
@@ -280,6 +280,17 @@ def main():
           and close(det["dev_pct"], row["dev_vs_median_pct"]),
           f"dw={det['dw_price']} dev={det['dev_pct']} vs db dw={row['depth_weighted_price']} "
           f"dev={row['dev_vs_median_pct']}")
+
+    # Alerts: endpoint mirrors alert_log, latest first.
+    al = wcurl("/api/alerts")["alerts"]
+    dbal = query("SELECT ticker_id, alert_ts, alert_type FROM alert_log "
+                 "ORDER BY alert_ts DESC, id ASC LIMIT 30")
+    check("alerts endpoint mirrors alert_log",
+          len(al) == len(dbal) and all(
+              a["ticker"] == d["ticker_id"] and a["ts"] == d["alert_ts"]
+              and a["type"] == d["alert_type"] and "figure" in a
+              for a, d in zip(al, dbal)),
+          f"endpoint={len(al)} rows db={len(dbal)} rows first={al[0] if al else None}")
 
     print(f"\nSUMMARY: {len(FAILS)} FAIL, {len(WARNS)} WARN")
     if FAILS:
