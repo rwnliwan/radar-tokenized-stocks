@@ -584,6 +584,22 @@ def load_live_tickers():
     for r in rows:
         if r["ticker_id"] not in latest:
             latest[r["ticker_id"]] = r
+    # Snapshot the program-wide rows ONCE before the per-ticker loop.
+    # Querying them inside the loop lets a status flip mid-load split
+    # one batch: proven 2026-10-25, the first hourly redemption row
+    # landed mid-loop, so the first 3 tickers read 'unknown' and missed
+    # the first batch while the other 10 read 'closed'.
+    red_by_issuer = {}
+    por_by_issuer = {}
+    for iss in {u["issuer"] for u in uni}:
+        red_rows = db_query(
+            "SELECT status, window_note, next_open_at FROM redemption_windows "
+            "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 1", [iss])
+        red_by_issuer[iss] = red_rows[0] if red_rows else None
+        por_rows = db_query(
+            "SELECT age_hours, last_update_ts FROM por_feeds "
+            "WHERE issuer = ? ORDER BY checked_at DESC LIMIT 1", [iss])
+        por_by_issuer[iss] = por_rows[0] if por_rows else None
     out = []
     for u in uni:
         tid = u["ticker_id"]
@@ -602,23 +618,19 @@ def load_live_tickers():
         if len(prices) >= 2:
             m = len(prices) // 2
             median = prices[m] if len(prices) % 2 == 1 else (prices[m - 1] + prices[m]) / 2
-        red = db_query(
-            "SELECT status, window_note, next_open_at FROM redemption_windows "
-            "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 1", [u["issuer"]])
-        por = db_query(
-            "SELECT age_hours, last_update_ts FROM por_feeds "
-            "WHERE issuer = ? ORDER BY checked_at DESC LIMIT 1", [u["issuer"]])
+        red = red_by_issuer.get(u["issuer"])
+        por = por_by_issuer.get(u["issuer"])
         out.append({
             "ticker": tid, "issuer": u["issuer"], "venues": venues,
             "dw": d.get("depth_weighted_price"),
             "dev_med": d.get("dev_vs_median_pct"),
             "depth": d.get("qualifying_depth_usd"),
             "pools_used": d.get("pools_used"), "median": median,
-            "redemption_status": red[0]["status"] if red else None,
-            "redemption_note": red[0]["window_note"] if red else None,
-            "next_open_at": red[0]["next_open_at"] if red else None,
-            "por_age_hours": por[0]["age_hours"] if por else None,
-            "por_last_update": por[0]["last_update_ts"] if por else None,
+            "redemption_status": red["status"] if red else None,
+            "redemption_note": red["window_note"] if red else None,
+            "next_open_at": red["next_open_at"] if red else None,
+            "por_age_hours": por["age_hours"] if por else None,
+            "por_last_update": por["last_update_ts"] if por else None,
         })
     return out
 
