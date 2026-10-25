@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { t, u, type Lang } from "../lib/i18n";
 
 type Theme = "dark" | "light";
@@ -50,6 +50,29 @@ export default function Header({
   right?: ReactNode;
 }) {
   const [theme, toggleTheme] = useTheme();
+  // Last-update text used to render inline here; its varying length made
+  // the wrapping header row change height between pages and as the
+  // relative minutes ticked up. It now lives behind a fixed-size "?"
+  // button: the header row stays the same size, and the text appears
+  // in an overlay that never moves layout. Closes on outside click / Escape.
+  const [showFresh, setShowFresh] = useState(false);
+  const freshRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!showFresh) return;
+    const onDoc = (e: MouseEvent) => {
+      if (freshRef.current && !freshRef.current.contains(e.target as Node))
+        setShowFresh(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowFresh(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showFresh]);
   const item = (href: string, label: string, isActive: boolean) =>
     isActive ? (
       <span className="active" aria-current="page">
@@ -92,7 +115,21 @@ export default function Header({
       <div className="live">
         <span className="dot" aria-hidden="true" />
         <span>{t(lang, "live_label")}</span>
-        {right}
+        {right && (
+          <span className="fresh-wrap" ref={freshRef}>
+            <button
+              type="button"
+              className="iconbtn qbtn"
+              onClick={() => setShowFresh((v) => !v)}
+              aria-expanded={showFresh}
+              aria-label={u(lang, "last_update_show")}
+              title={u(lang, "last_update_show")}
+            >
+              ?
+            </button>
+            {showFresh && <span className="fresh-pop">{right}</span>}
+          </span>
+        )}
         <button
           type="button"
           className="iconbtn"
