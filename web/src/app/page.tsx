@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "./Header";
-import WaitlistForm from "./WaitlistForm";
 import { fetchLatest, type LatestResponse, type TickerRow } from "../lib/api";
 import { buildCsv } from "../lib/csv";
 import {
@@ -225,14 +224,17 @@ export default function Home() {
 
       {!data && loading && (
         <div aria-busy="true" aria-label={t(lang, "loading")}>
-          <div className="kpis">
-            {[0, 1, 2, 3].map((i) => (
-              <div className="kpi" key={i}>
-                <div className="skel" style={{ width: "60%" }} />
-                <div className="skel" style={{ width: "80%", height: 26, margin: "10px 0" }} />
-                <div className="skel" style={{ width: "50%" }} />
-              </div>
-            ))}
+          <div className="hero-band" aria-hidden="true">
+            <div>
+              <div className="skel" style={{ width: 120 }} />
+              <div className="skel" style={{ width: 180, height: 38, margin: "10px 0" }} />
+            </div>
+            <div className="skel" style={{ width: 200, height: 14 }} />
+          </div>
+          <div className="statstrip" aria-hidden="true">
+            <div className="skel" style={{ width: 140, height: 14 }} />
+            <div className="skel" style={{ width: 120, height: 14 }} />
+            <div className="skel" style={{ width: 160, height: 14 }} />
           </div>
           <p className="hint">{t(lang, "loading")}</p>
         </div>
@@ -240,50 +242,47 @@ export default function Home() {
 
       {data && (
         <>
-          <div className="kpis">
-            <div className="kpi">
-              <small>{t(lang, "kpi_worst")}</small>
-              <div className="v">{worst ? fmtSigned1(worst.dev_bps) + " bps" : "—"}</div>
-              <div className="s">
-                {worst
-                  ? t(lang, "kpi_worst_sub", {
-                      ticker: worst.ticker,
-                      depth: fmtDepth(worst.depth_usd),
-                    })
-                  : t(lang, "no_data")}
-              </div>
+          <div className="hero-band">
+            <div>
+              <div className="lbl">{t(lang, "kpi_worst")}</div>
+              <div className="big">{worst ? fmtSigned1(worst.dev_bps) + " bps" : "—"}</div>
             </div>
-            <div className="kpi">
-              <small>{t(lang, "kpi_venues")}</small>
-              <div className="v">
+            <div className="sub">
+              {worst
+                ? t(lang, "kpi_worst_sub", {
+                    ticker: worst.ticker,
+                    depth: fmtDepth(worst.depth_usd),
+                  })
+                : t(lang, "no_data")}
+            </div>
+          </div>
+          <div className="statstrip">
+            <span>
+              {data.tickers.length} {t(lang, "nav_ticker")} ·{" "}
+              <b>
                 {data.meta.venues_live}/{data.meta.venues_total}
-              </div>
-              <div className="s">{t(lang, "kpi_venues_sub")}</div>
-            </div>
-            <div className="kpi">
-              <small>{t(lang, "kpi_por")}</small>
-              <div className="v">{porMaxAge != null ? `${Math.round(porMaxAge)}h` : "—"}</div>
-              <div className="s">
-                {porMaxAge != null ? u(lang, "por_stale_sub") : t(lang, "kpi_por_sub")}
-              </div>
-            </div>
-            <div className="kpi">
-              <small>{t(lang, "kpi_redemption")}</small>
-              <div className="v">{redLabel(lang, redStatus)}</div>
-              <div className="s">
-                {redStatus === "paused"
-                  ? t(lang, "kpi_redemption_sub_paused")
-                  : redStatus != null
-                    ? t(lang, "kpi_redemption_sub_live")
-                    : t(lang, "kpi_redemption_sub")}
-                {redNextOpen && redStatus !== "open" && (
-                  <>
-                    {" · "}
-                    {t(lang, "next_open_label")}: {fmtWITA(redNextOpen, lang)}
-                  </>
-                )}
-              </div>
-            </div>
+              </b>{" "}
+              {t(lang, "kpi_venues_sub")}
+            </span>
+            <span>
+              {t(lang, "kpi_por")}:{" "}
+              <b>{porMaxAge != null ? `${Math.round(porMaxAge)}h` : "—"}</b>{" "}
+              {porMaxAge != null ? u(lang, "por_stale_sub") : t(lang, "kpi_por_sub")}
+            </span>
+            <span>
+              {t(lang, "kpi_redemption")}: <b>{redLabel(lang, redStatus)}</b>{" "}
+              {redStatus === "paused"
+                ? t(lang, "kpi_redemption_sub_paused")
+                : redStatus != null
+                  ? t(lang, "kpi_redemption_sub_live")
+                  : t(lang, "kpi_redemption_sub")}
+              {redNextOpen && redStatus !== "open" && (
+                <>
+                  {" · "}
+                  {t(lang, "next_open_label")}: {fmtWITA(redNextOpen, lang)}
+                </>
+              )}
+            </span>
           </div>
 
           <div className="cover">
@@ -351,7 +350,7 @@ export default function Home() {
             {u(lang, "auto_refresh")}.
           </p>
 
-          <div className="tblwrap">
+          <div className="tblwrap home-tbl">
             <table>
               <thead>
                 <tr>
@@ -435,6 +434,35 @@ export default function Home() {
               </tbody>
             </table>
           </div>
+          <div className="rowcards">
+            {rows.map((r) => (
+              <div className="rc" key={r.ticker}>
+                <div className="top">
+                  <Link href={`/ticker/${r.ticker}`}>
+                    <b>{r.ticker}</b>
+                  </Link>
+                  <span className={`pill ${r.status}`}>
+                    {statusLabel(lang, r.status)}
+                  </span>
+                </div>
+                <div className="mid">
+                  <span className="num">{fmtUsd(r.dw_price)}</span>
+                  <span className="spark">{sparkBlocks(r.spark_bps)}</span>
+                  <span className="num">
+                    <b>{fmtSigned1(r.dev_bps)} bps</b>
+                  </span>
+                </div>
+                <div className="mid">
+                  <span className="dim">
+                    {t(lang, "col_depth10k")}: {fmtDepth(r.depth_usd)}
+                  </span>
+                  <Link className="detailbtn" href={`/ticker/${r.ticker}`}>
+                    {t(lang, "detail_link")} →
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
           {rows.length === 0 && <p className="hint">{t(lang, "no_data")}</p>}
 
           <h2>{t(lang, "bars_title")}</h2>
@@ -508,13 +536,6 @@ export default function Home() {
               )}
             </p>
           </div>
-
-          <section id="waitlist">
-            <h2>{t(lang, "waitlist_title")}</h2>
-            <p>{t(lang, "waitlist_intro")}</p>
-            <p className="hint">{u(lang, "waitlist_section_note")}</p>
-            <WaitlistForm lang={lang} />
-          </section>
 
           <div className="foot">
             {u(lang, "method_short")}

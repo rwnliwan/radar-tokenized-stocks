@@ -15,3 +15,14 @@ BUILD_LOG*.md
 /tmp/
 .bot_updates.json
 .wrangler/
+web/.next/
+web/.vercel/
+web/node_modules/
+web/tsconfig.tsbuildinfo
+verify_universe_out.json
+mockup-shots/
+padding_deploy_watch.py
+padding_watch.log
+v2_watch.log
+waitlist_watch.log
+web/next-env.d.ts
