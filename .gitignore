@@ -14,3 +14,4 @@ tests_fase2/
 BUILD_LOG*.md
 /tmp/
 .bot_updates.json
+.wrangler/
