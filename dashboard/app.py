@@ -669,9 +669,20 @@ def render_comparison_bars(lang, latest):
     thresholds (single orange family: pale = OK, mid = Watch,
     full = Alert). Tooltip carries venue, price, depth, PoR age,
     timestamp. Single-pool tickers have no deviation and are listed
-    below, never plotted at zero."""
+    below, never plotted at zero.
+    Wave 2: a scale toggle next to the chart. ZOOMED (default) fits
+    the axis to the plotted data and ALWAYS prints the axis range —
+    a zoomed chart without a printed range would be misleading.
+    FIXED shows the ±1% context view. The toggle key is
+    language-scoped (see home_table_block) so labels never stick in
+    the previous language after a toggle."""
     st.subheader(t(lang, "bars_title"))
     st.markdown(t(lang, "bars_note"))
+    scale_choice = st.radio(
+        t(lang, "bars_scale_label"), ["zoomed", "fixed"],
+        format_func=lambda v: t(lang, "bars_scale_zoomed")
+        if v == "zoomed" else t(lang, "bars_scale_fixed"),
+        horizontal=True, key=f"bars_scale_{lang}")
     venues_all = get_all_venues_latest()
     rows, nodata = [], []
     for tid, d in latest.items():
@@ -696,8 +707,20 @@ def render_comparison_bars(lang, latest):
         })
     if rows:
         bdf = pd.DataFrame(rows)
+        if scale_choice == "fixed":
+            lo, hi = -100.0, 100.0
+        else:
+            mn = min(r["bps"] for r in rows)
+            mx = max(r["bps"] for r in rows)
+            # Domain always includes 0 (bars grow from 0) plus a pad so
+            # the longest bar never touches the plot edge. The printed
+            # range below is exactly this domain — never a different
+            # number than the axis actually shows.
+            pad = max((mx - mn) * 0.1, 5.0)
+            lo, hi = min(0.0, mn) - pad, max(0.0, mx) + pad
         bchart = alt.Chart(bdf).mark_bar().encode(
-            x=alt.X("bps:Q", title=t(lang, "col_dev_bps")),
+            x=alt.X("bps:Q", title=t(lang, "col_dev_bps"),
+                    scale=alt.Scale(domain=[lo, hi])),
             y=alt.Y("ticker:N", sort="-x", title=None),
             color=alt.Color("status:N",
                             scale=alt.Scale(
@@ -714,6 +737,15 @@ def render_comparison_bars(lang, latest):
                      alt.Tooltip("ts:N")],
         )
         st.altair_chart(bchart.properties(height=320), width="stretch")
+        st.caption(t(lang, "bars_range", lo=f"{lo:+.1f}", hi=f"{hi:+.1f}"))
+        if scale_choice == "fixed":
+            # Fixed view clips bars beyond ±1% at the axis edge (the
+            # same honesty rule as the map's edge labels): name them
+            # so no magnitude is silently hidden.
+            beyond = sorted(r["ticker"] for r in rows if abs(r["bps"]) > 100)
+            if beyond:
+                st.caption(t(lang, "bars_clipped",
+                             tickers=", ".join(beyond)))
     if nodata:
         st.caption(f"{t(lang, 'bars_nodata')} {', '.join(sorted(nodata))}")
 
