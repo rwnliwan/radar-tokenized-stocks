@@ -439,3 +439,19 @@ begitu token asli terpasang.
   Vonis HP Septian yang menentukan (halaman yang sama: COINx).
   Blok spread 1-kartu absen karena bursa tutup — sesuai desain,
   bukan kegagalan.
+
+### Koreksi: DNS benar, "dua jalur" ternyata satu jalur (2026-10-25)
+- Screenshot DNS Septian: radar CNAME -> exit-radar.pages.dev,
+  Proxied — BENAR. Dugaan target salah DICABUT.
+- API Pages: domain radar.omdanny.site ter-alias ke deployment
+  produksi terbaru 7c91fe69 (success) — sisi Pages BENAR.
+- KOREKSI PENTING: curl induk + browser task SAMA-SAMA lewat
+  egress VM yang sama (proxy + PoP LAX yang sama) — jadi keduanya
+  sepakat BUKAN bukti kegagalan global; keduanya hanya membuktikan
+  jalur VM masih melihat placeholder. Jalur independen yang benar:
+  HP Septian + server UptimeRobot. Pelajaran: klaim "dua jalur
+  independen" wajib memeriksa apakah egress-nya memang berbeda.
+- Status dari jalur VM: radar.omdanny.site masih 404 (12:50 WITA);
+  deployment preview 7c91fe69.pages.dev 200 (shell SPA — grep
+  "All tickers" 0 normal untuk SPA, bukan bukti error).
+  Penentu: hasil buka HP Septian + status monitor UptimeRobot.
