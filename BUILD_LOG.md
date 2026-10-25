@@ -175,3 +175,85 @@ begitu token asli terpasang.
 - Catatan: npm memberi peringatan next@15.5.2 punya kerentanan
   (CVE-2025-66478) — versi ini dipertahankan karena menyamai Learn
   sesuai brief; keputusan upgrade di tangan parent/Septian.
+
+## Stage 2 — ticker pages, history charts, methodology, waitlist, CSV (2026-10-25)
+
+- `api/worker.js` — dua endpoint baru, tanpa ubah skema:
+  `GET /api/ticker?ticker=X` (satu pipeline Hrana: meta universe +
+  deviasi terbaru + venue per-pool + redemption + PoR + spark 12 siklus
+  + change 1h/24h/7d + pools_excluded defensif via PRAGMA) dan
+  `POST /api/waitlist` (satu-satunya write baru; INSERT...SELECT...
+  WHERE NOT EXISTS atomik = dedup case-insensitive; validasi mirror
+  Streamlit + length caps; cap global 500 insert/jam; CORS POST
+  terbuka + header Content-Type — form ini publik seperti di
+  Streamlit, kontrolnya validasi + dedup + cap, tanpa Turnstile
+  atau servis baru). Secret TURSO_AUTH_TOKEN TIDAK disentuh
+  (masih terpasang; `wrangler secret list` hanya nama).
+- `web/` — route baru: `/ticker` (indeks 13 ticker), `/ticker/[id]`
+  (dynamic, edge runtime — next-on-pages menolak dynamic route
+  tanpa `export const runtime = 'edge'`; build pertama gagal di
+  titik ini, diperbaiki + rebuild), `/methodology` (10 paragraf
+  methodology_* verbatim EN+ID). Halaman ticker meniru blok
+  Streamlit: metrik utama (dw/dev vs median/vs close pending),
+  chart riwayat SVG (tanpa lib chart: segmen putus di gap >2,5x
+  interval median, garis nol, hover readout), tabel venue
+  (dex/chain/harga/cadangan/vol24h/status/link DexScreener),
+  blok status bursa (buka → spread; tutup → skor risiko akhir
+  pekan v1 port verbatim dari dashboard/risk.py incl. banker's
+  rounding Python), kartu redemption + PoR, change 1h/24h/7d +
+  sparkline. Detail homepage kini Link ke halaman ticker
+  (panel inline dihapus; nit Stage 1 tertutup — copy tip kini
+  benar). CSV: tombol unduh tabel tampil (filter+sort aktif),
+  angka mentah analis, builder murni ter-unit-test (header,
+  null→kosong, escaping koma/kutip lolos).
+- i18n PARITAS PENUH: STR web = dashboard/i18n.py verbatim —
+  234 kunci EN + 234 kunci ID, 0 hilang, 0 lebih, 0 beda nilai
+  (generator /tmp/gen_i18n.py; Stage 1 68 kunci subset penuh di
+  dalamnya). UI F-ONLY dipisah (label ticker/chart/waitlist baru).
+- Yang TIDAK di-port (di luar daftar item-1, kandidat tahap
+  lanjut): alert log ticker, threshold simulator, compare overlay,
+  tabel best-exit-by-size. Ambang/status/semantik TIDAK berubah.
+
+### Tambahan di luar scope (latitud — relevan, bisa diveto)
+1. Halaman indeks `/ticker` — alasan: nav "Ticker" butuh landing
+   page; tanpa ini link nav tidak punya tujuan.
+
+### BUG FIX (bukti, bukan klaim — keduanya memengaruhi angka live)
+1. Filter jendela 1 jam Stage 1 SALAH: `ts >= datetime('now',
+   '-1 hour')` membandingkan teks format-T ("2026-10-25T...")
+   dengan format-spasi ("2026-10-25 ...") — 'T' > ' ' sehingga
+   semua baris hari ini lolos: 559 baris vs 143 baris yang benar
+   (strftime T-format). Akibat: change_1h homepage sebenarnya
+   change-sejak-awal-hari, dan /api/history 1h mengembalikan
+   seharian. Diperbaiki di loadLatest seriesR + loadHistory +
+   semua query jendela baru (strftime '%Y-%m-%dT%H:%M:%SZ').
+   Nilai change_1h berubah sesudah fix — itu koreksi, bukan
+   regresi.
+2. Case-sensitivity ticker: handler meng-uppercase param
+   ("TSLAx"→"TSLAX") sementara ticker_id tersimpan mixed-case —
+   SQLite BINARY collation → /api/ticker 404 untuk semua ticker
+   (ditemukan saat uji live pertama). Diperbaiki dengan
+   `COLLATE NOCASE` di 10 perbandingan ticker_id (juga
+   memperbaiki /api/history Stage 1 yang punya bug sama).
+
+### Verifikasi yang sudah dilakukan (bukan klaim)
+- tsc --noEmit bersih; next build + next-on-pages OK (route /
+  + /ticker statis + /ticker/[id] edge; "Exceeds maximum" = 0;
+  output .vercel/output/static 2,8 MB diverifikasi di disk).
+- Worker deploy (Version a21806ff); Pages deploy → produksi 200
+  (home + /ticker/TSLAx + /methodology + /ticker).
+- /api/ticker TSLAx + GOOGLx = Turso persis (dw, bps, depth,
+  pools, ts, jumlah venue — semua cocok).
+- History 1h GOOGLx = 12 titik 02:46→03:41Z (jendela benar);
+  24h/7d TSLAx = 17 titik per-jam (identik saat ini karena
+  riwayat baru ~17 jam — akan divergen seiring waktu).
+- Waitlist: POST alamat uji → {ok, already:false} + baris tepat
+  (consent=1); POST ulang beda kapitalisasi → already:true +
+  tetap 1 baris; POST tanpa consent → 400 + tanpa baris; baris
+  uji DIHAPUS + terbukti 0 sisa (tabel kembali 0 baris).
+- i18n 234/234, grep hsurr bersih, git show: hanya api/ +
+  web/ + BUILD_LOG berubah (poller/bot/dashboard/schema/cron/
+  DNS/route/UptimeRobot/Telegram tak tersentuh).
+- Batasan diketahui: chart riwayat 7d baru selebar riwayat yang
+  ada (~17 jam); halaman ticker belum punya alert log /
+  simulator / compare (lihat di atas).

@@ -1,85 +1,26 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Header from "./Header";
+import WaitlistForm from "./WaitlistForm";
 import { fetchLatest, type LatestResponse, type TickerRow } from "../lib/api";
+import { buildCsv } from "../lib/csv";
+import {
+  fmtDepth,
+  fmtPct,
+  fmtSigned1,
+  fmtUsd,
+  fmtWITA,
+  redLabel,
+  redPill,
+  sparkBlocks,
+  statusLabel,
+} from "../lib/format";
 import { t, u, type Lang } from "../lib/i18n";
 
-const BLOCKS = "▁▂▃▄▅▆▇█";
 const STALE_MIN = 15;
 const POLL_MS = 60000;
-
-function fmtUsd(n: number | null): string {
-  if (n == null) return "—";
-  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function fmtDepth(n: number | null): string {
-  if (n == null) return "—";
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
-  return `$${Math.round(n)}`;
-}
-
-function fmtSigned1(n: number | null): string {
-  if (n == null) return "—";
-  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}`;
-}
-
-function fmtPct(n: number | null): string {
-  if (n == null) return "—";
-  return `${n.toFixed(2)}%`;
-}
-
-function sparkBlocks(series: number[]): string {
-  if (series.length < 2) return "—";
-  const lo = Math.min(...series);
-  const hi = Math.max(...series);
-  if (hi === lo) return "▅".repeat(series.length);
-  return series
-    .map((v) => BLOCKS[Math.min(7, Math.floor(((v - lo) / (hi - lo)) * 7))])
-    .join("");
-}
-
-function fmtWITA(iso: string | null, lang: Lang): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
-  const locale = lang === "id" ? "id-ID" : "en-GB";
-  return (
-    new Intl.DateTimeFormat(locale, {
-      timeZone: "Asia/Makassar",
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(d) + " WITA"
-  );
-}
-
-function statusLabel(lang: Lang, s: TickerRow["status"]): string {
-  if (s === "ok") return t(lang, "status_ok");
-  if (s === "watch") return t(lang, "status_watch");
-  if (s === "alert") return t(lang, "status_alert");
-  return "—";
-}
-
-function redLabel(lang: Lang, s: string | null): string {
-  if (s === "open") return t(lang, "red_status_open");
-  if (s === "closed") return t(lang, "red_status_closed");
-  if (s === "gated") return t(lang, "red_status_gated");
-  if (s === "paused") return t(lang, "red_status_paused");
-  return t(lang, "redemption_unknown");
-}
-
-function redPill(s: string | null): string {
-  if (s === "open") return "open";
-  if (s === "closed") return "closed";
-  if (s === "gated") return "gated";
-  if (s === "paused") return "paused";
-  return "na";
-}
 
 type SortKey = "dev" | "depth" | "name" | "price" | "change";
 
@@ -92,7 +33,6 @@ export default function Home() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [tier, setTier] = useState<"all" | "1" | "2">("all");
   const [scale, setScale] = useState<"zoomed" | "fixed">("zoomed");
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [, setTick] = useState(0);
 
   useEffect(() => {
@@ -249,6 +189,16 @@ export default function Home() {
     );
   };
 
+  const downloadCsv = () => {
+    const blob = new Blob([buildCsv(rows)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = u(lang, "csv_filename");
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const freshnessText = latestTs
     ? ageMin != null && ageMin <= 0
       ? t(lang, "freshness_now", { time: fmtWITA(latestTs, lang) })
@@ -257,29 +207,7 @@ export default function Home() {
 
   return (
     <div className="wrap">
-      <header>
-        <div className="logo">
-          EXIT <b>RADAR</b>
-        </div>
-        <nav aria-label="Primary">
-          <b>{t(lang, "nav_home")}</b>
-          <span className="soon">{t(lang, "nav_ticker")}</span>
-          <span className="soon">{t(lang, "nav_methodology")}</span>
-        </nav>
-        <div className="live">
-          <span className="dot" aria-hidden="true" />
-          <span>{t(lang, "live_label")}</span>
-          <span>{freshnessText}</span>
-          <span className="lang" role="group" aria-label="Language / Bahasa">
-            <button type="button" aria-pressed={lang === "en"} onClick={() => toggleLang("en")}>
-              EN
-            </button>
-            <button type="button" aria-pressed={lang === "id"} onClick={() => toggleLang("id")}>
-              ID
-            </button>
-          </span>
-        </div>
-      </header>
+      <Header lang={lang} onLangChange={toggleLang} active="home" right={<span>{freshnessText}</span>} />
 
       {stale && latestTs && (
         <div className="banner" role="status">
@@ -414,6 +342,9 @@ export default function Home() {
             <button type="button" className="refresh" onClick={load} disabled={loading}>
               {loading ? t(lang, "refresh_updating") : t(lang, "refresh_button")}
             </button>
+            <button type="button" className="refresh" onClick={downloadCsv}>
+              {t(lang, "download_csv")}
+            </button>
           </div>
           <p className="hint">
             {t(lang, "home_table_note_cycle")} {t(lang, "home_table_hint")}{" "}
@@ -426,7 +357,7 @@ export default function Home() {
                 <tr>
                   {sortHead("name", t(lang, "col_ticker"))}
                   <th className="hide-s">{t(lang, "col_tier")}</th>
-                  {sortHead("price", u(lang, "dw_price"))}
+                  {sortHead("price", t(lang, "dw_price"))}
                   {sortHead("dev", t(lang, "col_dev_bps"))}
                   <th className="hide-s">{t(lang, "col_spread")}</th>
                   {sortHead("depth", t(lang, "col_depth10k"))}
@@ -445,138 +376,60 @@ export default function Home() {
               </thead>
               <tbody>
                 {rows.map((r) => {
-                  const open = !!expanded[r.ticker];
                   const alpha =
                     r.dev_bps != null ? Math.min(Math.abs(r.dev_bps) / 100, 0.5) : 0;
                   const tint =
                     r.dev_bps != null ? { background: `rgba(224,123,74,${alpha.toFixed(2)})` } : {};
                   return (
-                    <Fragment key={r.ticker}>
-                      <tr>
-                        <td className="tk">
+                    <tr key={r.ticker}>
+                      <td className="tk">
+                        <Link href={`/ticker/${r.ticker}`}>
                           <b>{r.ticker}</b>
-                        </td>
-                        <td className="hide-s">{r.tier ?? "—"}</td>
-                        <td className="num">{fmtUsd(r.dw_price)}</td>
-                        <td className="num dev" style={tint}>
-                          {fmtSigned1(r.dev_bps)}
-                        </td>
-                        <td className="num hide-s">{fmtPct(r.spread_pct)}</td>
-                        <td className="num hide-s">{fmtDepth(r.depth_usd)}</td>
-                        <td className="hide-m">
-                          <div className="dbar">
-                            <i
-                              style={{
-                                width: `${maxDepth > 0 ? ((r.depth_usd ?? 0) / maxDepth) * 100 : 0}%`,
-                              }}
-                            />
-                          </div>
-                        </td>
-                        <td className="hide-s">
-                          <span className={`pill ${redPill(r.redemption_status)}`}>
-                            {redLabel(lang, r.redemption_status)}
-                          </span>
-                        </td>
-                        <td className="dim hide-s">
-                          {r.por_age_hours != null
-                            ? `${Math.round(r.por_age_hours)}h`
-                            : t(lang, "por_not_published")}
-                        </td>
-                        <td>
-                          <span className={`pill ${r.status}`}>
-                            {statusLabel(lang, r.status)}
-                          </span>
-                        </td>
-                        <td
-                          className={`num hide-s ${r.change_1h_bps != null && r.change_1h_bps < 0 ? "neg" : r.change_1h_bps != null && r.change_1h_bps > 0 ? "pos" : ""}`}
-                        >
-                          {fmtSigned1(r.change_1h_bps)}
-                        </td>
-                        <td className="spark hide-s">{sparkBlocks(r.spark_bps)}</td>
-                        <td>
-                          <button
-                            type="button"
-                            className="detailbtn"
-                            aria-expanded={open}
-                            aria-controls={`detail-${r.ticker}`}
-                            aria-label={u(lang, "expand_label")}
-                            onClick={() =>
-                              setExpanded((e) => ({ ...e, [r.ticker]: !e[r.ticker] }))
-                            }
-                          >
-                            {open ? `${u(lang, "close_detail")} ←` : `${t(lang, "detail_link")} →`}
-                          </button>
-                        </td>
-                      </tr>
-                      {open && (
-                        <tr className="detail-row" key={`${r.ticker}-detail`}>
-                          <td colSpan={13} id={`detail-${r.ticker}`}>
-                            <div className="detail-grid">
-                              <div>
-                                <div className="k">{t(lang, "col_best_price")}</div>
-                                <div className="v">
-                                  {r.best_price != null
-                                    ? `${fmtUsd(r.best_price)} (${r.best_dex ?? "—"})`
-                                    : "—"}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="k">{u(lang, "dw_price")}</div>
-                                <div className="v">{fmtUsd(r.dw_price)}</div>
-                              </div>
-                              <div>
-                                <div className="k">{t(lang, "col_spread")}</div>
-                                <div className="v">{fmtPct(r.spread_pct)}</div>
-                              </div>
-                              <div>
-                                <div className="k">{u(lang, "pools_used")}</div>
-                                <div className="v">{r.pools_used ?? "—"}</div>
-                              </div>
-                              <div>
-                                <div className="k">{t(lang, "col_tier")}</div>
-                                <div className="v">{r.tier ?? "—"}</div>
-                              </div>
-                              <div>
-                                <div className="k">{u(lang, "issuer")}</div>
-                                <div className="v">{r.issuer}</div>
-                              </div>
-                              <div>
-                                <div className="k">{t(lang, "redemption_title")}</div>
-                                <div className="v">
-                                  {redLabel(lang, r.redemption_status)}
-                                  {r.redemption_next_open && r.redemption_status !== "open" && (
-                                    <>
-                                      {" · "}
-                                      {t(lang, "next_open_label")}:{" "}
-                                      {fmtWITA(r.redemption_next_open, lang)}
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="k">{t(lang, "por_age_label")}</div>
-                                <div className="v">
-                                  {r.por_age_hours != null
-                                    ? `${Math.round(r.por_age_hours)}h`
-                                    : t(lang, "por_not_published")}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="k">
-                                  {t(lang, "col_change", { window: t(lang, "window_1h") })}
-                                </div>
-                                <div className="v">{fmtSigned1(r.change_1h_bps)}</div>
-                              </div>
-                              <div>
-                                <div className="k">{t(lang, "col_spark")}</div>
-                                <div className="v spark">{sparkBlocks(r.spark_bps)}</div>
-                              </div>
-                            </div>
-                            <div className="detail-note">{u(lang, "stage2_note")}</div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
+                        </Link>
+                      </td>
+                      <td className="hide-s">{r.tier ?? "—"}</td>
+                      <td className="num">{fmtUsd(r.dw_price)}</td>
+                      <td className="num dev" style={tint}>
+                        {fmtSigned1(r.dev_bps)}
+                      </td>
+                      <td className="num hide-s">{fmtPct(r.spread_pct)}</td>
+                      <td className="num hide-s">{fmtDepth(r.depth_usd)}</td>
+                      <td className="hide-m">
+                        <div className="dbar">
+                          <i
+                            style={{
+                              width: `${maxDepth > 0 ? ((r.depth_usd ?? 0) / maxDepth) * 100 : 0}%`,
+                            }}
+                          />
+                        </div>
+                      </td>
+                      <td className="hide-s">
+                        <span className={`pill ${redPill(r.redemption_status)}`}>
+                          {redLabel(lang, r.redemption_status)}
+                        </span>
+                      </td>
+                      <td className="dim hide-s">
+                        {r.por_age_hours != null
+                          ? `${Math.round(r.por_age_hours)}h`
+                          : t(lang, "por_not_published")}
+                      </td>
+                      <td>
+                        <span className={`pill ${r.status}`}>
+                          {statusLabel(lang, r.status)}
+                        </span>
+                      </td>
+                      <td
+                        className={`num hide-s ${r.change_1h_bps != null && r.change_1h_bps < 0 ? "neg" : r.change_1h_bps != null && r.change_1h_bps > 0 ? "pos" : ""}`}
+                      >
+                        {fmtSigned1(r.change_1h_bps)}
+                      </td>
+                      <td className="spark hide-s">{sparkBlocks(r.spark_bps)}</td>
+                      <td>
+                        <Link className="detailbtn" href={`/ticker/${r.ticker}`}>
+                          {t(lang, "detail_link")} →
+                        </Link>
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
@@ -655,6 +508,13 @@ export default function Home() {
               )}
             </p>
           </div>
+
+          <section id="waitlist">
+            <h2>{t(lang, "waitlist_title")}</h2>
+            <p>{t(lang, "waitlist_intro")}</p>
+            <p className="hint">{u(lang, "waitlist_section_note")}</p>
+            <WaitlistForm lang={lang} />
+          </section>
 
           <div className="foot">
             {u(lang, "method_short")}

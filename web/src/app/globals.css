@@ -158,3 +158,56 @@ tr.detail-row td { white-space: normal; background: #0f172a; }
   .kpis { grid-template-columns: 1fr; }
   .hide-m { display: none; }
 }
+
+/* Stage 2: ticker pages, history chart, waitlist form, methodology. */
+h1 { font-size: 24px; margin: 22px 0 6px; }
+.meta { color: #8a93a6; font-size: 14px; margin: 0 0 14px; }
+nav a { color: #8a93a6; text-decoration: none; }
+nav a:hover { color: #e6eaf2; text-decoration: underline; }
+.logo a:hover { text-decoration: none; }
+
+.metrics {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0;
+}
+.metric { background: #111827; border: 1px solid #1e293b; border-radius: 12px; padding: 14px 16px; }
+.metric small { color: #8a93a6; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+.metric .v { font-size: 22px; font-weight: 700; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.metric .s { color: #8a93a6; font-size: 13px; }
+
+.hchart { background: #111827; border: 1px solid #1e293b; border-radius: 12px; padding: 12px 16px; }
+.hchart svg { width: 100%; height: auto; display: block; }
+.hchart .grid { stroke: #1e293b; stroke-width: 1; }
+.hchart .zero { stroke: #475569; stroke-width: 1; stroke-dasharray: 4 3; }
+.hchart .line { fill: none; stroke: #e07b4a; stroke-width: 2; stroke-linejoin: round; }
+.hchart .hoverline { stroke: #2dd4bf; stroke-width: 1; }
+.hchart .hoverdot { fill: #2dd4bf; }
+.hchart .ax { fill: #8a93a6; font-size: 11px; }
+.hchart-tip { color: #cbd5e1; font-size: 13px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+
+.form { max-width: 560px; display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { color: #8a93a6; font-size: 13px; }
+.field input[type="text"], .field select {
+  background: #0f172a; border: 1px solid #334155; color: #e6eaf2;
+  border-radius: 8px; padding: 9px 12px; font-size: 14px; width: 100%;
+}
+.field input[type="text"]:focus-visible, .field select:focus-visible {
+  outline: 2px solid #2dd4bf; outline-offset: 1px;
+}
+.field.check { flex-direction: row; align-items: flex-start; gap: 8px; }
+.field.check input { margin-top: 3px; accent-color: #2dd4bf; }
+.btn {
+  align-self: flex-start; background: #0f766e; border: 0; color: #fff;
+  border-radius: 8px; padding: 9px 20px; cursor: pointer; font-size: 14px; font-weight: 600;
+}
+.btn:disabled { opacity: 0.55; cursor: default; }
+.formerror { color: #fca5a5; font-size: 14px; margin: 0; }
+
+.method-intro { font-size: 16px; line-height: 1.65; color: #e6eaf2; }
+.method { font-size: 15px; line-height: 1.7; color: #cbd5e1; }
+hr { border: 0; border-top: 1px solid #1e293b; margin: 22px 0; }
+section#waitlist { margin-top: 26px; }
+
+@media (max-width: 760px) {
+  .metrics { grid-template-columns: 1fr 1fr; }
+}

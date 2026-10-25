@@ -122,7 +122,8 @@ async function loadLatest(env) {
     ["SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 1"],
     [
       "SELECT ticker_id, ts, dev_vs_median_pct FROM deviations " +
-        "WHERE ts >= datetime('now', '-1 hour') AND dev_vs_median_pct IS NOT NULL " +
+        "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour') " +
+        "AND dev_vs_median_pct IS NOT NULL " +
         "ORDER BY ticker_id, ts",
     ],
   ]);
@@ -208,13 +209,13 @@ async function loadHistory(env, ticker, window) {
     sql =
       "SELECT ticker_id, strftime('%Y-%m-%dT%H:00:00Z', ts) AS bucket, " +
       "AVG(dev_vs_median_pct) AS dev FROM deviations " +
-      "WHERE ticker_id = ? AND ts >= datetime('now', '-" + hours + " hours') " +
+      "WHERE ticker_id = ? COLLATE NOCASE AND ts >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-" + hours + " hours') " +
       "AND dev_vs_median_pct IS NOT NULL " +
       "GROUP BY ticker_id, bucket ORDER BY bucket ASC";
   } else {
     sql =
       "SELECT ticker_id, ts, dev_vs_median_pct AS dev FROM deviations " +
-      "WHERE ticker_id = ? AND ts >= datetime('now', '-1 hour') " +
+      "WHERE ticker_id = ? COLLATE NOCASE AND ts >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour') " +
       "AND dev_vs_median_pct IS NOT NULL ORDER BY ts ASC";
   }
   const [res] = await pipeline(env, [[sql, [ticker]]]);
@@ -225,13 +226,207 @@ async function loadHistory(env, ticker, window) {
   return { ticker, window, points };
 }
 
+async function loadTicker(env, ticker) {
+  // pools_excluded lives in deviations only if a live ALTER added it
+  // (schema.sql does not declare it; the dashboard reads it defensively).
+  // Probe first so a missing column cannot fail the main pipeline.
+  let hasExcluded = false;
+  try {
+    const [pragma] = await pipeline(env, [["PRAGMA table_info(deviations)"]]);
+    hasExcluded = rowsOf(pragma).some((c) => c.name === "pools_excluded");
+  } catch {
+    hasExcluded = false;
+  }
+  const anchor = (hours) => [
+    "SELECT dev_vs_median_pct FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
+      "AND ts >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-" + hours + " hours') " +
+      "AND dev_vs_median_pct IS NOT NULL ORDER BY ts ASC LIMIT 1",
+    [ticker],
+  ];
+  const stmts = [
+    [
+      "SELECT ticker_id, issuer, underlying, legal_type, tier FROM universe " +
+        "WHERE ticker_id = ? COLLATE NOCASE",
+      [ticker],
+    ],
+    [
+      "SELECT ts, depth_weighted_price, dev_vs_median_pct, qualifying_depth_usd, " +
+        "pools_used FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
+        "ORDER BY ts DESC, id DESC LIMIT 1",
+      [ticker],
+    ],
+    [
+      "SELECT p.dex, p.chain, p.pair_address, s.price_usd, s.reserve_usd, " +
+        "s.volume_24h_usd, s.ts FROM pools p JOIN snapshots s ON s.pool_id = p.pool_id " +
+        "WHERE p.ticker_id = ? COLLATE NOCASE AND p.is_active = 1 " +
+        "AND s.ts = (SELECT MAX(ts) FROM snapshots s2 WHERE s2.pool_id = p.pool_id) " +
+        "ORDER BY s.reserve_usd DESC",
+      [ticker],
+    ],
+    [
+      "SELECT status, window_note, window_note_en, observed_at, source, next_open_at " +
+        "FROM redemption_windows " +
+        "WHERE issuer = (SELECT issuer FROM universe WHERE ticker_id = ? COLLATE NOCASE) " +
+        "ORDER BY observed_at DESC LIMIT 1",
+      [ticker],
+    ],
+    [
+      "SELECT feed_address, last_update_ts, age_hours, reserves_vs_supply_note " +
+        "FROM por_feeds " +
+        "WHERE issuer = (SELECT issuer FROM universe WHERE ticker_id = ? COLLATE NOCASE) " +
+        "ORDER BY checked_at DESC LIMIT 1",
+      [ticker],
+    ],
+    [
+      "SELECT ts, dev_vs_median_pct FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
+        "AND ts >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour') " +
+        "AND dev_vs_median_pct IS NOT NULL ORDER BY ts ASC",
+      [ticker],
+    ],
+    anchor(1),
+    anchor(24),
+    anchor(168),
+  ];
+  if (hasExcluded) {
+    stmts.push([
+      "SELECT pools_excluded FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
+        "ORDER BY ts DESC, id DESC LIMIT 1",
+      [ticker],
+    ]);
+  }
+  const res = await pipeline(env, stmts);
+  const uni = rowsOf(res[0])[0];
+  if (!uni) return null;
+  const d = rowsOf(res[1])[0] || {};
+  const venues = rowsOf(res[2]).map((v) => ({
+    dex: v.dex,
+    chain: v.chain,
+    pair_address: v.pair_address,
+    price_usd: v.price_usd,
+    reserve_usd: v.reserve_usd,
+    volume_24h_usd: v.volume_24h_usd,
+    ts: v.ts,
+    qualifies: v.reserve_usd != null && v.reserve_usd >= LIQ_MIN,
+  }));
+  const red = rowsOf(res[3])[0] || null;
+  const por = rowsOf(res[4])[0] || null;
+  const series = rowsOf(res[5]).map((s) => s.dev_vs_median_pct);
+  const firstOf = (i) => {
+    const r = rowsOf(res[i])[0];
+    return r ? r.dev_vs_median_pct : null;
+  };
+  const dw = d.depth_weighted_price ?? null;
+  const dev = d.dev_vs_median_pct ?? null;
+  const bps = dev != null ? dev * 100 : null;
+  const change = (anchorVal) =>
+    anchorVal != null && dev != null ? (dev - anchorVal) * 100 : null;
+  const status =
+    bps == null ? "na" : Math.abs(bps) > 100 ? "alert" : Math.abs(bps) > 50 ? "watch" : "ok";
+  const best = venues.filter((v) => v.qualifies && v.price_usd != null)[0] || null;
+  return {
+    ticker: uni.ticker_id,
+    issuer: uni.issuer,
+    underlying: uni.underlying,
+    legal_type: uni.legal_type,
+    tier: uni.tier,
+    dw_price: dw,
+    dev_pct: dev,
+    dev_bps: bps,
+    best_price: best ? best.price_usd : null,
+    best_dex: best ? best.dex : null,
+    spread_pct: crossVenueSpread(venues, dw),
+    depth_usd: d.qualifying_depth_usd ?? null,
+    pools_used: d.pools_used ?? null,
+    pools_excluded: hasExcluded ? (rowsOf(res[9])[0]?.pools_excluded ?? 0) : 0,
+    redemption_status: red ? String(red.status).toLowerCase() : null,
+    redemption_next_open: red ? red.next_open_at : null,
+    redemption_note_en: red ? red.window_note_en : null,
+    redemption_note: red ? red.window_note : null,
+    redemption_observed_at: red ? red.observed_at : null,
+    redemption_source: red ? red.source : null,
+    por_age_hours: por ? por.age_hours : null,
+    por_last_update: por ? por.last_update_ts : null,
+    por_feed_address: por ? por.feed_address : null,
+    por_note: por ? por.reserves_vs_supply_note : null,
+    spark_bps: series.slice(-12).map((v) => v * 100),
+    change_1h_bps: change(firstOf(6)),
+    change_24h_bps: change(firstOf(7)),
+    change_7d_bps: change(firstOf(8)),
+    status,
+    venues,
+    latest_ts: d.ts ?? null,
+  };
+}
+
+const WAITLIST_HOURLY_CAP = 500;
+
+async function handleWaitlist(request, env) {
+  let body;
+  try {
+    const text = await request.text();
+    if (text.length > 10000) return json({ error: "payload too large" }, 413);
+    body = JSON.parse(text);
+  } catch {
+    return json({ error: "invalid JSON" }, 400);
+  }
+  const contact = typeof body.contact === "string" ? body.contact.trim() : "";
+  const position = typeof body.position === "string" ? body.position.trim() : "";
+  const venues = typeof body.venues === "string" ? body.venues.trim() : "";
+  const price = typeof body.price === "string" ? body.price.trim() : "";
+  // Mirror the Streamlit validation (required contact/position/venues +
+  // consent) plus length caps so one submission cannot bloat the table.
+  if (
+    !contact ||
+    contact.length > 200 ||
+    !position ||
+    position.length > 100 ||
+    !venues ||
+    venues.length > 300 ||
+    price.length > 100 ||
+    body.consent !== true
+  ) {
+    return json({ error: "validation failed" }, 400);
+  }
+  const norm = contact.toLowerCase();
+  const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  // Hourly cap uses the strftime T-format window: created_at is stored
+  // T-format, and datetime('now') returns space-format, which would
+  // compare wrong (same class of bug as the Stage 1 series filter).
+  const [countRes, existRes] = await pipeline(env, [
+    [
+      "SELECT COUNT(*) AS n FROM waitlist WHERE created_at >= " +
+        "strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour')",
+    ],
+    ["SELECT id FROM waitlist WHERE LOWER(TRIM(contact)) = ? LIMIT 1", [norm]],
+  ]);
+  const hourly = rowsOf(countRes)[0]?.n ?? 0;
+  if (Number(hourly) >= WAITLIST_HOURLY_CAP) {
+    return json({ error: "rate limited" }, 429);
+  }
+  if (rowsOf(existRes).length) return json({ ok: true, already: true });
+  const [insRes] = await pipeline(env, [
+    [
+      "INSERT INTO waitlist (contact, position_size_usd, venues, willing_price, " +
+        "created_at, consent) SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS " +
+        "(SELECT 1 FROM waitlist WHERE LOWER(TRIM(contact)) = ?)",
+      [contact, position, venues, price || null, nowIso, 1, norm],
+    ],
+  ]);
+  // The INSERT...WHERE NOT EXISTS is atomic: even a simultaneous duplicate
+  // submit cannot create a second row. rows_written === 0 means the race
+  // was lost to an identical contact — still an idempotent success.
+  const already = insRes && insRes.rows_written === 0;
+  return json({ ok: true, already: !!already });
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
       "Cache-Control": "no-store",
     },
   });
@@ -253,6 +448,19 @@ export default {
         if (!["1h", "24h", "7d"].includes(window))
           return json({ error: "window must be 1h, 24h or 7d" }, 400);
         return json(await loadHistory(env, ticker, window));
+      }
+      if (url.pathname === "/api/ticker") {
+        const ticker = (url.searchParams.get("ticker") || "").toUpperCase();
+        if (!ticker || !/^[A-Z0-9]+X$/.test(ticker))
+          return json({ error: "ticker required, e.g. ?ticker=TSLAx" }, 400);
+        const detail = await loadTicker(env, ticker);
+        if (!detail) return json({ error: "ticker not found" }, 404);
+        return json(detail);
+      }
+      if (url.pathname === "/api/waitlist") {
+        if (request.method !== "POST")
+          return json({ error: "POST only" }, 405);
+        return handleWaitlist(request, env);
       }
       if (url.pathname === "/api/health") {
         const { meta } = await loadLatest(env);
