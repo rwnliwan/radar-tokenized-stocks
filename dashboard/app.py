@@ -607,7 +607,16 @@ def render_risk_breakdown(lang, score):
         v = comp[k]
         parts.append(f"{labels[k]}: {v:.1f}" if v is not None
                      else f"{labels[k]}: —")
-    st.markdown(f"**{t(lang, 'risk_total_100')}: {score['score_100']:.1f}** "
+    # Wave 1: the Total cell carries its component count in-line, so a
+    # partial score can never be read as a complete one.
+    if score["score_100"] is None:
+        _total_txt = "—"
+    elif score["partial"]:
+        _total_txt = (f"{score['score_100']:.1f} "
+                      f"({score['components_present']}/4)")
+    else:
+        _total_txt = f"{score['score_100']:.1f}"
+    st.markdown(f"**{t(lang, 'risk_total_100')}: {_total_txt}** "
                 f"(method {score['method_version']})")
     st.markdown(" · ".join(parts))
     if score["partial"]:
@@ -619,7 +628,8 @@ def render_kpi_strip(lang, latest):
     """v3.2 KPI strip: worst deviation, venues live, PoR stale,
     redemption open. Cards use abbreviated numbers; tables keep the
     full comma format. PoR shows '—' (no feed connected) and
-    redemption shows open/tracked (today 0/1, status unknown) — never
+    redemption shows 'Unknown' (Wave 1: the old '0/1' headline read as
+    'confirmed closed' while the status is actually unknown) — never
     invented values."""
     def _card(label, value, sub):
         st.markdown(
@@ -646,10 +656,11 @@ def render_kpi_strip(lang, latest):
               t(lang, "kpi_venues_sub"))
     with k3:
         _card(t(lang, "kpi_por"), "—", t(lang, "kpi_por_sub"))
-    rs = get_redemption_summary()
     with k4:
-        val = f"{rs['open']}/{rs['total']}" if rs["total"] else "—"
-        _card(t(lang, "kpi_redemption"), val, t(lang, "kpi_redemption_sub"))
+        # Wave 1: headline is 'Unknown', not '0/1'. The sub stays
+        # truthful (documented only, no live status).
+        _card(t(lang, "kpi_redemption"), t(lang, "redemption_unknown"),
+              t(lang, "kpi_redemption_sub"))
 
 
 def render_comparison_bars(lang, latest):
@@ -1179,6 +1190,13 @@ def home_table_block(lang):
         styled = df.style.apply(
             lambda s: tint_dev(s, divisor=200.0),
             subset=[t(lang, "col_dev_bps")])
+        # Wave 1: the two repeated missing-data label columns stay
+        # visible (never deleted) but dimmed, so they no longer shout
+        # as loud as real data. What is missing is summarized in the
+        # coverage line under the headline (fix 3).
+        styled = styled.set_properties(
+            subset=[t(lang, "redemption_title"), t(lang, "por_age_label")],
+            color="#8a8580")
         st.dataframe(
             styled,
             column_config={
@@ -1237,6 +1255,10 @@ def home_table_block(lang):
 if page == "home":
     st.markdown(f"**{t(lang, 'app_tagline')}**")
     st.markdown(t(lang, "landing_line"))
+    # Wave 1: one honest coverage line directly under the headline —
+    # what is live today vs what is not yet available. This is also
+    # the summary for the dimmed missing-data columns (fix 4).
+    st.markdown(t(lang, "coverage_live_line"))
     latest_home = get_latest_deviations()
     # v3.2: the KPI strip replaces the v2 pulse hero (same worst-deviation
     # content now lives in card 1, plus venues/PoR/redemption — no
@@ -1312,27 +1334,41 @@ if page == "home":
                 red.get("status") if red else None,
                 por.get("age_hours") if por else None)
             scored.append((tid, s))
-        # v3.2: rank by NORMALIZED score — ranking by raw total was the
-        # bug (tickers with fewer components ranked lower on a smaller
-        # denominator, e.g. 21.9/65 vs 18.6/25).
-        scored.sort(key=lambda kv: (kv[1]["score_100"] if kv[1]["score_100"] is not None else -1),
+        # Wave 1: rank ONLY tickers with >= 2 of 4 components. The
+        # normalized score rescales a 1-component ticker to 100, so a
+        # 1/4 ticker (live: METAx 74.0) topped the ranking — a
+        # structurally misleading rank, not a labeling issue. Withheld
+        # tickers are listed unranked below; their components still
+        # display on their ticker pages (render_risk_breakdown).
+        ranked = [kv for kv in scored
+                  if kv[1]["components_present"] >= 2]
+        unranked = [(tid, s["components_present"]) for tid, s in scored
+                    if s["components_present"] < 2]
+        ranked.sort(key=lambda kv: (kv[1]["score_100"] if kv[1]["score_100"] is not None else -1),
                     reverse=True)
-        if scored:
+        if ranked:
             # v3: excluded components show '—' in the cells; the
             # explanation lives in ONE footnote below, not repeated
             # across two columns six times (audit).
             def _comp(v):
                 return f"{v:.1f}" if v is not None else "—"
+
+            def _total(s):
+                if s["score_100"] is None:
+                    return "—"
+                if s["partial"]:
+                    return (f"{s['score_100']:.1f} "
+                            f"({s['components_present']}/4)")
+                return f"{s['score_100']:.1f}"
             st.dataframe(pd.DataFrame([{
                 t(lang, "col_ticker"): tid,
-                t(lang, "risk_total_100"): (f"{s['score_100']:.1f}"
-                                            if s["score_100"] is not None else "—"),
+                t(lang, "risk_total_100"): _total(s),
                 t(lang, "risk_dev_label"): _comp(s["components"]["deviation"]),
                 t(lang, "risk_depth_label"): _comp(s["components"]["depth"]),
                 t(lang, "risk_red_label"): _comp(s["components"]["redemption"]),
                 t(lang, "risk_por_label"): _comp(s["components"]["por"]),
-            } for tid, s in scored[:3]]), width="stretch", hide_index=True)
-            _shown = scored[:3]
+            } for tid, s in ranked[:3]]), width="stretch", hide_index=True)
+            _shown = ranked[:3]
             _partial = [(tid, s["components_present"])
                         for tid, s in _shown if s["partial"]]
             if _partial:
@@ -1343,7 +1379,11 @@ if page == "home":
                    for v in s["components"].values()):
                 st.caption(t(lang, "risk_footnote"))
             st.caption(t(lang, "risk_method"))
-        else:
+        if unranked:
+            st.caption(t(lang, "risk_unranked",
+                           items=", ".join(f"{tid} ({n}/4)"
+                                           for tid, n in unranked)))
+        if not scored:
             st.markdown(t(lang, "no_data"))
 
     if st.button(t(lang, "waitlist_cta"), key="home_cta_btn"):
