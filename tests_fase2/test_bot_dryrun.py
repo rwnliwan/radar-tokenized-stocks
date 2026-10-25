@@ -43,7 +43,7 @@ def main():
             assert "Spread:" in body and "Depth-weighted" in body
         if name.startswith("redemption"):
             assert "closed" in body.lower()
-            assert "Depth-weighted price" in body  # §5.6: every alert carries price+depth
+            assert "Price (depth-weighted)" in body  # §5.6: every alert carries price+depth
         if name.startswith("PoR"):
             assert "96.0" in body and "hours" in body
             assert "Depth-weighted price" in body

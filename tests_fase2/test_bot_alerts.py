@@ -97,15 +97,17 @@ def main():
     # disclaimer, ticker link, no ID leak.
     msg_en = bot.format_alert(r[0], "en")
     assert msg_en.splitlines()[0] == "🟡 REDEMPTION — TSLAx (xStocks)"
-    assert "Redemption window status: closed" in msg_en
-    assert "Next opening: 2026-10-26T04:00:00Z" in msg_en
+    assert "Redemption window: closed" in msg_en
+    assert "Next opening: Mon 26 Oct 2026, 12:00 WITA" in msg_en
     assert "not confirmed live by the issuer" in msg_en
     assert "Not financial advice" in msg_en
     assert "https://radar.omdanny.site/TSLAx" in msg_en
     assert "Status dihitung dari jadwal" not in msg_en, "ID note leaked into EN"
     assert "Bukan nasihat keuangan" not in msg_en, "ID disclaimer leaked into EN"
     assert "Dari jadwal" not in msg_en, "DB window_note leaked into EN"
-    assert "Depth-weighted price" in msg_en
+    assert "Price (depth-weighted)" in msg_en
+    assert "\n\n" in msg_en, "sections must be blank-line separated"
+    assert "Tracked venues" not in msg_en, "redundant venues line removed"
     assert len(msg_en) < 4096, f"EN message too long: {len(msg_en)}"
     check_forbidden(msg_en, "EN redemption")
 
@@ -113,11 +115,12 @@ def main():
     msg_id = bot.format_alert(r[0], "id")
     assert msg_id.splitlines()[0] == "🟡 REDEMPTION — TSLAx (xStocks)"
     assert "Status jendela redemption: tutup" in msg_id
-    assert "Pembukaan berikutnya: 2026-10-26T04:00:00Z" in msg_id
+    assert "Pembukaan berikutnya: Sen 26 Okt 2026, 12:00 WITA" in msg_id
     assert "bukan konfirmasi live dari issuer" in msg_id
     assert "Bukan nasihat keuangan" in msg_id
     assert "Not financial advice" not in msg_id, "EN disclaimer leaked into ID"
-    assert "Harga tertimbang kedalaman" in msg_id
+    assert "Harga (tertimbang kedalaman)" in msg_id
+    assert "Venue yang dilacak" not in msg_id, "redundant venues line removed"
     assert len(msg_id) < 4096, f"ID message too long: {len(msg_id)}"
     check_forbidden(msg_id, "ID redemption")
 
@@ -139,7 +142,7 @@ def main():
     assert len(r) == 1 and r[0]["ticker"] == "SPYx"
     single_en = bot.format_alert(r[0], "en")
     assert "SPYx" in single_en and "closed" in single_en
-    assert "Next opening: 2026-10-26T04:00:00Z" in single_en
+    assert "Next opening: Mon 26 Oct 2026, 12:00 WITA" in single_en
 
     # 7) next_open_at fallback: within-24h, then dash.
     w24 = mk("SPYx")

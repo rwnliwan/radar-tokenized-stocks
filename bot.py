@@ -378,12 +378,13 @@ BOT_STR = {
                     "so this alert uses the median basis."),
         "red_head": "🟡 REDEMPTION — {ticker} ({issuer})",
         "red_paused_head": "🔴 REDEMPTION PAUSED — {ticker} ({issuer})",
-        "red_body": ("Redemption window status: {status}\n"
-                    "Depth-weighted price: ${dw:,.2f} · "
-                    "Qualifying depth: ${depth:,.0f} across {n} pools\n"
-                    "{note}\n"
+        "red_body": ("Redemption window: {status}\n"
                     "Next opening: {nxt}\n"
-                    "Tracked venues for this ticker are listed on its page."),
+                    "\n"
+                    "Price (depth-weighted): ${dw:,.2f}\n"
+                    "Qualifying depth: ${depth:,.0f} across {n} pools\n"
+                    "\n"
+                    "{note}"),
         "red_batch_status_closed": "closed",
         "red_batch_status_gated": "gated",
         "red_batch_within24h": "within 24h",
@@ -422,11 +423,12 @@ BOT_STR = {
         "red_head": "🟡 REDEMPTION — {ticker} ({issuer})",
         "red_paused_head": "🔴 REDEMPTION DIJEDA — {ticker} ({issuer})",
         "red_body": ("Status jendela redemption: {status}\n"
-                    "Harga tertimbang kedalaman: ${dw:,.2f} · "
-                    "Kedalaman lolos: ${depth:,.0f} di {n} pool\n"
-                    "{note}\n"
                     "Pembukaan berikutnya: {nxt}\n"
-                    "Venue yang dilacak untuk ticker ini ada di halamannya."),
+                    "\n"
+                    "Harga (tertimbang kedalaman): ${dw:,.2f}\n"
+                    "Kedalaman lolos: ${depth:,.0f} di {n} pool\n"
+                    "\n"
+                    "{note}"),
         "red_batch_status_closed": "tutup",
         "red_batch_status_gated": "terbatas (KYC)",
         "red_batch_within24h": "dalam 24 jam",
@@ -453,6 +455,31 @@ def _fmt_money(x):
     return f"{float(x):,.2f}"
 
 
+# --- WITA rendering for next-opening (alert format, ACC 25 Okt 2026) ---
+_DAY_ID = {"Mon": "Sen", "Tue": "Sel", "Wed": "Rab", "Thu": "Kam",
+           "Fri": "Jum", "Sat": "Sab", "Sun": "Min"}
+_MON_ID = {"Jan": "Jan", "Feb": "Feb", "Mar": "Mar", "Apr": "Apr",
+           "May": "Mei", "Jun": "Jun", "Jul": "Jul", "Aug": "Agu",
+           "Sep": "Sep", "Oct": "Okt", "Nov": "Nov", "Dec": "Des"}
+_WITA = ZoneInfo("Asia/Makassar")
+
+
+def fmt_next_open(nxt, lang="en"):
+    """ISO UTC ('2026-10-26T04:00:00Z') -> 'Mon 26 Oct 2026, 12:00 WITA'
+    (ID: 'Sen 26 Okt 2026, 12:00 WITA'). Non-ISO fallbacks pass through."""
+    try:
+        dt = datetime.fromisoformat(nxt.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return nxt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    s = dt.astimezone(_WITA).strftime("%a %d %b %Y, %H:%M WITA")
+    if lang == "id":
+        for en, idn in {**_DAY_ID, **_MON_ID}.items():
+            s = s.replace(en, idn)
+    return s
+
+
 def format_alert(alert, lang="en"):
     s = BOT_STR.get(lang, BOT_STR["en"])
     link = f"{TICKER_PAGE_BASE}/{alert['ticker']}"
@@ -477,14 +504,15 @@ def format_alert(alert, lang="en"):
                       else s.get("red_batch_status_" + alert["status"],
                                  alert["status"]))
         note = s["red_batch_paused_note"] if paused else s["red_batch_note"]
-        nxt = alert.get("next_open_at") or (
-            s["red_batch_within24h"] if alert.get("closes_within_24h") else "—")
+        nxt = fmt_next_open(alert.get("next_open_at") or (
+            s["red_batch_within24h"] if alert.get("closes_within_24h") else "—"),
+            lang)
         body = s["red_body"].format(
             status=status_txt, note=note, nxt=nxt,
             dw=alert.get("dw") or 0, depth=alert.get("depth") or 0,
             n=alert.get("pools_used") or 0)
         if paused:
-            body = s["red_batch_paused_priority"] + "\n" + body
+            body = s["red_batch_paused_priority"] + "\n\n" + body
     elif alert["type"] == "por":
         head = s["por_head"].format(ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
         body = s["por_body"].format(
@@ -494,7 +522,7 @@ def format_alert(alert, lang="en"):
             n=alert.get("pools_used") or 0)
     else:
         raise ValueError(f"unknown alert type {alert['type']}")
-    return f"{head}\n{body}\n{link}\n{s['disclaimer']}"
+    return f"{head}\n\n{body}\n\n{link}\n\n{s['disclaimer']}"
 
 
 # --- Commands (pure: text + lang in, reply + lang out) ---
