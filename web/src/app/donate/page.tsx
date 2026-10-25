@@ -45,6 +45,7 @@ export default function DonatePage() {
   return (
     <div className="wrap">
       <Header lang={lang} onLangChange={toggleLang} active="donate" />
+      <div className="center-col">
       <h1>{t(lang, "donate_title")}</h1>
       <p>{t(lang, "donate_send")}</p>
       <div className="donate-addr">
@@ -66,6 +67,7 @@ export default function DonatePage() {
         {t(lang, "disclaimer")} {t(lang, "footer_note")}
         <br />
         <a href="https://www.linkedin.com/in/septian-panjaya">{t(lang, "linkedin_label")}</a>
+      </div>
       </div>
     </div>
   );

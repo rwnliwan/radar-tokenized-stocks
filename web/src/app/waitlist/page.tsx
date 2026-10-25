@@ -32,6 +32,7 @@ export default function WaitlistPage() {
   return (
     <div className="wrap">
       <Header lang={lang} onLangChange={toggleLang} active="waitlist" />
+      <div className="center-col">
       <h1>{t(lang, "waitlist_title")}</h1>
       <p>{t(lang, "waitlist_intro")}</p>
       <p className="hint">{u(lang, "waitlist_section_note")}</p>
@@ -41,6 +42,7 @@ export default function WaitlistPage() {
         {t(lang, "disclaimer")} {t(lang, "footer_note")}
         <br />
         <a href="https://www.linkedin.com/in/septian-panjaya">{t(lang, "linkedin_label")}</a>
+      </div>
       </div>
     </div>
   );

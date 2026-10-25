@@ -50,6 +50,11 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 }
 
 .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 40px; }
+/* Centered inner block for waitlist/donate (2026-10-25): the outer 1180px
+   column stays untouched so menus never jump; only the page content is
+   centered, with text left-aligned inside the block. On phones the block
+   simply fills the width. Methodology deliberately NOT included. */
+.center-col { max-width: 640px; margin: 0 auto; }
 header {
   display: flex; justify-content: space-between; align-items: center;
   flex-wrap: wrap; gap: 12px;
@@ -353,6 +358,10 @@ nav a:hover { color: var(--text); text-decoration: underline; }
 .thresh-title { font-size: 19px; color: var(--accent); margin: 0 0 12px; }
 table.thresh th, table.thresh td { padding: 10px 12px; }
 table.thresh th { color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+/* Threshold table values sit next to their label (2026-10-25): the .num
+   class right-aligns numbers for the ticker table, but threshold values are
+   text — right-aligning them left a huge gap. Scoped override only. */
+table.thresh td.num { text-align: left; }
 /* Ticker cleanup: risk-method formula lives behind a disclosure so the
    score block shows score + components + partial note only. */
 .risk-details { margin: 8px 0; }

@@ -4,6 +4,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { t, u, type Lang } from "../lib/i18n";
+import { fetchLatest } from "../lib/api";
+import { fmtWITA } from "../lib/format";
 
 type Theme = "dark" | "light";
 
@@ -57,6 +59,34 @@ export default function Header({
   // in an overlay that never moves layout. Closes on outside click / Escape.
   const [showFresh, setShowFresh] = useState(false);
   const freshRef = useRef<HTMLSpanElement>(null);
+  /* "?" on EVERY page (2026-10-25): home and ticker detail pass `right`
+     from their own data fetch; every other page gets its freshness here,
+     from the same /api/latest timestamp, so no menu is left without it.
+     On fetch failure the button simply stays hidden rather than showing
+     a wrong time. */
+  const [autoTs, setAutoTs] = useState<string | null>(null);
+  useEffect(() => {
+    if (right) return;
+    let on = true;
+    fetchLatest()
+      .then((d) => {
+        if (on) setAutoTs(d.meta.latest_ts);
+      })
+      .catch(() => {});
+    return () => {
+      on = false;
+    };
+  }, [right]);
+  const autoFresh =
+    autoTs != null
+      ? (() => {
+          const m = Math.round((Date.now() - Date.parse(autoTs)) / 60000);
+          return m <= 0
+            ? t(lang, "freshness_now", { time: fmtWITA(autoTs, lang) })
+            : t(lang, "freshness", { time: fmtWITA(autoTs, lang), mins: m });
+        })()
+      : null;
+  const freshContent = right ?? (autoFresh ? <span>{autoFresh}</span> : null);
   useEffect(() => {
     if (!showFresh) return;
     const onDoc = (e: MouseEvent) => {
@@ -115,7 +145,7 @@ export default function Header({
       <div className="live">
         <span className="dot" aria-hidden="true" />
         <span>{t(lang, "live_label")}</span>
-        {right && (
+        {freshContent && (
           <span className="fresh-wrap" ref={freshRef}>
             <button
               type="button"
@@ -127,7 +157,7 @@ export default function Header({
             >
               ?
             </button>
-            {showFresh && <span className="fresh-pop">{right}</span>}
+            {showFresh && <span className="fresh-pop">{freshContent}</span>}
           </span>
         )}
         <button
