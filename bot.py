@@ -7,10 +7,11 @@ notes below):
 - Any time: |dev vs cross-venue median| >= 3.0% -> HIGH priority
   deviation alert. Median basis is labeled as such: vs-close is NULL
   in median-only mode (license pending), so no vs-close alert fires.
-- Redemption: live rule fires on latest status closed/gated/paused
-  (24h dedup). PER-TICKER (un-batched 2026-10-25, Septian's call):
-  one message per ticker — a closed Sunday is 13 messages per
-  channel per day (24h dedup re-fires daily while closed).
+- Redemption: live rule fires on latest status closed/gated/paused.
+  PER-TICKER (un-batched 2026-10-25, Septian's call): one message
+  per ticker PER CLOSED WINDOW (rule B, ACC 2026-10-25): a closed
+  weekend is 13 messages per channel, with NO daily re-fire while
+  the window stays closed.
   ADAPTATION: the schema has no close-time column, so
   the design's "closing within <=24h" rule cannot be computed live
   yet; it needs a future next_close_at column. The dry-run scenario
@@ -21,10 +22,13 @@ notes below):
   "poller troubled" alert needs a configured admin destination,
   which does not exist yet — the condition is logged, not sent).
 
-Dedup: same (ticker, alert_type) is not re-sent within 24h of a
-logged alert (any outcome). Redemption dedups per ticker:
-('TSLAx', 'redemption') and ('TSLAx', 'redemption_paused') are
-DISTINCT keys, so a recorded closed alert never suppresses a
+Dedup: for non-redemption types, same (ticker, alert_type) is not
+re-sent within a true 24h of a logged alert (any outcome).
+Redemption types instead use once-per-window: suppressed while an
+alert for the same ticker+type exists since the current closed
+window began (see alerted_in_current_window). Redemption dedups per
+ticker: ('TSLAx', 'redemption') and ('TSLAx', 'redemption_paused')
+are DISTINCT keys, so a recorded closed alert never suppresses a
 paused alert for the same ticker (and vice versa). Paused is HIGH
 priority: red head marker, same severity vocabulary as the
 deviation_high alert.
@@ -626,11 +630,81 @@ def load_health_age_minutes(now_utc):
 
 
 def recent_alert_exists(ticker, alert_type, hours=DEDUP_HOURS):
+    # NOTE 2026-10-25: the comparison MUST normalize alert_ts through
+    # datetime(). A raw string comparison against datetime('now', ...)
+    # ('YYYY-MM-DD HH:MM:SS', space separator) is broken for ISO
+    # alert_ts ('...T...Z'): 'T' > ' ' makes any alert on the cutoff's
+    # calendar date count as recent, stretching dedup to ~41h instead
+    # of 24h. datetime() parses both formats, giving a true window.
     rows = db_query(
         "SELECT COUNT(*) AS n FROM alert_log WHERE ticker_id = ? "
-        "AND alert_type = ? AND alert_ts >= datetime('now', ?)",
+        "AND alert_type = ? AND datetime(alert_ts) >= datetime('now', ?)",
         [ticker, alert_type, f"-{int(hours)} hours"])
     return bool(rows and int(rows[0]["n"]) > 0)
+
+
+# Redemption dedup rule B (ACC 2026-10-25, Septian's call): once per
+# closed window — NOT daily. A redemption alert fires only if no alert
+# for the same ticker+type exists since the current closed window began.
+REDEMPTION_WINDOW_STATUSES = {
+    "redemption": ("closed", "gated"),
+    "redemption_paused": ("paused",),
+}
+
+
+def window_start_from_rows(rows, statuses):
+    """Pure helper: rows = redemption_windows rows ordered by observed_at
+    DESC (dicts with status/observed_at). Returns the observed_at of the
+    first row of the current continuous run in `statuses`, or None when
+    the latest row is not in `statuses` (no live window of that kind)."""
+    if not rows:
+        return None
+    if str(rows[0]["status"]).lower() not in statuses:
+        return None
+    start = rows[0]["observed_at"]
+    for r in rows[1:]:
+        if str(r["status"]).lower() in statuses:
+            start = r["observed_at"]
+        else:
+            break
+    return start
+
+
+def alerted_in_current_window(ticker, alert_type, statuses):
+    """True iff an alert for (ticker, alert_type) was already logged since
+    the current window (of `statuses`) began. False when no such window
+    is live — so the first alert of a new window always fires."""
+    issuer_rows = db_query(
+        "SELECT issuer FROM universe WHERE ticker_id = ? COLLATE NOCASE",
+        [ticker])
+    if not issuer_rows:
+        return False
+    rows = db_query(
+        "SELECT status, observed_at FROM redemption_windows "
+        "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 500",
+        [issuer_rows[0]["issuer"]])
+    start = window_start_from_rows(rows, statuses)
+    if start is None:
+        return False
+    hits = db_query(
+        "SELECT COUNT(*) AS n FROM alert_log WHERE ticker_id = ? "
+        "AND alert_type = ? AND datetime(alert_ts) >= datetime(?)",
+        [ticker, alert_type, start])
+    return bool(hits and int(hits[0]["n"]) > 0)
+
+
+def suppression_reason(alert):
+    """None when the alert may fire, else a short reason string.
+    Redemption types use the once-per-window rule; all other types use
+    the true 24h dedup."""
+    statuses = REDEMPTION_WINDOW_STATUSES.get(alert["type"])
+    if statuses is not None:
+        if alerted_in_current_window(alert["ticker"], alert["type"], statuses):
+            return "same window"
+        return None
+    if recent_alert_exists(alert["ticker"], alert["type"]):
+        return "dedup 24h"
+    return None
 
 
 def record_alert(alert, message_text, alert_ts):
@@ -738,9 +812,9 @@ def main():
         print(f"market open (ET): {is_market_open(now)}")
         print(f"alerts that would fire: {len(alerts)}")
         for a in alerts:
-            dup = recent_alert_exists(a["ticker"], a["type"])
-            print(f"--- {a['type']} {a['ticker']} (dedup suppressed: {dup}) ---")
-            if not dup:
+            reason = suppression_reason(a)
+            print(f"--- {a['type']} {a['ticker']} (suppressed: {reason}) ---")
+            if not reason:
                 print(format_alert(a, "en"))
         return 0
     if args.once:
@@ -785,8 +859,9 @@ def main():
             channels = alert_channels()
             sent = 0
             for a in evaluate_alerts(tickers, is_market_open(now)):
-                if recent_alert_exists(a["ticker"], a["type"]):
-                    print(f"ALERT suppressed (dedup 24h): "
+                reason = suppression_reason(a)
+                if reason:
+                    print(f"ALERT suppressed ({reason}): "
                           f"{a['type']} {a['ticker']}")
                     continue
                 if not channels:
@@ -835,8 +910,9 @@ def main():
                         tickers = load_live_tickers()
                         channels = alert_channels()
                         for a in evaluate_alerts(tickers, is_market_open(now)):
-                            if recent_alert_exists(a["ticker"], a["type"]):
-                                print(f"ALERT suppressed (dedup 24h): "
+                            reason = suppression_reason(a)
+                            if reason:
+                                print(f"ALERT suppressed ({reason}): "
                                       f"{a['type']} {a['ticker']}")
                                 continue
                             if not channels:
