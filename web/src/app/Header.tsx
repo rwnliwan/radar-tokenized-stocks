@@ -61,7 +61,24 @@ export default function Header({
   return (
     <header>
       <div className="logo">
-        <Link href="/" style={{ color: "inherit", textDecoration: "none" }}>
+        <Link
+          href="/"
+          style={{
+            color: "inherit",
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "10px",
+          }}
+        >
+          <svg width="30" height="30" viewBox="0 0 40 40" aria-hidden="true">
+            <circle cx="20" cy="20" r="18" fill="none" stroke="#fbbf24" strokeWidth="2" />
+            <circle cx="20" cy="20" r="11" fill="none" stroke="#fbbf24" strokeWidth="1" opacity=".55" />
+            <circle cx="20" cy="20" r="4" fill="none" stroke="#fbbf24" strokeWidth="1" opacity=".55" />
+            <path d="M20 20 L20 4 A16 16 0 0 1 31 9 Z" fill="#fbbf24" opacity=".45" />
+            <circle cx="27" cy="14" r="2.6" fill="#fbbf24" />
+            <circle cx="13" cy="26" r="2.2" fill="#4ade80" />
+          </svg>
           EXIT <b>RADAR</b>
         </Link>
       </div>

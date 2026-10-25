@@ -526,7 +526,14 @@ export const UI: Record<Lang, Record<string, string>> = {
     "copy_label": "Copy",
     "copied_label": "Copied!",
     "donate_qr_alt": "Solana Pay QR code for donations",
-    "donate_verify": "Always verify the address before sending — Solana transactions cannot be reversed."
+    "donate_verify": "Always verify the address before sending — Solana transactions cannot be reversed.",
+    "verdict_label": "Exit verdict — now",
+    "verdict_safe": "SAFE TO EXIT NOW",
+    "verdict_caution": "EXIT WITH CAUTION",
+    "verdict_danger": "DO NOT EXIT YET",
+    "verdict_rule": "Verdict rule (display only): Safe <50 bps · Caution 50–100 bps · Hold off >100 bps, from the worst deviation right now. Not financial advice.",
+    "verdict_all_ok": "All tickers below the Watch 50 bps threshold, no Alert.",
+    "scope_label": "Radar scope: one blip per ticker by deviation"
   },
   id: {
     load_error: "Data live gagal dimuat.",
@@ -570,7 +577,14 @@ export const UI: Record<Lang, Record<string, string>> = {
     "copy_label": "Salin",
     "copied_label": "Tersalin!",
     "donate_qr_alt": "Kode QR Solana Pay untuk donasi",
-    "donate_verify": "Selalu periksa alamat sebelum mengirim — transaksi Solana tidak dapat dibatalkan."
+    "donate_verify": "Selalu periksa alamat sebelum mengirim — transaksi Solana tidak dapat dibatalkan.",
+    "verdict_label": "Vonis exit — sekarang",
+    "verdict_safe": "AMAN KELUAR SEKARANG",
+    "verdict_caution": "KELUAR DENGAN HATI-HATI",
+    "verdict_danger": "JANGAN KELUAR DULU",
+    "verdict_rule": "Aturan vonis (tampilan saja): Aman <50 bps · Hati-hati 50–100 bps · Jangan dulu >100 bps, dari deviasi terburuk saat ini. Bukan saran finansial.",
+    "verdict_all_ok": "Semua ticker di bawah ambang Watch 50 bps, tidak ada Alert.",
+    "scope_label": "Scope radar: satu blip per ticker menurut deviasi"
   },
 };
 

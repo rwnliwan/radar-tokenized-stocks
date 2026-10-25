@@ -113,6 +113,71 @@ export default function Home() {
     return w;
   }, [data]);
 
+  /* v3: exit verdict from the worst deviation (display-only) + radar
+     blips for the whole universe (unfiltered — the scope shows all). */
+  const verdict = useMemo(() => {
+    if (!worst || worst.dev_bps == null) return null;
+    const a = Math.abs(worst.dev_bps);
+    if (a < 50) return "safe";
+    if (a < 100) return "caution";
+    return "danger";
+  }, [worst]);
+  const verdictText =
+    verdict == null
+      ? "—"
+      : verdict === "safe"
+        ? u(lang, "verdict_safe")
+        : verdict === "caution"
+          ? u(lang, "verdict_caution")
+          : u(lang, "verdict_danger");
+  const counts = useMemo(() => {
+    const ts = data?.tickers ?? [];
+    return {
+      watch: ts.filter((r) => r.status === "watch").length,
+      alert: ts.filter((r) => r.status === "alert").length,
+    };
+  }, [data]);
+  const verdictSummary =
+    counts.watch === 0 && counts.alert === 0
+      ? u(lang, "verdict_all_ok")
+      : [
+          counts.watch > 0 ? `${counts.watch} Watch` : null,
+          counts.alert > 0 ? `${counts.alert} Alert` : null,
+        ]
+          .filter((x): x is string => x != null)
+          .join(", ");
+  const blips = useMemo(() => {
+    const list = (data?.tickers ?? [])
+      .filter((r) => r.dev_bps != null)
+      .sort((a, b) => Math.abs(b.dev_bps ?? 0) - Math.abs(a.dev_bps ?? 0));
+    /* Real deviations cluster near the center (all <50 bps on calm days),
+       so the top-4 labels would collide. Keep at most 4 labels, dropping
+       any label whose center lands within 45px of an already-placed one. */
+    const placed: { x: number; y: number }[] = [];
+    return list.map((r, i) => {
+      const a = Math.min(Math.abs(r.dev_bps ?? 0), 100);
+      const rad = 22 + (a / 100) * 86;
+      const ang = (i * 137.5 * Math.PI) / 180;
+      const cx = 120 + rad * Math.cos(ang);
+      const cy = 120 + rad * Math.sin(ang);
+      const fill =
+        r.status === "alert" ? "#f87171" : r.status === "watch" ? "#fb923c" : "#4ade80";
+      const lx = Math.max(30, Math.min(210, cx));
+      const ly = cy <= 120 ? cy + 18 : cy - 12;
+      let label = i < 4;
+      if (label) {
+        for (const p of placed) {
+          if (Math.hypot(lx - p.x, ly - p.y) < 45) {
+            label = false;
+            break;
+          }
+        }
+      }
+      if (label) placed.push({ x: lx, y: ly });
+      return { ticker: r.ticker, cx, cy, fill, label, lx, ly };
+    });
+  }, [data]);
+
   const maxDepth = useMemo(
     () => Math.max(0, ...(data?.tickers.map((r) => r.depth_usd ?? 0) ?? [0])),
     [data],
@@ -224,12 +289,13 @@ export default function Home() {
 
       {!data && loading && (
         <div aria-busy="true" aria-label={t(lang, "loading")}>
-          <div className="hero-band" aria-hidden="true">
-            <div>
-              <div className="skel" style={{ width: 120 }} />
-              <div className="skel" style={{ width: 180, height: 38, margin: "10px 0" }} />
+          <div className="scope-hero" aria-hidden="true">
+            <div className="skel" style={{ width: 240, height: 240, borderRadius: "50%" }} />
+            <div style={{ flex: 1 }}>
+              <div className="skel" style={{ width: 160 }} />
+              <div className="skel" style={{ width: 220, height: 30, margin: "10px 0" }} />
+              <div className="skel" style={{ width: 200, height: 14 }} />
             </div>
-            <div className="skel" style={{ width: 200, height: 14 }} />
           </div>
           <div className="statstrip" aria-hidden="true">
             <div className="skel" style={{ width: 140, height: 14 }} />
@@ -242,18 +308,59 @@ export default function Home() {
 
       {data && (
         <>
-          <div className="hero-band">
-            <div>
-              <div className="lbl">{t(lang, "kpi_worst")}</div>
-              <div className="big">{worst ? fmtSigned1(worst.dev_bps) + " bps" : "—"}</div>
+          <div className="scope-hero">
+            <div className="scope">
+              <svg
+                width="240"
+                height="240"
+                viewBox="0 0 240 240"
+                role="img"
+                aria-label={u(lang, "scope_label")}
+              >
+                <circle cx="120" cy="120" r="112" fill="none" stroke="#fbbf24" strokeWidth="1.5" opacity=".8" />
+                <circle cx="120" cy="120" r="78" fill="none" stroke="#8ba190" strokeWidth="1" opacity=".5" />
+                <circle cx="120" cy="120" r="44" fill="none" stroke="#8ba190" strokeWidth="1" opacity=".5" />
+                <line x1="120" y1="8" x2="120" y2="232" stroke="#8ba190" strokeWidth="1" opacity=".35" />
+                <line x1="8" y1="120" x2="232" y2="120" stroke="#8ba190" strokeWidth="1" opacity=".35" />
+                <g className="sweep">
+                  <path d="M120 120 L120 14 A106 106 0 0 1 195 45 Z" fill="#fbbf24" opacity=".28" />
+                  <line x1="120" y1="120" x2="120" y2="14" stroke="#fbbf24" strokeWidth="2" />
+                </g>
+                <circle cx="120" cy="120" r="4" fill="#fbbf24" />
+                {blips.map((b) => (
+                  <g key={b.ticker}>
+                    <circle cx={b.cx} cy={b.cy} r={b.label ? 6 : 4} fill={b.fill} />
+                    {b.label && (
+                      <text
+                        x={b.lx}
+                        y={b.ly}
+                        textAnchor="middle"
+                        fill={b.fill}
+                        fontSize="11"
+                        fontFamily="JetBrains Mono, monospace"
+                      >
+                        {b.ticker}
+                      </text>
+                    )}
+                  </g>
+                ))}
+              </svg>
             </div>
-            <div className="sub">
-              {worst
-                ? t(lang, "kpi_worst_sub", {
-                    ticker: worst.ticker,
-                    depth: fmtDepth(worst.depth_usd),
-                  })
-                : t(lang, "no_data")}
+            <div className="verdict">
+              <div className="lbl">{u(lang, "verdict_label")}</div>
+              <div className={`vtext ${verdict ?? ""}`}>{verdictText}</div>
+              <div className="worst">{worst ? fmtSigned1(worst.dev_bps) + " bps" : "—"}</div>
+              <div className="sub">
+                {worst
+                  ? t(lang, "kpi_worst_sub", {
+                      ticker: worst.ticker,
+                      depth: fmtDepth(worst.depth_usd),
+                    })
+                  : t(lang, "no_data")}
+                <br />
+                {verdictSummary}
+              </div>
+              <div className="rule">{u(lang, "verdict_rule")}</div>
             </div>
           </div>
           <div className="statstrip">
