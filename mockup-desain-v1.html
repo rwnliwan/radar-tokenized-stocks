@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EXIT RADAR — Mockup Desain v1 (data contoh)</title>
+<title>EXIT RADAR — Mockup Desain v2 (data contoh)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 /* MOCKUP ONLY — not the live site. Palettes = design plan v1 (25 Okt 2026). */
 :root{
@@ -86,6 +88,23 @@ tbody tr:hover td{background:var(--surface2);filter:brightness(1.15)}
 .chart{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px}
 .chart svg{width:100%;height:auto;display:block}
 .foot{color:var(--muted);font-size:13px;line-height:1.6;border-top:1px solid var(--border);margin-top:26px;padding-top:14px}
+/* v2: hero band + slim stat strip (replaces 4 equal KPI cards). */
+.hero-band{background:var(--surface);border:1px solid var(--red);border-radius:12px;padding:16px 20px;margin:18px 0 10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+.hero-band .lbl{color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.hero-band .big{font-size:38px;font-weight:700;color:var(--red)}
+.hero-band .sub{color:var(--muted);font-size:13px;line-height:1.5;text-align:right}
+.statstrip{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13px;margin:0 0 6px}
+.statstrip b{color:var(--text)}
+.cover2{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 16px;font-size:14px;line-height:1.55;margin:12px 0}
+.brow{display:flex;align-items:center;gap:10px;margin:7px 0;font-size:13px}
+.bt{width:130px;font-weight:600}
+.bv{width:58px;text-align:right}
+.btrack{position:relative;flex:1;height:16px;background:var(--border);border-radius:4px}
+.btrack i{position:absolute;top:2px;height:12px;border-radius:3px;background:var(--accent)}
+.msec{margin:26px 0 8px}
+.msec h3{font-size:19px;margin:0 0 8px}
+.msec p{color:var(--muted);line-height:1.7;font-size:15px;margin:0 0 12px}
+@media (max-width:520px){.hero-band .big{font-size:32px}.hero-band .sub{text-align:left}.bt{width:110px}}
 /* Row-cards on narrow portrait phones (replaces horizontal table swipe). */
 .rowcards{display:none}
 @media (max-width:400px){
@@ -112,7 +131,7 @@ tbody tr:hover td{background:var(--surface2);filter:brightness(1.15)}
 </style>
 </head>
 <body>
-<div class="badge-mock">MOCKUP DESAIN v1.2 — NAV SEGMENTED + TEMA IKON · DATA CONTOH, BUKAN SITUS LIVE</div>
+<div class="badge-mock">MOCKUP DESAIN v2 — VERSI TERBAIK · DATA CONTOH, BUKAN SITUS LIVE</div>
 <div class="wrap">
   <header>
     <div class="logo">EXIT <b>RADAR</b></div>
@@ -125,12 +144,13 @@ tbody tr:hover td{background:var(--surface2);filter:brightness(1.15)}
   <div class="live" style="margin-top:14px"><span class="dot"></span><span>LIVE</span>
     <span>Last updated: 25 Oct 2026, 13:01 WITA</span><span>VENUES LIVE 35/35</span></div>
 
-  <div class="hero">
-    <div class="kpi hero-card"><small>Worst deviation now</small>
-      <div class="v mono">−44,6 bps</div><div class="s">GOOGLx · depth $1,36M</div></div>
-    <div class="kpi"><small>Tickers tracked</small><div class="v mono">13</div><div class="s">11 Tier 1 · 2 Tier 2</div></div>
-    <div class="kpi"><small>Venues live</small><div class="v mono">35/35</div><div class="s">Raydium 27 · Orca 7 · Meteora 1</div></div>
-    <div class="kpi"><small>Alerts (24h)</small><div class="v mono">0</div><div class="s">Threshold 1,0% · bot standby</div></div>
+  <div class="hero-band">
+    <div><div class="lbl">Worst deviation now</div><div class="big mono">−44,6 bps</div></div>
+    <div class="sub">GOOGLx · depth $1,36M<br>Status: Watch · ambang Alert 100 bps</div>
+  </div>
+  <div class="statstrip">
+    <span><b class="mono">13</b> tickers tracked</span><span><b class="mono">35/35</b> venues live</span>
+    <span><b class="mono">0</b> alerts (24h)</span><span>Raydium 27 · Orca 7 · Meteora 1</span>
   </div>
 
   <h2>All tickers — latest deviation</h2>
@@ -163,7 +183,8 @@ tbody tr:hover td{background:var(--surface2);filter:brightness(1.15)}
       <div class="mid"><span class="mono">$525,70</span><span class="spark">▃▃▃▃▃▃▃</span><span class="mono">$1,58M</span></div></div>
   </div>
 
-  <h2>Ticker preview — TSLAx</h2>
+  <h2>Ticker page — TSLAx (contoh, versi penuh)</h2>
+  <p class="hint">TSLAx (xStocks) · Solana · Tier 1 · 4 venues qualifying · data contoh.</p>
   <div class="metrics">
     <div class="metric"><small>Depth-weighted price</small><div class="v mono">$371,81</div><div class="s">4 venues qualifying</div></div>
     <div class="metric"><small>Deviation vs cross-venue median</small><div class="v mono" style="color:var(--green)">+3,2 bps</div><div class="s">+0,032% · OK</div></div>
@@ -181,8 +202,34 @@ tbody tr:hover td{background:var(--surface2);filter:brightness(1.15)}
     <div class="mono" style="font-size:13px;margin-top:6px">Terakhir: +3,2 bps · 24h range −12 s.d. +28 bps (contoh)</div>
   </div>
 
-  <div class="foot">Mockup desain v1 — hanya untuk dinilai. Bukan situs live; data contoh; tombol Detail tidak mengarah ke mana-mana.
-    Coba: ikon tema di sudut kanan atas header, putar HP portrait ↔ landscape, dan cubit-zoom tidak diperlukan.</div>
+  <h2>Per venue — TSLAx (contoh)</h2>
+  <div class="tblwrap"><table>
+    <thead><tr><th>Venue</th><th class="num">Price</th><th class="num">Depth</th><th class="num">Share</th></tr></thead>
+    <tbody>
+      <tr><td>Raydium</td><td class="num mono">$371,92</td><td class="num mono">$0,98M</td><td class="num mono">51%</td></tr>
+      <tr><td>Raydium</td><td class="num mono">$371,74</td><td class="num mono">$0,61M</td><td class="num mono">32%</td></tr>
+      <tr><td>Orca</td><td class="num mono">$371,68</td><td class="num mono">$0,24M</td><td class="num mono">13%</td></tr>
+      <tr><td>Meteora</td><td class="num mono">$372,05</td><td class="num mono">$0,09M</td><td class="num mono">4%</td></tr>
+    </tbody>
+  </table></div>
+  <div class="cover2"><b>Redemption: Closed</b> · Next open: 26 Okt 12:00 WITA · Min $5.000 · Fee 0 · Settlement ±30 detik<br>
+    <span style="color:var(--muted)">Status schedule-derived (kalender NYSE) + Pausable on-chain: 13/13 mint unpaused (contoh).</span></div>
+  <h2>Weekend exit-risk score — TSLAx (contoh)</h2>
+  <div class="cover2"><b class="mono" style="font-size:22px">72,4</b> <span style="color:var(--muted)">(2/4 partial scores · eksperimental)</span>
+    <div class="brow"><span class="bt">Deviation</span><span class="bv mono">30</span><span class="btrack"><i style="width:75%"></i></span></div>
+    <div class="brow"><span class="bt">Spread</span><span class="bv mono">18</span><span class="btrack"><i style="width:45%"></i></span></div>
+    <div class="brow"><span class="bt">Depth</span><span class="bv mono">24</span><span class="btrack"><i style="width:60%"></i></span></div>
+    <div class="brow"><span class="bt">Proof of reserve</span><span class="bv mono">0</span><span class="btrack"><i style="width:2%"></i></span></div>
+  </div>
+  <h2>Methodology (gaya seksi baru, contoh)</h2>
+  <div class="msec"><h3>Deviation &amp; spread</h3>
+    <p>Deviation = selisih harga depth-weighted token vs median lintas venue, dalam basis poin. Spread = selisih venue tertinggi vs terendah. Status OK di bawah 50 bps, Watch di atas 50 bps, Alert di atas 100 bps (ambang display, bukan ambang alert bot).</p></div>
+  <div class="msec"><h3>Redemption</h3>
+    <p>Tidak ada feed publik redemption. Status berasal dari jadwal bursa (24/5, aligned US hours) ditambah status Pausable token-2022 di chain. Jendela tutup ≤24 jam selalu diumumkan bot.</p></div>
+
+  <div class="foot">Mockup desain v2 — versi terbaik menurut saya. Hanya untuk dinilai. Bukan situs live; data contoh; tombol Detail tidak mengarah ke mana-mana.
+    Perubahan dari v1: font asli (Inter + JetBrains Mono), KPI 4 kartu → hero band + strip ramping, halaman ticker penuh, seksi metodologi.
+    Coba: ikon tema di sudut kanan atas header, putar HP portrait ↔ landscape.</div>
 </div>
 <script>
 function setTheme(t){
