@@ -472,3 +472,21 @@ begitu token asli terpasang.
   sudah ok. Perbaikan: media query (orientation: landscape) +
   max-width 950px -> .wrap padding 16px; portrait + desktop tidak
   tersentuh. Dipilih 16px (dari usulan 15/16 — nilai standar).
+
+## CUTOVER SELESAI — DNS-only adalah perbaikan (2026-10-25 13:02 WITA)
+- Bukti: setelah Septian toggle CNAME radar Proxied -> DNS-only,
+  radar.omdanny.site LANGSUNG 200 (shell Next.js) + deep link
+  /ticker/TSLAx 200 — dari jalur curl induk. Diagnosis final:
+  tepi proxy zona TIDAK merutekan hostname ke binding Pages
+  (placeholder "nothing here yet"), padahal DNS benar, domain
+  Pages ACTIVE + ter-alias, route Worker terhapus. DNS-only
+  (langsung ke Pages) bekerja sempurna.
+- Keputusan: PERTAHANKAN DNS-only. HTTPS tetap jalan (sertifikat
+  Pages sendiri, Google); yang hilang vs Proxied hanya fitur
+  level zona (WAF/analytics hostname) — tidak relevan untuk situs
+  statis Pages (edge + DDoS Pages sendiri sudah cukup). Jangan
+  kembalikan ke Proxied tanpa alasan (akan kembali placeholder).
+- Pelajaran: untuk Pages custom domain di zona ini, Proxied BISA
+  gagal routing ke binding Pages — bila placeholder muncul padahal
+  semua state benar, toggle DNS-only adalah diagnostik + perbaikan
+  pertama, bukan terakhir.
