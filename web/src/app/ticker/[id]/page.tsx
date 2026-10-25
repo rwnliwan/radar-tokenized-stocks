@@ -25,6 +25,17 @@ import {
 import { t, u, type Lang } from "../../../lib/i18n";
 import { weekendRiskScore } from "../../../lib/risk";
 
+// PoR v2 numbers: API publishes them as strings; format locale-aware,
+// falling back to the raw string when unparseable (never invent a value).
+function fmtPorNum(v: string, digits: number, lang: Lang): string {
+  const n = Number(v);
+  if (Number.isNaN(n)) return v;
+  return new Intl.NumberFormat(lang === "id" ? "id-ID" : "en-GB", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(n);
+}
+
 type Window = "1h" | "24h" | "7d";
 
 // next-on-pages serves dynamic routes on the Edge Runtime only.
@@ -386,6 +397,12 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                   </>
                 ) : (
                   <>{t(lang, "por_none")}</>
+                )}
+                {detail.por_shares_held != null && detail.por_supply != null && (
+                  <div>
+                    {u(lang, "por_shares_label")}: {fmtPorNum(detail.por_shares_held, 0, lang)} ·{" "}
+                    {u(lang, "por_supply_label")}: {fmtPorNum(detail.por_supply, 2, lang)}
+                  </div>
                 )}
               </div>
             </section>

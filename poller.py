@@ -303,23 +303,40 @@ def run_hourly_por(cycle_dt, state, dry_run=False):
     age = max(0.0, round((now_utc - oldest_dt).total_seconds() / 3600, 1))
     cycle_ts = cycle_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     row = ["xStocks", POR_API_BASE, oldest_ts, age, None, cycle_ts]
+    # v2: per-token rows from the SAME responses (no extra API calls).
+    # Numbers stored as TEXT exactly as published (no float rounding).
+    tok_rows = [
+        [tick, rec["timestamp"], rec.get("sharesHeld"),
+         rec.get("circulatingSupply"),
+         json.dumps(rec.get("holdings")) if rec.get("holdings") is not None else None,
+         cycle_ts]
+        for tick, rec in recs.items()
+    ]
     if dry_run:
         print(f"DRY-RUN por tokens={len(recs)}/13 missing={missing or '-'} "
               f"oldest={oldest_ts} age_h={age}")
         print(f"DRY-RUN row={row}")
+        print(f"DRY-RUN token rows={len(tok_rows)}")
         return ""
+    stmts = [(
+        "INSERT INTO por_feeds (issuer, feed_address, last_update_ts,"
+        " age_hours, reserves_vs_supply_note, checked_at)"
+        " VALUES (?,?,?,?,?,?)",
+        row,
+    )]
+    stmts += [(
+        "INSERT INTO por_token_snapshots (ticker_id, ts, shares_held,"
+        " circulating_supply, holdings_json, checked_at)"
+        " VALUES (?,?,?,?,?,?)",
+        trow,
+    ) for trow in tok_rows]
     try:
-        pipeline([(
-            "INSERT INTO por_feeds (issuer, feed_address, last_update_ts,"
-            " age_hours, reserves_vs_supply_note, checked_at)"
-            " VALUES (?,?,?,?,?,?)",
-            row,
-        )])
+        pipeline(stmts)
     except Exception as e:
         log(f"HOURLY PoR write FAILED: {e}")
         return f"hourly PoR write failed: {e}"
     log(f"HOURLY PoR tokens={len(recs)}/13 missing={missing or '-'} "
-        f"oldest={oldest_ts} age_h={age}")
+        f"oldest={oldest_ts} age_h={age} token_rows={len(tok_rows)}")
     if missing:
         return f"hourly PoR missing tokens: {', '.join(missing)}"
     return ""

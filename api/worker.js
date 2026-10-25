@@ -294,6 +294,14 @@ async function loadTicker(env, ticker) {
       [ticker],
     ]);
   }
+  // PoR v2: latest per-token snapshot (index computed dynamically so the
+  // conditional push above cannot shift it).
+  const tokIdx = stmts.length;
+  stmts.push([
+    "SELECT ts, shares_held, circulating_supply FROM por_token_snapshots " +
+      "WHERE ticker_id = ? COLLATE NOCASE ORDER BY checked_at DESC, id DESC LIMIT 1",
+    [ticker],
+  ]);
   const res = await pipeline(env, stmts);
   const uni = rowsOf(res[0])[0];
   if (!uni) return null;
@@ -310,6 +318,7 @@ async function loadTicker(env, ticker) {
   }));
   const red = rowsOf(res[3])[0] || null;
   const por = rowsOf(res[4])[0] || null;
+  const tok = rowsOf(res[tokIdx])[0] || null;
   const series = rowsOf(res[5]).map((s) => s.dev_vs_median_pct);
   const firstOf = (i) => {
     const r = rowsOf(res[i])[0];
@@ -348,6 +357,9 @@ async function loadTicker(env, ticker) {
     por_last_update: por ? por.last_update_ts : null,
     por_feed_address: por ? por.feed_address : null,
     por_note: por ? por.reserves_vs_supply_note : null,
+    por_shares_held: tok ? tok.shares_held : null,
+    por_supply: tok ? tok.circulating_supply : null,
+    por_token_last_update: tok ? tok.ts : null,
     spark_bps: series.slice(-12).map((v) => v * 100),
     change_1h_bps: change(firstOf(6)),
     change_24h_bps: change(firstOf(7)),

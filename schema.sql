@@ -90,6 +90,19 @@ CREATE TABLE IF NOT EXISTS por_feeds (
   checked_at TEXT NOT NULL
 );
 
+-- PoR v2 (ACC'd): per-token snapshots from the same hourly API responses
+-- that feed por_feeds. Numbers stored as TEXT exactly as the API
+-- publishes them (no float rounding); holdings kept for audit only.
+CREATE TABLE IF NOT EXISTS por_token_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker_id TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  shares_held TEXT,
+  circulating_supply TEXT,
+  holdings_json TEXT,
+  checked_at TEXT NOT NULL
+);
+
 -- NOTE (Wave 3, 2026-10-25): alert_log.ticker_id deliberately has NO
 -- REFERENCES universe(ticker_id). The log legitimately records aggregate
 -- keys such as 'ALL' for batched alerts, which are not universe rows;

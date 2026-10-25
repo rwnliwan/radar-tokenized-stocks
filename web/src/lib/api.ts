@@ -95,6 +95,9 @@ export type TickerDetail = {
   por_last_update: string | null;
   por_feed_address: string | null;
   por_note: string | null;
+  por_shares_held: string | null;
+  por_supply: string | null;
+  por_token_last_update: string | null;
   spark_bps: number[];
   change_1h_bps: number | null;
   change_24h_bps: number | null;

@@ -156,6 +156,17 @@ def main():
     for r in red_rows:
         red_by.setdefault(r["issuer"], r)
     issuer_of = {r["ticker_id"]: r["issuer"] for r in uni}
+    # PoR v1 (issuer age) + v2 (per-token numbers): latest row per key.
+    por_rows = query("SELECT issuer, age_hours FROM por_feeds "
+                     "ORDER BY checked_at DESC LIMIT 20")
+    por_age_by_issuer = {}
+    for r in por_rows:
+        por_age_by_issuer.setdefault(r["issuer"], r["age_hours"])
+    tok_rows = query("SELECT ticker_id, shares_held, circulating_supply "
+                     "FROM por_token_snapshots ORDER BY checked_at DESC, id DESC LIMIT 100")
+    tok_by = {}
+    for r in tok_rows:
+        tok_by.setdefault(r["ticker_id"], r)
 
     verdict_inputs = []
     for tk in tickers:
@@ -213,9 +224,20 @@ def main():
         exp_red = str(red["status"]).lower() if red else None
         check(f"Worker redemption {tk}", w["redemption_status"] == exp_red,
               f"worker={w['redemption_status']} db={exp_red}")
-        check(f"Worker PoR age None {tk} (no feeds connected)",
-              w["por_age_hours"] is None, f"got {w['por_age_hours']}")
-        ws = weekend_score(dev, depth, exp_red, None)
+        exp_por_age = por_age_by_issuer.get(issuer_of[tk])
+        exp_por_age = float(exp_por_age) if exp_por_age is not None else None
+        check(f"Worker PoR age {tk} (feeds connected)",
+              w["por_age_hours"] is not None and exp_por_age is not None
+              and close(w["por_age_hours"], exp_por_age),
+              f"worker={w['por_age_hours']} db={exp_por_age}")
+        # v2 fields live on /api/ticker (detail), not /api/latest.
+        wd = wcurl(f"/api/ticker?ticker={tk}")
+        tok = tok_by.get(tk)
+        check(f"Worker PoR token {tk} (v2)",
+              tok is not None and wd["por_shares_held"] == tok["shares_held"]
+              and wd["por_supply"] == tok["circulating_supply"],
+              f"worker={wd.get('por_shares_held')}/{wd.get('por_supply')} db={tok}")
+        ws = weekend_score(dev, depth, exp_red, exp_por_age)
         verdict_inputs.append((tk, bps, w["spread_pct"], depth, ws))
         print(f"  INFO {tk}: verdict-inputs bps={bps} spread={w['spread_pct']} "
               f"depth={depth} weekend={ws['score_100']} ({ws['present']}/4) "
