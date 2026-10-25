@@ -8,8 +8,8 @@ import { t, u, type Lang } from "../../lib/i18n";
 // the page scans instead of reading as one wall of text. Paragraph wording
 // is untouched; only the structure around it changed (package 1+2+3:
 // jump-link index + threshold table + 30-second summary on top).
-// List rendering below (limits/human/sources/coming) only re-flows the
-// SAME words into <ol>/<ul> items at render time: the i18n strings are
+// List rendering below (limits/human/sources/coming/thresholds) only
+// re-flows the SAME words into <ol>/<ul> items at render time: the i18n strings are
 // not edited, so a future regen cannot silently revert the structure,
 // and any parse mismatch falls back to the plain paragraph.
 
@@ -141,6 +141,43 @@ function renderMethod(key: string, text: string, lang: Lang) {
           ))}
         </ul>
         <p className="method">{remainder}</p>
+      </>
+    );
+  }
+  if (key === "methodology_thresholds") {
+    // One dense paragraph, three rules -> three labeled lists, same words.
+    // Sentences: [display rule, display note, bot triggers; priority,
+    // weekend formula, experimental note]. Any parse mismatch -> plain.
+    const parts = text.split(". ");
+    if (parts.length !== 5) return plain;
+    const labels =
+      lang === "id"
+        ? ["Kolom Status (tampilan saja)", "Alert bot (terpisah)", "Skor risiko akhir pekan"]
+        : ["Status column (display-only)", "Bot alerts (separate)", "Weekend risk score"];
+    const stripLead = (s: string, label: string) =>
+      s.startsWith(label + ": ") ? s.slice(label.length + 2) : null;
+    const d0 = stripLead(parts[0], labels[0]);
+    const bot = stripLead(parts[2], labels[1])?.split("; ");
+    const w0 = stripLead(parts[3], labels[2]);
+    if (d0 == null || bot == null || bot.length !== 2 || w0 == null) return plain;
+    const groups: [string, string[]][] = [
+      [labels[0], [d0, parts[1]]],
+      [labels[1], bot],
+      [labels[2], [w0, stripFinalDot(parts[4])]],
+    ];
+    if (groups.some(([, items]) => items.some((i) => !i))) return plain;
+    return (
+      <>
+        {groups.map(([label, items]) => (
+          <Fragment key={label}>
+            <p className="method-label">{label}</p>
+            <ul className="method-list">
+              {items.map((it, i) => (
+                <li key={i}>{it}</li>
+              ))}
+            </ul>
+          </Fragment>
+        ))}
       </>
     );
   }
