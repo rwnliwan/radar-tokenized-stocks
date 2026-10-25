@@ -8,9 +8,14 @@ writes. Covers:
 - forbidden words still pass on both messages;
 - mixed statuses (closed + gated) -> separate batches per status;
 - single ticker -> one-item batch formats correctly;
-- empty group -> no alert; 'paused' is NOT a trigger;
+- empty group -> no alert; 'paused' IS a trigger with its own batch
+  type ('redemption_batch_paused') and dedup key;
 - batch dedup key ('ALL', 'redemption_batch') suppresses repeats
-  within 24h, and record_alert writes one row for the batch.
+  within 24h, and record_alert writes one row for the batch;
+- paused batch: a recorded closed batch does NOT suppress a paused
+  batch (distinct keys); a recorded paused batch DOES suppress a
+  repeat paused batch; EN+ID render with high-priority marker, no
+  leaks, no forbidden words.
 """
 import re
 import sys
@@ -39,6 +44,10 @@ def mk(ticker, status="closed", dw=500.0, depth=3000000.0, pools=1):
 
 def batches(alerts):
     return [a for a in alerts if a["type"] == "redemption_batch"]
+
+
+def paused_batches(alerts):
+    return [a for a in alerts if a["type"] == "redemption_batch_paused"]
 
 
 def check_forbidden(msg, where):
@@ -139,10 +148,8 @@ def main():
     b = batches(bot.evaluate_alerts([none_open], False))
     assert "Next opening: —" in bot.format_alert(b[0], "en")
 
-    # 8) Empty group -> no alert; 'paused' is NOT a trigger.
+    # 8) Empty group -> no alert; open/unknown still no alert.
     assert batches(bot.evaluate_alerts([mk("SPYx", status="open")], False)) == []
-    assert bot.evaluate_alerts([mk("SPYx", status="paused")], False) == [], \
-        "paused must not trigger (trigger set unchanged: closed, gated)"
     assert bot.evaluate_alerts([mk("SPYx", status="unknown")], False) == []
 
     # 9) Dedup mechanism (monkeypatched DB, zero prod reads/writes).
@@ -177,7 +184,88 @@ def main():
     finally:
         bot.db_query, bot.db_execute = orig_query, orig_execute
 
-    print("BOT BATCH TEST: PASS (13->1 batch, EN+ID, mixed/single/empty/paused, dedup)")
+    # 10) Paused: own batch type, high-priority render, dedup independence.
+    pdata = [mk(t, status="paused", dw=100.0 + i) for i, t in enumerate(TICKERS_13)]
+    alerts = bot.evaluate_alerts(pdata, False)
+    pb = paused_batches(alerts)
+    assert len(pb) == 1, f"expected 1 paused batch, got {len(pb)}"
+    assert pb[0]["ticker"] == "ALL" and pb[0]["status"] == "paused"
+    assert pb[0]["type"] == "redemption_batch_paused"
+    assert pb[0]["tickers"] == TICKERS_13
+    assert batches(alerts) == [], "paused must not emit a plain redemption_batch"
+    # Single paused ticker -> one-item paused batch.
+    single = paused_batches(bot.evaluate_alerts([mk("SPYx", status="paused")], False))
+    assert len(single) == 1 and single[0]["tickers"] == ["SPYx"]
+
+    # 10a) EN render: priority marker, paused status/note, no ID leak.
+    msg_en = bot.format_alert(pb[0], "en")
+    assert msg_en.splitlines()[0] == "🔴 REDEMPTION PAUSED — 13 tickers (xStocks)"
+    assert "High priority: on-chain pause detected" in msg_en
+    assert "paused (on-chain)" in msg_en
+    assert "not confirmed live by the issuer" in msg_en
+    assert "Next opening: —" in msg_en
+    assert "Redemption stays halted until the pause is lifted." in msg_en
+    for t in TICKERS_13:
+        assert t in msg_en, f"missing ticker {t} in EN paused batch"
+    assert "Prioritas tinggi" not in msg_en, "ID priority leaked into EN"
+    assert "dijeda" not in msg_en, "ID status leaked into EN"
+    assert "Dari jadwal" not in msg_en, "DB window_note leaked into EN"
+    assert len(msg_en) < 4096
+    check_forbidden(msg_en, "EN paused batch")
+
+    # 10b) ID render: priority marker, paused status/note, no EN leak.
+    msg_id = bot.format_alert(pb[0], "id")
+    assert msg_id.splitlines()[0] == "🔴 REDEMPTION DIJEDA — 13 ticker (xStocks)"
+    assert "Prioritas tinggi: jeda on-chain terdeteksi" in msg_id
+    assert "dijeda (on-chain)" in msg_id
+    assert "bukan konfirmasi live dari issuer" in msg_id
+    assert "Redemption tetap berhenti sampai jeda dicabut." in msg_id
+    assert "High priority" not in msg_id, "EN priority leaked into ID"
+    assert "Not financial advice" not in msg_id, "EN disclaimer leaked into ID"
+    assert len(msg_id) < 4096
+    check_forbidden(msg_id, "ID paused batch")
+
+    # 10c) Mixed closed + paused -> two batches, correct membership/types.
+    cdata = [mk(t) for t in TICKERS_13[:12]]
+    pdata1 = mk("MSFTx", status="paused")
+    alerts = bot.evaluate_alerts(cdata + [pdata1], False)
+    assert len(batches(alerts)) == 1
+    assert batches(alerts)[0]["tickers"] == TICKERS_13[:12]
+    assert len(paused_batches(alerts)) == 1
+    assert paused_batches(alerts)[0]["tickers"] == ["MSFTx"]
+
+    # 10d) Dedup independence (monkeypatched DB, zero prod reads/writes).
+    orig_query, orig_execute = bot.db_query, bot.db_execute
+    try:
+        def fake_query(sql, args=None):
+            # Closed batch recorded; paused batch NOT recorded.
+            if args and args[1] == "redemption_batch_paused":
+                return [{"n": 0}]
+            return [{"n": 1}]
+
+        bot.db_query = fake_query
+        assert bot.recent_alert_exists("ALL", "redemption_batch") is True
+        assert bot.recent_alert_exists("ALL", "redemption_batch_paused") is False, \
+            "closed batch must NOT suppress a paused batch (distinct keys)"
+
+        bot.db_query = lambda sql, args=None: [{"n": 1}]
+        assert bot.recent_alert_exists("ALL", "redemption_batch_paused") is True, \
+            "recorded paused batch must suppress a repeat paused batch"
+
+        captured = {}
+
+        def fake_execute(sql, args=None):
+            captured["args"] = args
+
+        bot.db_execute = fake_execute
+        bot.record_alert(pb[0], "PAUSED TEXT", "2026-10-25T02:00:00Z")
+        assert captured["args"][0] == "ALL"
+        assert captured["args"][2] == "redemption_batch_paused"
+        assert captured["args"][1] == "2026-10-25T02:00:00Z"
+    finally:
+        bot.db_query, bot.db_execute = orig_query, orig_execute
+
+    print("BOT BATCH TEST: PASS (13->1 batch, EN+ID, mixed/single/empty, paused type+dedup independence)")
     return 0
 
 

@@ -7,7 +7,7 @@ notes below):
 - Any time: |dev vs cross-venue median| >= 3.0% -> HIGH priority
   deviation alert. Median basis is labeled as such: vs-close is NULL
   in median-only mode (license pending), so no vs-close alert fires.
-- Redemption: live rule fires on latest status closed/gated
+- Redemption: live rule fires on latest status closed/gated/paused
   (24h dedup). BATCHED: all tickers sharing one status are sent as
   ONE message per status group (ticker key 'ALL'), never one
   message per ticker — a closed Sunday is 1 message per channel,
@@ -26,6 +26,10 @@ logged alert (any outcome). A redemption batch dedups on the key
 ('ALL', 'redemption_batch') — one alert_log row per batch; while a
 batch is within its 24h window no per-ticker repeat of it can fire,
 because per-ticker redemption alerts are no longer emitted at all.
+A paused batch uses a DISTINCT key ('ALL', 'redemption_batch_paused')
+so a closed batch recorded within 24h can never suppress a paused
+alert (and vice versa). Paused is HIGH priority: red head marker,
+same severity vocabulary as the deviation_high alert.
 Accuracy outcomes (§5.4) are evaluated
 by a later job, not here; new rows start as 'pending'.
 
@@ -289,10 +293,11 @@ def evaluate_alerts(tickers_data, market_open):
     por_age_hours, por_last_update.
     Returns list of alert dicts (no I/O, no sends).
     Redemption alerts are BATCHED: per-ticker candidates with status
-    closed/gated are grouped by status into ONE 'redemption_batch'
-    alert per group (ticker key 'ALL', members listed inside). Other
-    alert types stay per-ticker. 'paused' is deliberately NOT a
-    trigger (trigger set unchanged: closed, gated)."""
+    closed/gated/paused are grouped by status into ONE batch alert
+    per group (ticker key 'ALL', members listed inside). Closed and
+    gated batches use type 'redemption_batch'; a paused batch uses
+    type 'redemption_batch_paused' so its 24h dedup key is distinct
+    from a closed batch's key. Other alert types stay per-ticker."""
     alerts = []
     red_groups = {}
     for d in tickers_data:
@@ -324,7 +329,7 @@ def evaluate_alerts(tickers_data, market_open):
                 "depth": depth, "pools_used": d.get("pools_used"),
             })
         status = (d.get("redemption_status") or "").lower()
-        if status in ("closed", "gated"):
+        if status in ("closed", "gated", "paused"):
             red_groups.setdefault(status, []).append({
                 "ticker": d["ticker"],
                 "issuer": d.get("issuer"),
@@ -350,8 +355,13 @@ def evaluate_alerts(tickers_data, market_open):
     for status, members in red_groups.items():
         nxt = next((m["next_open_at"] for m in members
                     if m.get("next_open_at")), None)
+        # Paused gets its own alert type so its dedup key
+        # ('ALL', 'redemption_batch_paused') is distinct from a
+        # closed batch's key ('ALL', 'redemption_batch').
         alerts.append({
-            "type": "redemption_batch", "ticker": "ALL",
+            "type": ("redemption_batch_paused" if status == "paused"
+                     else "redemption_batch"),
+            "ticker": "ALL",
             "issuer": members[0].get("issuer"),
             "status": status,
             "tickers": [m["ticker"] for m in members],
@@ -397,6 +407,13 @@ BOT_STR = {
         "red_batch_within24h": "within 24h",
         "red_batch_note": ("Status derived from the official 24/5 schedule "
                            "and NYSE calendar — not confirmed live by the issuer."),
+        "red_batch_paused_head": "🔴 REDEMPTION PAUSED — {n} tickers ({issuer})",
+        "red_batch_paused_priority": ("High priority: on-chain pause detected — "
+                                      "redemption is halted regardless of schedule."),
+        "red_batch_status_paused": "paused (on-chain)",
+        "red_batch_paused_note": ("Pause detected on-chain via the mint pausable "
+                                  "flag — not confirmed live by the issuer. "
+                                  "Redemption stays halted until the pause is lifted."),
         "por_head": "🟡 PROOF-OF-RESERVE STALE — {ticker} ({issuer})",
         "por_body": ("PoR feed age: {age:.1f} hours (threshold {thr:.0f}h) · "
                     "Last update: {upd}\n"
@@ -437,6 +454,13 @@ BOT_STR = {
         "red_batch_within24h": "dalam 24 jam",
         "red_batch_note": ("Status dihitung dari jadwal resmi 24/5 "
                            "dan kalender NYSE — bukan konfirmasi live dari issuer."),
+        "red_batch_paused_head": "🔴 REDEMPTION DIJEDA — {n} ticker ({issuer})",
+        "red_batch_paused_priority": ("Prioritas tinggi: jeda on-chain terdeteksi — "
+                                      "redemption berhenti apa pun jadwalnya."),
+        "red_batch_status_paused": "dijeda (on-chain)",
+        "red_batch_paused_note": ("Jeda terdeteksi on-chain lewat flag pausable "
+                                  "mint — bukan konfirmasi live dari issuer. "
+                                  "Redemption tetap berhenti sampai jeda dicabut."),
         "por_head": "🟡 PROOF-OF-RESERVE BASI — {ticker} ({issuer})",
         "por_body": ("Umur feed PoR: {age:.1f} jam (ambang {thr:.0f} jam) · "
                     "Pembaruan terakhir: {upd}\n"
@@ -482,16 +506,21 @@ def format_alert(alert, lang="en"):
             upd=alert.get("last_update") or "—",
             dw=alert.get("dw") or 0, depth=alert.get("depth") or 0,
             n=alert.get("pools_used") or 0)
-    elif alert["type"] == "redemption_batch":
+    elif alert["type"] in ("redemption_batch", "redemption_batch_paused"):
         members = alert["members"]
-        head = s["red_batch_head"].format(
+        paused = alert["type"] == "redemption_batch_paused"
+        head = (s["red_batch_paused_head"] if paused
+                else s["red_batch_head"]).format(
             n=len(members), issuer=alert.get("issuer") or "—")
         status_txt = s["red_batch_status_" + alert["status"]]
         nxt = alert.get("next_open_at")
         if not nxt:
             nxt = s["red_batch_within24h"] if alert.get("closes_within_24h") else "—"
-        lines = [s["red_batch_status"].format(status=status_txt),
-                 f"{s['red_batch_tickers']} {', '.join(alert['tickers'])}"]
+        lines = []
+        if paused:
+            lines.append(s["red_batch_paused_priority"])
+        lines.append(s["red_batch_status"].format(status=status_txt))
+        lines.append(f"{s['red_batch_tickers']} {', '.join(alert['tickers'])}")
         for m in members:
             parts = [m["ticker"]]
             if lang == "id":
@@ -508,7 +537,7 @@ def format_alert(alert, lang="en"):
                                  f"across {m.get('pools_used') or 0} pools")
             lines.append(" — ".join(parts))
         lines.append(s["red_batch_next"].format(nxt=nxt))
-        lines.append(s["red_batch_note"])
+        lines.append(s["red_batch_paused_note"] if paused else s["red_batch_note"])
         body = "\n".join(lines)
         # A batch covers many tickers: link the dashboard home, not a
         # single ticker page (and never a bogus .../ALL page).
