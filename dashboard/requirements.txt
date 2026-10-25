@@ -1,3 +1,10 @@
 # Radar Tokenized Stocks dashboard (Streamlit Community Cloud).
 # pandas ships as a Streamlit dependency; no other packages needed.
+# TRIAL (2026-10-25): streamlit-aggrid (home table) and
+# streamlit-echarts5 (comparison bars). streamlit-echarts 0.7.0 was
+# REJECTED: it fails on Streamlit 1.66.1 (components.v2 requires a
+# pyproject asset declaration the old package lacks); the echarts5
+# fork imports cleanly on 1.66.1.
 streamlit>=1.66
+streamlit-aggrid==1.2.1.post2
+streamlit-echarts5==1.0.0

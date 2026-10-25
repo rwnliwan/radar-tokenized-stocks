@@ -3,10 +3,12 @@
 ACC design (2026-10-24) + v2 delta "Radar hidup": anti-AI-slop
 editorial template, paper-light theme, burnt-orange accent for
 deviation/signal + disciplined deep teal for depth/exit elements ONLY
-(no green/red, no third color, no gradients), native Streamlit
-interactivity ONLY (no custom JavaScript, no custom components —
-inline <script> does not execute in Streamlit; Altair ships with
-Streamlit and is not a new dependency). All user-facing strings come
+(no green/red, no third color, no gradients). TRIAL (2026-10-25):
+the home table uses streamlit-aggrid and the comparison bars use
+streamlit-echarts5; component-level JsCode renderers (Detail link,
+depth bar, deviation tint) run inside the component iframe, while
+app-level inline <script> still does not execute in Streamlit. Altair
+remains for the map and ticker-page charts. All user-facing strings come
 from i18n.py; all pure logic from logic.py / risk.py; all Turso access
 from turso_read.py (SELECT-only reads + the single waitlist INSERT).
 Data layer untouched — this file is presentation only.
@@ -32,7 +34,11 @@ from i18n import (DONATE_ADDRESS, DONATE_PAY_URL, LINKEDIN_URL,
 from logic import (best_exit_venues, fmt_abbr, fmt_wita, freshness_status,
                    parse_ts)
 from risk import weekend_risk_score
+from trial_components import build_bars_options, build_home_grid_options
 from turso_read import insert_waitlist, query
+
+from st_aggrid import AgGrid
+from streamlit_echarts5 import st_echarts
 
 st.set_page_config(page_title=t("en", "app_title"), layout="wide")
 
@@ -463,24 +469,6 @@ def cross_venue_spread(venues, dw_price):
     return (max(prices) - min(prices)) / float(dw_price) * 100.0
 
 
-def tint_dev(series, divisor=2.0):
-    """Single-accent tint for the deviation column: burnt orange whose
-    opacity scales with |deviation|, capped at 0.85.
-    Accepts display strings ('+0.24', '-25.97', '—') as well as
-    numbers — the tables now store formatted strings, not raw floats.
-    divisor converts the column's unit to percent: 2.0 for percent
-    columns, 200.0 for basis-point columns (100 bps = 1%)."""
-    out = []
-    for v in series:
-        try:
-            a = min(abs(float(str(v).replace("%", "").replace("+", ""))) / divisor, 0.85)
-        except (TypeError, ValueError):
-            a = 0.0
-        out.append(f"background-color: rgba(194, 65, 12, {a:.2f})"
-                   if a > 0.02 else "")
-    return out
-
-
 def fmt_usd(v, decimals=2):
     """'$4,875,369.02' or '—' for None (audit: no raw floats in tables)."""
     if v is None:
@@ -547,13 +535,6 @@ def spark_text(series, width=32):
         idx = int((x - lo) / (hi - lo) * 7.999)
         out.append(_SPARK_CHARS[idx])
     return "".join(out)
-
-
-def row_ticker(displayed_tickers, row_idx):
-    """Pure helper: map a clicked home-table row index to its ticker."""
-    if row_idx is None or row_idx < 0 or row_idx >= len(displayed_tickers):
-        return None
-    return displayed_tickers[row_idx]
 
 
 def render_freshness(lang):
@@ -733,7 +714,6 @@ def render_comparison_bars(lang, latest):
             "ts": fmt_wita(d.get("ts"), lang),
         })
     if rows:
-        bdf = pd.DataFrame(rows)
         if scale_choice == "fixed":
             lo, hi = -100.0, 100.0
         else:
@@ -745,25 +725,11 @@ def render_comparison_bars(lang, latest):
             # number than the axis actually shows.
             pad = max((mx - mn) * 0.1, 5.0)
             lo, hi = min(0.0, mn) - pad, max(0.0, mx) + pad
-        bchart = alt.Chart(bdf).mark_bar().encode(
-            x=alt.X("bps:Q", title=t(lang, "col_dev_bps"),
-                    scale=alt.Scale(domain=[lo, hi])),
-            y=alt.Y("ticker:N", sort="-x", title=None),
-            color=alt.Color("status:N",
-                            scale=alt.Scale(
-                                domain=["ok", "watch", "alert"],
-                                range=["#D8D2C8", "#E07B4A", "#C2410C"]),
-                            legend=None),
-            tooltip=[alt.Tooltip("ticker:N"),
-                     alt.Tooltip("bps:Q", format="+.1f"),
-                     alt.Tooltip("status_label:N"),
-                     alt.Tooltip("venue:N"),
-                     alt.Tooltip("price:N"),
-                     alt.Tooltip("depth:N"),
-                     alt.Tooltip("por:N"),
-                     alt.Tooltip("ts:N")],
-        )
-        st.altair_chart(bchart.properties(height=320), width="stretch")
+        # TRIAL (2026-10-25): ECharts replaces Altair here; same rows,
+        # domains, colors, tooltips, and captions — only the renderer
+        # changes (options built in trial_components).
+        st_echarts(build_bars_options(rows, lo, hi, lang),
+                   height="320px", key=f"bars_echarts_{lang}")
         st.caption(t(lang, "bars_range", lo=f"{lo:+.1f}", hi=f"{hi:+.1f}"))
         if scale_choice == "fixed":
             # Fixed view clips bars beyond ±1% at the axis edge (the
@@ -1235,7 +1201,7 @@ def home_table_block(lang):
             t(lang, "col_spread"): fmt_dev(r["spread"], pct=True),
             t(lang, "col_depth10k"): fmt_usd(r["depth"]),
             t(lang, "col_depth_bar"): (
-                [float(r["depth"])] if r["depth"] is not None else []),
+                float(r["depth"]) if r["depth"] is not None else 0.0),
             t(lang, "redemption_title"): _red_txt.get(
                 r["redemption"], t(lang, "redemption_unknown")),
             t(lang, "por_age_label"): t(lang, "por_not_published"),
@@ -1247,28 +1213,27 @@ def home_table_block(lang):
             t(lang, "col_spark"): spark_text(r["spark"]),
             t(lang, "detail_link"): f"?ticker={r['ticker']}",
         } for r in items])
-        styled = df.style.apply(
-            lambda s: tint_dev(s, divisor=200.0),
-            subset=[t(lang, "col_dev_bps")])
-        # Wave 1 dimmed the two repeated missing-data label columns.
-        # Wave 3: redemption now carries LIVE values (Open/Closed/
-        # Paused), so only the PoR column — still "Not published" on
-        # every row — stays dimmed. Dimming live data would hide it.
-        styled = styled.set_properties(
-            subset=[t(lang, "por_age_label")],
-            color="#8a8580")
-        st.dataframe(
-            styled,
-            column_config={
-                t(lang, "col_depth_bar"): st.column_config.BarChartColumn(
-                    t(lang, "col_depth_bar"), y_min=0,
-                    y_max=_max_depth if _max_depth else 1),
-                t(lang, "detail_link"): st.column_config.LinkColumn(
-                    t(lang, "detail_link"),
-                    display_text=t(lang, "detail_link")),
-            },
-            selection_mode="single-row", on_select="rerun",
-            key="home_table", width="stretch", hide_index=True)
+        # TRIAL (2026-10-25): the master table is an AG Grid, not
+        # st.dataframe. Same display columns and values; numeric
+        # helpers (hidden) feed the deviation tint, depth bar, and
+        # Detail link renderers built in trial_components. The PoR
+        # column stays dimmed there (it repeats "Not published");
+        # redemption carries live values and is never dimmed.
+        grid_df = df.copy()
+        grid_df["_bps_num"] = [
+            float(r["bps"]) if r["bps"] is not None else 0.0
+            for r in items]
+        grid_df["_depth_num"] = [
+            float(r["depth"]) if r["depth"] is not None else 0.0
+            for r in items]
+        grid_df["_depth_max"] = _max_depth if _max_depth else 1
+        grid_df["_detail_url"] = [f"?ticker={r['ticker']}" for r in items]
+        grid_resp = AgGrid(
+            grid_df, gridOptions=build_home_grid_options(grid_df, lang),
+            height=None, allow_unsafe_jscode=True, theme="streamlit",
+            key=f"home_aggrid_{lang}",
+            show_search=False, show_download_button=False,
+            show_toolbar=False)
         st.caption(t(lang, "home_table_note") if window_choice >= 24
                    else t(lang, "home_table_note_cycle"))
         st.caption(t(lang, "home_table_hint"))
@@ -1290,15 +1255,27 @@ def home_table_block(lang):
                            _csv.to_csv(index=False),
                            file_name="exit-radar.csv", mime="text/csv",
                            key=f"home_csv_{lang}")
-        sel = st.session_state.get("home_table")
-        rows_sel = []
-        if isinstance(sel, dict):
-            rows_sel = ((sel.get("selection") or {}).get("rows") or [])
+        # AG Grid selection: the component returns selected rows (a
+        # DataFrame in recent versions, a list of dicts in older
+        # ones). The guard stores tickers (not row indices) so a
+        # returning visit never re-navigates by itself.
+        sel = getattr(grid_resp, "selected_rows", None)
+        if isinstance(sel, pd.DataFrame):
+            _tick_col = t(lang, "col_ticker")
+            sel_tickers = (sel[_tick_col].tolist()
+                           if _tick_col in sel.columns and not sel.empty
+                           else [])
+        elif isinstance(sel, list):
+            sel_tickers = [r.get(t(lang, "col_ticker")) for r in sel
+                           if isinstance(r, dict)]
+        else:
+            sel_tickers = []
+        sel_tickers = [x for x in sel_tickers if x]
         last_sel = st.session_state.get("_home_last_sel", [])
-        if rows_sel and list(rows_sel) != list(last_sel):
-            st.session_state["_home_last_sel"] = list(rows_sel)
-            chosen = row_ticker(tickers, rows_sel[0])
-            if chosen:
+        if sel_tickers and sel_tickers != last_sel:
+            st.session_state["_home_last_sel"] = sel_tickers
+            chosen = sel_tickers[0]
+            if chosen in tickers:
                 st.session_state["page"] = "ticker"
                 st.session_state["ticker_target"] = chosen
                 try:
@@ -1306,7 +1283,7 @@ def home_table_block(lang):
                 except Exception:
                     pass
                 st.rerun()
-        elif not rows_sel:
+        elif not sel_tickers:
             st.session_state["_home_last_sel"] = []
     else:
         st.markdown(t(lang, "no_data"))
