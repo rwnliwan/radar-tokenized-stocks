@@ -435,7 +435,19 @@ function json(data, status = 200) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "OPTIONS") return json({}, 204);
+    if (request.method === "OPTIONS") {
+      // 204 must have a NULL body: new Response with a body + status 204
+      // throws (this was error 1101 on every preflight, which broke the
+      // waitlist POST from browsers). CORS headers still required.
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      });
+    }
     try {
       if (url.pathname === "/api/latest") {
         return json(await loadLatest(env));

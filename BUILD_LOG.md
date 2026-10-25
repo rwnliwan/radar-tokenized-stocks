@@ -257,3 +257,29 @@ begitu token asli terpasang.
 - Batasan diketahui: chart riwayat 7d baru selebar riwayat yang
   ada (~17 jam); halaman ticker belum punya alert log /
   simulator / compare (lihat di atas).
+
+## Hotfix — Stage 2 browser check failed: 2 root causes (parent fix, 2026-10-25)
+
+- Gejala: cek browser tahap 2 (03:48–03:50 UTC) gagal total — semua
+  halaman data hanya "Could not load live data", padahal curl ke
+  Worker lolos. Hanya /methodology (statis) yang tampil.
+- Akar 1 (utama): build Pages tahap 2 kehilangan
+  NEXT_PUBLIC_RADAR_API_BASE — chunk homepage membaca
+  `a.env.NEXT_PUBLIC_RADAR_API_BASE` saat runtime dan nilainya
+  undefined (grep chunk: 0 kemunculan "radar-api"; satu-satunya URL
+  https adalah LinkedIn). Semua fetch client-side melempar "API base
+  URL is not configured" SEBELUM request jaringan. Stage 1 punya var
+  ini ter-inline benar; Stage 2 rebuild tanpa var di env build.
+  Perbaikan: rebuild dengan NEXT_PUBLIC_RADAR_API_BASE=
+  https://radar-api.rwnliwan.workers.dev eksplisit + guard `prebuild`
+  di web/package.json (build GAGAL cepat bila var tidak diset —
+  insiden ini tidak boleh terulang diam-diam).
+- Akar 2: handler OPTIONS Worker melempar error 1101 — `json({},
+  204)` mengirim body "{}" dengan status 204, dan konstruktor
+  Response menolak body pada status null-body. Akibat: SEMUA
+  preflight gagal, termasuk POST waitlist dari browser (yang selalu
+  preflight karena Content-Type: application/json). Perbaikan:
+  OPTIONS kini mengembalikan `new Response(null, {status: 204,
+  headers CORS})`.
+- Verifikasi hotfix: OPTIONS → 204 + header CORS; chunk homepage
+  baru mengandung URL Worker; cek browser ulang daftar tahap 2.
