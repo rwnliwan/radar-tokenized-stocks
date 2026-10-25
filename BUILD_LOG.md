@@ -397,3 +397,13 @@ begitu token asli terpasang.
   (4 kartu) tetap grid 4/2x2 yang memang seimbang. .metric
   ditambah min-width:0 + overflow-wrap agar label melipat, bukan
   memaksa lebar. Kata/nilai tidak diubah.
+
+### Verifikasi metodologi (browser, 2026-10-25)
+- LOLOS: 9 judul seksi EN persis (Deviation & spread, Depth,
+  Redemption, Proof of reserve, Status & alerts, Sources & data,
+  Limitations, Human-checked methodology, Coming soon) + ID persis
+  (Deviasi & spread, Kedalaman, Redemption, Proof of reserve,
+  Status & alert, Sumber & data, Batasan, Metodologi diperiksa
+  manusia, Segera hadir); kalimat pembuka intro + paragraf pertama
+  seksi deviasi utuh (kata tidak berubah); layout terbaca sebagai
+  seksi terpisah, tanpa overflow/clipping.
