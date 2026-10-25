@@ -499,3 +499,8 @@ begitu token asli terpasang.
   chart; 4 venue; redemption Closed); URL tetap di
   radar.omdanny.site/ticker/TSLAx (tanpa redirect); tanpa
   placeholder/error. Cutover DINYATAKAN SELESAI.
+
+### Konfirmasi penutup cutover (Septian, 2026-10-25 13:04 WITA)
+- Monitor UptimeRobot Exit Radar: UP. radar.omdanny.site bisa
+  diakses dari HP Septian. Cutover TUNTAS di semua jalur (curl
+  VM, render browser, HP, UptimeRobot). Sisa hanya deploy padding.
