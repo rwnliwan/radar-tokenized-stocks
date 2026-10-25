@@ -171,7 +171,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
           </p>
           <div className="cover">{t(lang, "coverage_short")}</div>
 
-          <h2>{t(lang, "block_dev")}</h2>
+          <h2 className="sec">{t(lang, "block_dev")}</h2>
           <div className="metrics metrics-3">
             <div className="metric">
               <small>{t(lang, "dw_price")}</small>
@@ -197,7 +197,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             <p className="hint">{t(lang, "pools_excluded_note", { n: detail.pools_excluded })}</p>
           )}
 
-          <h2>{t(lang, "chart_title")}</h2>
+          <h2 className="sec">{t(lang, "chart_title")}</h2>
           <div className="controls">
             <span className="lbl">{t(lang, "chart_window")}:</span>
             <span className="seg" role="group" aria-label={t(lang, "chart_window")}>
@@ -229,7 +229,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
           )}
           <p className="hint">{t(lang, "chart_note")}</p>
 
-          <h2>{t(lang, "venue_title")}</h2>
+          <h2 className="sec">{t(lang, "venue_title")}</h2>
           {detail.venues.length ? (
             <>
               <div className="tblwrap">
@@ -284,7 +284,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
 
           {marketOpen ? (
             <>
-              <h2>{t(lang, "market_title")}</h2>
+              <h2 className="sec">{t(lang, "market_title")}</h2>
               <p>{t(lang, "market_open")}</p>
               <div className="metrics metrics-1">
                 <div className="metric">
@@ -299,7 +299,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
           ) : (
             <>
               <p className="hint">{t(lang, "market_closed_headline")}</p>
-              <h2>{t(lang, "risk_title")}</h2>
+              <h2 className="sec">{t(lang, "risk_title")}</h2>
               {detail.dev_pct == null && detail.depth_usd == null ? (
                 <p className="hint">{t(lang, "risk_unavailable")}</p>
               ) : (
@@ -314,6 +314,33 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                       </b>{" "}
                       ({u(lang, "risk_method_short")})
                     </p>
+                    {/* Signature: weekend score as a segmented bar (mockup).
+                        Segment widths = component maxima; fill = value;
+                        a full segment reads orange. Numbers stay in the
+                        line below; formula stays behind the disclosure. */}
+                    <div className="scorebar" aria-hidden="true">
+                      {(
+                        [
+                          { key: "deviation", max: 40, label: t(lang, "risk_dev_label") },
+                          { key: "depth", max: 25, label: t(lang, "risk_depth_label") },
+                          { key: "redemption", max: 20, label: t(lang, "risk_red_label") },
+                          { key: "por", max: 15, label: t(lang, "risk_por_label") },
+                        ] as const
+                      ).map(({ key, max, label }) => {
+                        const v = risk.components[key];
+                        const full = v != null && v >= max;
+                        return (
+                          <div
+                            key={key}
+                            className={`sseg${full ? " risk" : ""}`}
+                            style={{ flex: max }}
+                            title={`${label}: ${v != null ? v.toFixed(1) : "—"} / ${max}`}
+                          >
+                            <i style={{ width: v != null ? `${(v / max) * 100}%` : "0%" }} />
+                          </div>
+                        );
+                      })}
+                    </div>
                     <p>
                       {t(lang, "risk_dev_label")}:{" "}
                       {risk.components.deviation != null ? risk.components.deviation.toFixed(1) : "—"} ·{" "}
@@ -339,7 +366,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             </>
           )}
 
-          <h2>{t(lang, "redemption_title")}</h2>
+          <h2 className="sec">{t(lang, "redemption_title")}</h2>
           {detail.redemption_status != null ? (
             <section className="redcard">
               <div className="redcard-head">
@@ -412,7 +439,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
 
 
 
-          <h2>{u(lang, "change_title")}</h2>
+          <h2 className="sec">{u(lang, "change_title")}</h2>
           <div className="metrics">
             <div className="metric">
               <small>{t(lang, "col_change", { window: t(lang, "window_1h") })}</small>
@@ -436,6 +463,17 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             </div>
           </div>
 
+          <div className="foot-sweep" aria-hidden="true">
+            <svg width="100%" height="14" viewBox="0 0 1180 14" preserveAspectRatio="none">
+              <path
+                d="M0 14 Q 590 -10 1180 14"
+                fill="none"
+                style={{ stroke: "var(--accent)" }}
+                strokeWidth="1.5"
+                opacity=".7"
+              />
+            </svg>
+          </div>
           <div className="foot">
             {t(lang, "disclaimer")} {t(lang, "footer_note")}
             <br />

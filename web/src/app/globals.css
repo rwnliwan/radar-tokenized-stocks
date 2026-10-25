@@ -200,6 +200,10 @@ thead th .sortbtn .ind { color: var(--accent); }
    master table scrolls horizontally on narrow screens. */
 .home-tbl thead th:first-child { left: 0; z-index: 2; }
 .home-tbl tbody td.tk { position: sticky; left: 0; z-index: 1; background: var(--surface); }
+/* Signature (mockup ACC'd): amber hairline under ticker-table header rows
+   = the scope ring's edge. Scoped to ticker tables only — methodology /
+   waitlist / donate tables untouched. */
+.home-tbl thead th, .tick-tbl thead th { box-shadow: inset 0 -2px 0 var(--accent); }
 td { padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 tbody tr:hover td { background: var(--hover-row); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -430,4 +434,68 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
    untouched. Feedback Septian 2026-10-25. */
 @media (orientation: landscape) and (max-width: 950px) {
   .wrap { padding: 16px 16px 40px; }
+}
+
+/* Signature identity (ACC 2026-10-25, mockup-desain-signature.html).
+   Verdict as hero, radar grammar on headers/rows/timeline/footer,
+   segmented weekend score. Palette, 1180px column, wording,
+   thresholds, statuses and data semantics unchanged. */
+.verdict-hero {
+  position: relative; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+  padding: 28px 32px; margin: 18px 0 10px;
+}
+.verdict-hero .scope-bg {
+  position: absolute; right: -40px; top: 50%; transform: translateY(-50%);
+  opacity: .5; pointer-events: none;
+}
+.verdict-hero .scope-bg svg { display: block; }
+.verdict-hero .verdict { position: relative; }
+.verdict-hero .lbl { display: flex; align-items: center; gap: 8px; }
+.verdict-hero .lbl::before {
+  content: ""; width: 22px; height: 22px; border: 1.5px solid var(--accent);
+  border-radius: 50%; display: inline-block; flex: none;
+  box-shadow: inset 0 0 0 4px var(--surface), inset 0 0 0 5.5px var(--accent);
+}
+.verdict-hero .vtext { font-size: 44px; font-weight: 800; margin: 10px 0 6px; letter-spacing: -.01em; }
+.verdict-hero .vtext.safe { color: var(--green); }
+.verdict-hero .vtext.caution { color: var(--orange); }
+.verdict-hero .vtext.danger { color: var(--red); }
+/* Section headers carry the ring glyph (mockup h2.sec). */
+h2.sec { font-size: 17px; margin: 26px 0 10px; display: flex; align-items: center; gap: 10px; }
+h2.sec::before {
+  content: ""; flex: none; width: 18px; height: 18px; border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  box-shadow: inset 0 0 0 3px var(--bg), inset 0 0 0 4.5px var(--accent);
+}
+/* Status blip + deviation range bar (mockup .blip / .blip-bar). */
+.blip { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+.blip.ok { background: var(--green); }
+.blip.watch { background: var(--orange); }
+.blip.alert { background: var(--red); }
+.blip.na { background: var(--muted); }
+.blip-bar { display: inline-block; position: relative; width: 64px; height: 8px; background: var(--border); border-radius: 4px; vertical-align: middle; margin-left: 8px; }
+.blip-bar::after { content: ""; position: absolute; left: 50%; top: 0; width: 1px; height: 8px; background: var(--muted); }
+.blip-bar i { position: absolute; top: 1px; width: 6px; height: 6px; border-radius: 50%; transform: translateX(-50%); }
+.blip-bar i.ok { background: var(--green); }
+.blip-bar i.watch { background: var(--orange); }
+.blip-bar i.alert { background: var(--red); }
+/* Redemption timeline: the next dot gets the amber ring (mockup). */
+.redcard-dot.next { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(251,191,36,.25); }
+/* Weekend score as a segmented bar (mockup .scorebar; .sseg avoids a
+   collision with the unrelated .seg control-group class). */
+.scorebar { display: flex; gap: 3px; height: 14px; margin: 10px 0; }
+.scorebar .sseg { background: var(--border); border-radius: 4px; position: relative; overflow: hidden; }
+.scorebar .sseg i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+.scorebar .sseg.risk i { background: var(--orange); }
+/* Footer sweep divider (mockup: the scope ring's edge above the footer). */
+.foot-sweep { margin: 26px 0 0; line-height: 0; }
+@media (max-width: 520px) {
+  .verdict-hero { text-align: center; }
+  .verdict-hero .scope-bg { position: static; transform: none; opacity: .8; margin: 0 auto 8px; }
+  .verdict-hero .scope-bg svg { width: 200px; height: 200px; }
+  .verdict-hero .lbl { justify-content: center; }
+  .verdict-hero .vtext { font-size: 26px; }
+  /* The worst-deviation number must not outgrow the verdict on phones. */
+  .verdict-hero .worst { font-size: 20px; }
 }

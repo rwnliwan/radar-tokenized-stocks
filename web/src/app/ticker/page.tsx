@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Header from "../Header";
+import { DevBar, StatusBlip } from "../BlipBar";
 import { fetchLatest, type LatestResponse } from "../../lib/api";
 import { fmtSigned1, fmtUsd, statusLabel } from "../../lib/format";
 import { t, u, type Lang } from "../../lib/i18n";
@@ -63,7 +64,7 @@ export default function TickerIndex() {
         </div>
       )}
       {data && (
-        <div className="tblwrap">
+        <div className="tblwrap tick-tbl">
           <table>
             <thead>
               <tr>
@@ -78,13 +79,17 @@ export default function TickerIndex() {
               {rows.map((r) => (
                 <tr key={r.ticker}>
                   <td className="tk">
+                    <StatusBlip status={r.status} />
                     <Link href={`/ticker/${r.ticker}`}>
                       <b>{r.ticker}</b>
                     </Link>
                   </td>
                   <td>{r.tier ?? "—"}</td>
                   <td className="num">{fmtUsd(r.dw_price)}</td>
-                  <td className="num dev">{fmtSigned1(r.dev_bps)}</td>
+                  <td className="num dev">
+                    {fmtSigned1(r.dev_bps)}
+                    <DevBar devBps={r.dev_bps} status={r.status} />
+                  </td>
                   <td>
                     <span className={`pill ${r.status}`}>{statusLabel(lang, r.status)}</span>
                   </td>

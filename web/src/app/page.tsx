@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "./Header";
+import { DevBar, StatusBlip } from "./BlipBar";
 import { fetchLatest, type LatestResponse, type TickerRow } from "../lib/api";
 import { buildCsv } from "../lib/csv";
 import {
@@ -339,8 +340,8 @@ export default function Home() {
 
       {data && (
         <>
-          <div className="scope-hero">
-            <div className="scope">
+          <div className="verdict-hero">
+            <div className="scope-bg">
               <svg
                 width="240"
                 height="240"
@@ -422,7 +423,7 @@ export default function Home() {
             {t(lang, "coverage_short")}
           </div>
 
-          <h2>{t(lang, "heatmap_title")}</h2>
+          <h2 className="sec">{t(lang, "heatmap_title")}</h2>
           <div className="controls">
             <span className="lbl">{t(lang, "sort_label")}:</span>
             <span className="seg" role="group" aria-label={t(lang, "sort_label")}>
@@ -513,6 +514,7 @@ export default function Home() {
                   return (
                     <tr key={r.ticker}>
                       <td className="tk">
+                        <StatusBlip status={r.status} />
                         <Link href={`/ticker/${r.ticker}`}>
                           <b>{r.ticker}</b>
                         </Link>
@@ -521,6 +523,7 @@ export default function Home() {
                       <td className="num">{fmtUsd(r.dw_price)}</td>
                       <td className="num dev" style={tint}>
                         {fmtSigned1(r.dev_bps)}
+                        <DevBar devBps={r.dev_bps} status={r.status} />
                       </td>
                       <td className="num hide-s">{fmtPct(r.spread_pct)}</td>
                       <td className="num hide-s">{fmtDepth(r.depth_usd)}</td>
@@ -569,9 +572,12 @@ export default function Home() {
             {rows.map((r) => (
               <div className="rc" key={r.ticker}>
                 <div className="top">
-                  <Link href={`/ticker/${r.ticker}`}>
-                    <b>{r.ticker}</b>
-                  </Link>
+                  <span>
+                    <StatusBlip status={r.status} />
+                    <Link href={`/ticker/${r.ticker}`}>
+                      <b>{r.ticker}</b>
+                    </Link>
+                  </span>
                   <span className={`pill ${r.status}`}>
                     {statusLabel(lang, r.status)}
                   </span>
@@ -596,7 +602,7 @@ export default function Home() {
           </div>
           {rows.length === 0 && <p className="hint">{t(lang, "no_data")}</p>}
 
-          <h2>{t(lang, "bars_title")}</h2>
+          <h2 className="sec">{t(lang, "bars_title")}</h2>
           <div className="controls">
             <span className="lbl">{t(lang, "bars_scale_label")}:</span>
             <span className="seg" role="group" aria-label={t(lang, "bars_scale_label")}>
@@ -680,6 +686,17 @@ export default function Home() {
             </div>
           </div>
 
+          <div className="foot-sweep" aria-hidden="true">
+            <svg width="100%" height="14" viewBox="0 0 1180 14" preserveAspectRatio="none">
+              <path
+                d="M0 14 Q 590 -10 1180 14"
+                fill="none"
+                style={{ stroke: "var(--accent)" }}
+                strokeWidth="1.5"
+                opacity=".7"
+              />
+            </svg>
+          </div>
           <div className="foot">
             {u(lang, "method_short")}
             <br />
