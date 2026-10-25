@@ -348,6 +348,20 @@ def get_redemption(issuer):
 
 
 @st.cache_data(ttl=300)
+def get_redemption_latest():
+    """Latest redemption_windows row across issuers (program-wide).
+
+    The window status is program-wide (one xStocks rule for all
+    products), so the single latest row IS the current status."""
+    rows = query(
+        "SELECT issuer, asset, status, window_note, window_note_en, "
+        "observed_at, source, next_open_at FROM redemption_windows "
+        "ORDER BY observed_at DESC LIMIT 1"
+    )
+    return rows[0] if rows else None
+
+
+@st.cache_data(ttl=300)
 def get_all_venues_latest():
     """Latest snapshot per active pool, all tickers, ONE query.
 
@@ -626,11 +640,13 @@ def render_risk_breakdown(lang, score):
 
 def render_kpi_strip(lang, latest):
     """v3.2 KPI strip: worst deviation, venues live, PoR stale,
-    redemption open. Cards use abbreviated numbers; tables keep the
-    full comma format. PoR shows '—' (no feed connected) and
-    redemption shows 'Unknown' (Wave 1: the old '0/1' headline read as
-    'confirmed closed' while the status is actually unknown) — never
-    invented values."""
+    redemption status. Cards use abbreviated numbers; tables keep the
+    full comma format. PoR shows '—' (no feed connected).
+    Wave 3: the redemption headline shows the CURRENT status from the
+    latest redemption_windows row (Open / Closed / Paused) — never
+    invented values; when no row exists it falls back to 'Unknown'
+    (the Wave 1 behavior). The sub always carries the honest label:
+    schedule-derived for open/closed, on-chain detection for paused."""
     def _card(label, value, sub):
         st.markdown(
             f'<div class="card"><div class="kpi-sub">{label}</div>'
@@ -657,10 +673,21 @@ def render_kpi_strip(lang, latest):
     with k3:
         _card(t(lang, "kpi_por"), "—", t(lang, "kpi_por_sub"))
     with k4:
-        # Wave 1: headline is 'Unknown', not '0/1'. The sub stays
-        # truthful (documented only, no live status).
-        _card(t(lang, "kpi_redemption"), t(lang, "redemption_unknown"),
-              t(lang, "kpi_redemption_sub"))
+        # Wave 3: headline is the CURRENT window status (latest row,
+        # program-wide). Unknown only when no row exists at all.
+        _latest = get_redemption_latest()
+        _rstatus = ((_latest.get("status") or "").lower()
+                    if _latest else "")
+        if _rstatus == "paused":
+            _rval = t(lang, "red_status_paused")
+            _rsub = t(lang, "kpi_redemption_sub_paused")
+        elif _rstatus in ("open", "closed"):
+            _rval = t(lang, "red_status_" + _rstatus)
+            _rsub = t(lang, "kpi_redemption_sub_live")
+        else:
+            _rval = t(lang, "redemption_unknown")
+            _rsub = t(lang, "kpi_redemption_sub")
+        _card(t(lang, "kpi_redemption"), _rval, _rsub)
 
 
 def render_comparison_bars(lang, latest):
@@ -1193,6 +1220,7 @@ def home_table_block(lang):
         _red_txt = {"open": t(lang, "red_status_open"),
                     "closed": t(lang, "red_status_closed"),
                     "gated": t(lang, "red_status_gated"),
+                    "paused": t(lang, "red_status_paused"),
                     "unknown": t(lang, "redemption_unknown")}
         _max_depth = max([r["depth"] for r in items
                           if r["depth"] is not None], default=0)
@@ -1222,12 +1250,12 @@ def home_table_block(lang):
         styled = df.style.apply(
             lambda s: tint_dev(s, divisor=200.0),
             subset=[t(lang, "col_dev_bps")])
-        # Wave 1: the two repeated missing-data label columns stay
-        # visible (never deleted) but dimmed, so they no longer shout
-        # as loud as real data. What is missing is summarized in the
-        # coverage line under the headline (fix 3).
+        # Wave 1 dimmed the two repeated missing-data label columns.
+        # Wave 3: redemption now carries LIVE values (Open/Closed/
+        # Paused), so only the PoR column — still "Not published" on
+        # every row — stays dimmed. Dimming live data would hide it.
         styled = styled.set_properties(
-            subset=[t(lang, "redemption_title"), t(lang, "por_age_label")],
+            subset=[t(lang, "por_age_label")],
             color="#8a8580")
         st.dataframe(
             styled,
@@ -1619,12 +1647,20 @@ elif page == "ticker":
             _status_map = {"open": t(lang, "red_status_open"),
                            "closed": t(lang, "red_status_closed"),
                            "gated": t(lang, "red_status_gated"),
+                           "paused": t(lang, "red_status_paused"),
                            "unknown": t(lang, "redemption_unknown")}
             _raw_status = (red.get("status") or "").lower()
             _status_txt = _status_map.get(
                 _raw_status,
                 red.get("status") or t(lang, "redemption_unknown"))
             st.markdown(f"**{t(lang, 'col_status')}:** {_status_txt}")
+            # Wave 3 HONEST LABEL (hard guardrail): a schedule-derived
+            # status must NEVER read as live issuer confirmation. This
+            # one-sentence note renders for every live status (open /
+            # closed / paused); the legacy unknown row keeps its own
+            # documentation note below instead.
+            if _raw_status in ("open", "closed", "paused"):
+                st.markdown(t(lang, "redemption_window_note"))
             # v3.2 per-language note (review: EN mode leaked the
             # Indonesian note). EN uses the migrated window_note_en
             # column; when it is absent, NO note renders in EN mode —

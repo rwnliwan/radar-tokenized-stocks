@@ -7,9 +7,12 @@ Rhythm (design §3.1):
   5-min rhythm inside the window (minute % 5 == 0). The poller loops
   internally during the window; cron is only the trigger. Overlap is
   prevented by a non-blocking flock (the flock is the real mutex).
-- Redemption & PoR: hourly slot (design §3.1: every 60 min). No automated
-  source is configured yet, so the slot records that fact in poller_health
-  instead of fabricating rows (see HOURLY note below).
+- Redemption & PoR: hourly slot (design §3.1: every 60 min). Redemption
+  is observed since Wave 3 (A+B, ACC'd): schedule-derived status from
+  the official xStocks 24/5 rule + NYSE calendar, with an hourly
+  on-chain pause/supply check over the 13 mints via PUBLIC Solana RPC
+  (no keys). PoR still has no automated source, so that half of the
+  slot still only records the fact (see HOURLY note below).
 - Equity close: once per NYSE day after close. No licensed equity source
   is configured (median-only mode per parent decision), so the slot only
   records that fact; dev_vs_close_pct stays NULL.
@@ -75,6 +78,162 @@ def log(msg):
 
 def is_nyse_day(dt_et):
     return dt_et.weekday() < 5 and dt_et.strftime("%Y-%m-%d") not in NYSE_HOLIDAYS
+
+
+# --- Redemption window A+B (Wave 3, ACC'd) ---
+# A: schedule-derived status from the official xStocks 24/5 rule +
+# NYSE calendar (CONSERVATIVE: open = NYSE business day, all day;
+# closed = weekend / NYSE holiday). This is a schedule computation,
+# NEVER presented as live issuer confirmation (the dashboard carries
+# the honest label; see redemption_window_note in i18n.py).
+# B: hourly on-chain exception monitor over the 13 xStocks mints via
+# PUBLIC Solana RPC only (no keys, no signup): pausableConfig pause
+# flag (verified present on all 13 mints 2026-10-25, all unpaused)
+# + supply. If NO mint had Pausable, the pause detector would be
+# dropped entirely — it is kept only because step-0 verified it.
+SOLANA_RPC = "https://api.mainnet-beta.solana.com"
+XSTOCKS_MINTS = {
+    "TSLAx": "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB",
+    "NVDAx": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh",
+    "METAx": "Xsa62P5mvPszXL1krVUnU5ar38bBSVcWAB6fmPCo5Zu",
+    "GOOGLx": "XsCPL9dNWBMvFtTmwcCA5v3xWPSMEBCszbQdiLLq6aN",
+    "MSTRx": "XsP7xzNPvEHS1m6qfanPUGjNmdnmsLKEoNAnHjdxxyZ",
+    "SPYx": "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W",
+    "QQQx": "Xs8S1uUs1zvS2p7iwtsG3b6fkhpvmwz4GYU3gWAmWHZ",
+    "CRCLx": "XsueG8BtpquVJX9LVLLEGuViXUungE6WmK5YZ3p3bd1",
+    "HOODx": "XsvNBAYkrDRNhA7wPHQfX3ZUXZyZLdnCQDfHZ56bzpg",
+    "COINx": "Xs7ZdzSHLU9ftNJsii5fCeJhoRWSC32SQGzGQtePxNu",
+    "GLDx": "Xsv9hRk1z5ystj9MhnA7Lq4vjSsLwzL2nxrwmwtD3re",
+    "AAPLx": "XsbEhLAtcf6HdfpFZ5xEMdqW8nfAvcsP5bdudRLJzJp",
+    "MSFTx": "XspzcW1PRtgf6Wj92HCiZdjzKCyFekVD8P5Ueh3dRMX",
+}
+
+
+def redemption_schedule_status(now_utc):
+    """'open' on NYSE business days, 'closed' otherwise (24/5 rule)."""
+    return "open" if is_nyse_day(now_utc.astimezone(ET)) else "closed"
+
+
+def next_nyse_open_utc(now_utc):
+    """00:00 ET of the next NYSE business day, as a UTC 'Z' string.
+
+    Only meaningful when the schedule status is closed; callers pass
+    None (not this value) for open/paused."""
+    d = now_utc.astimezone(ET).date() + timedelta(days=1)
+    while not is_nyse_day(datetime(d.year, d.month, d.day, tzinfo=ET)):
+        d += timedelta(days=1)
+    nxt_et = datetime(d.year, d.month, d.day, 0, 0, tzinfo=ET)
+    return nxt_et.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def solana_mint_info(mint):
+    """(paused_or_None, supply_or_None, err_or_None) via public RPC.
+
+    paused is True/False only when a pausableConfig extension is
+    actually present on-chain; None means unknown (no extension, or
+    the read failed). Never raises, never fabricates."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getAccountInfo",
+                       "params": [mint, {"encoding": "jsonParsed"}]})
+    err = ""
+    for _attempt in range(2):
+        r = subprocess.run(
+            ["curl", "-s", "--max-time", "10", "-X", "POST",
+             "-H", "Content-Type: application/json", "-d", body, SOLANA_RPC],
+            capture_output=True, text=True)
+        try:
+            val = (json.loads(r.stdout).get("result") or {}).get("value") or {}
+            info = (val.get("data") or {}).get("parsed", {}).get("info", {})
+            paused = None
+            for e in info.get("extensions") or []:
+                if e.get("extension") == "pausableConfig":
+                    paused = bool((e.get("state") or {}).get("paused"))
+            return paused, info.get("supply"), ""
+        except Exception as e:
+            err = f"rpc error: {e}"
+            time.sleep(3)
+    return None, None, err
+
+
+def run_hourly_redemption(cycle_dt, state, dry_run=False):
+    """One hourly redemption observation (Wave 3 A+B).
+
+    Writes ONE row to redemption_windows (existing table — no schema
+    migration) in its own pipeline call, so a failure here never breaks
+    the deviation cycle. Supply baselines live in state.json (no new
+    table). Returns a gap_note fragment ('' when unremarkable).
+    With dry_run=True nothing is written and the row is printed."""
+    sched = redemption_schedule_status(cycle_dt)
+    paused_list, supply_now, rpc_errors = [], {}, 0
+    for tick, mint in XSTOCKS_MINTS.items():
+        paused, supply, err = solana_mint_info(mint)
+        if err:
+            rpc_errors += 1
+            if rpc_errors >= 3 and not supply_now and not paused_list:
+                break  # RPC looks down; stop hammering, schedule-only row.
+            continue
+        supply_now[tick] = supply
+        if paused:
+            paused_list.append(tick)
+        time.sleep(0.2)
+    onchain_ok = bool(supply_now)
+    status = "paused" if paused_list else sched
+    prev = state.get("last_mint_supply") or {}
+    changed = sorted(t for t, s in supply_now.items()
+                     if t in prev and prev[t] != s)
+    new_baseline = sorted(t for t in supply_now if t not in prev)
+    if not dry_run:
+        state["last_mint_supply"] = supply_now
+    nxt = next_nyse_open_utc(cycle_dt) if status == "closed" else None
+    if status == "paused":
+        note_en = (f"Schedule-derived: {sched}; ON-CHAIN PAUSE on "
+                   f"{', '.join(paused_list)} overrides to paused.")
+        note_id = (f"Dari jadwal: {sched}; JEDA ON-CHAIN pada "
+                   f"{', '.join(paused_list)} mengesampingkan menjadi dijeda.")
+    elif sched == "open":
+        note_en = "Schedule-derived: NYSE business day → open."
+        note_id = "Dari jadwal: hari kerja NYSE → buka."
+    else:
+        note_en = "Schedule-derived: weekend/NYSE holiday → closed."
+        note_id = "Dari jadwal: akhir pekan/hari libur NYSE → tutup."
+    if onchain_ok:
+        note_en += (f" On-chain: {len(paused_list)}/13 mints paused; "
+                    f"supply changes: {', '.join(changed) if changed else 'none'}.")
+        note_id += (f" On-chain: {len(paused_list)}/13 mint dijeda; "
+                    f"perubahan supply: {', '.join(changed) if changed else 'tidak ada'}.")
+    else:
+        note_en += (" On-chain check unavailable this hour (RPC error); "
+                    "pause status unknown.")
+        note_id += (" Pemeriksaan on-chain tidak tersedia jam ini (galat RPC); "
+                    "status jeda tidak diketahui.")
+    cycle_ts = cycle_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    row = ["xStocks", "ALL", status, note_id, note_en, cycle_ts,
+           "xStocks 24/5 schedule + Solana RPC (public)", nxt]
+    if dry_run:
+        print(f"DRY-RUN status={status} sched={sched} "
+              f"paused={paused_list or '-'} rpc_errors={rpc_errors}")
+        print(f"DRY-RUN row={row}")
+        print(f"DRY-RUN supply_changed={changed or '-'} "
+              f"baseline_new={new_baseline or '-'}")
+        return ""
+    try:
+        pipeline([(
+            "INSERT INTO redemption_windows (issuer, asset, status, window_note,"
+            " window_note_en, observed_at, source, next_open_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            row,
+        )])
+    except Exception as e:
+        log(f"HOURLY redemption write FAILED: {e}")
+        return f"hourly redemption write failed: {e}"
+    log(f"HOURLY redemption status={status} sched={sched} "
+        f"paused={paused_list or '-'} rpc_errors={rpc_errors} "
+        f"supply_changed={changed or '-'} baseline_new={new_baseline or '-'}")
+    if paused_list:
+        return f"redemption PAUSED on-chain: {', '.join(paused_list)}"
+    if rpc_errors:
+        return (f"hourly redemption on-chain check partial failure "
+                f"({rpc_errors} mint reads failed)")
+    return ""
 
 
 def in_tight_window(now_utc):
@@ -290,9 +449,17 @@ def run_cycle(cycle_dt):
     last_hourly = state.get("last_hourly_check")
     if (not last_hourly
             or (cycle_dt - datetime.fromisoformat(last_hourly)).total_seconds() >= 55 * 60):
-        gap_bits.append(
-            "hourly: redemption/por automated source not configured "
-            "(documented baseline only; no rows fabricated)")
+        # Wave 3: real hourly redemption observation (schedule + on-chain).
+        # A failure here must never break the deviation cycle, so the
+        # hourly write lives in its own pipeline call inside
+        # run_hourly_redemption; only its gap fragment lands here.
+        # NOTE: PoR still has no automated source (unchanged).
+        try:
+            _frag = run_hourly_redemption(cycle_dt, state)
+            if _frag:
+                gap_bits.append(_frag)
+        except Exception as _e:
+            gap_bits.append(f"hourly redemption failed: {_e}")
         state["last_hourly_check"] = now_iso
     # Equity-close slot: once per NYSE day after 16:30 ET (median-only mode).
     et = cycle_dt.astimezone(ET)
@@ -318,6 +485,12 @@ def run_cycle(cycle_dt):
 
 
 def main():
+    if "--dry-run-hourly" in sys.argv:
+        # Wave 3 verification: compute one hourly redemption observation
+        # (live public-RPC reads) and print it WITHOUT writing anything.
+        now = datetime.now(UTC).replace(second=0, microsecond=0)
+        run_hourly_redemption(now, {}, dry_run=True)
+        return 0
     if "--test-windows" in sys.argv:
         cases = [
             # (UTC iso, expected tight?) — Oct 24 2026 is Saturday.
