@@ -466,3 +466,9 @@ begitu token asli terpasang.
   dari HP. Alasan: memisahkan apakah tepi proxy zona yang menelan
   request vs binding Pages yang rusak. Aman + reversibel (satu
   klik kembali ke Proxied).
+
+## Padding landscape HP 16px (feedback Septian 2026-10-25)
+- Keluhan: padding 20px terasa agak lebar saat landscape; portrait
+  sudah ok. Perbaikan: media query (orientation: landscape) +
+  max-width 950px -> .wrap padding 16px; portrait + desktop tidak
+  tersentuh. Dipilih 16px (dari usulan 15/16 — nilai standar).

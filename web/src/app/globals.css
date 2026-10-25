@@ -230,3 +230,10 @@ section#waitlist { margin-top: 26px; }
   .metrics-3 .metric small { font-size: 11px; letter-spacing: 0.04em; }
   .metrics-3 .metric .v { font-size: 20px; }
 }
+
+/* Phones in landscape: 16px side padding (portrait keeps 20px).
+   Scoped to narrow landscape viewports so desktop monitors are
+   untouched. Feedback Septian 2026-10-25. */
+@media (orientation: landscape) and (max-width: 950px) {
+  .wrap { padding: 16px 16px 40px; }
+}
