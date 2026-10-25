@@ -318,7 +318,10 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                         {t(lang, "risk_partial_n", { n: risk.components_present })}
                       </p>
                     )}
-                    <p className="hint">{t(lang, "risk_method")}</p>
+                    <details className="risk-details">
+                      <summary>{u(lang, "risk_method_toggle")}</summary>
+                      <p className="hint">{t(lang, "risk_method")}</p>
+                    </details>
                   </>
                 )
               )}
@@ -329,7 +332,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
           {detail.redemption_status != null ? (
             <>
               <p>
-                <b>{t(lang, "col_status")}:</b> {redLabel(lang, detail.redemption_status)}{" "}
+                <b>{t(lang, "col_status")}:</b>{" "}
                 <span className={`pill ${redPill(detail.redemption_status)}`}>
                   {redLabel(lang, detail.redemption_status)}
                 </span>
@@ -387,11 +390,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             <p>{t(lang, "por_none")}</p>
           )}
 
-          <h2>
-            {t(lang, "col_change", { window: t(lang, "window_1h") })} ·{" "}
-            {t(lang, "col_change", { window: t(lang, "window_24h") })} ·{" "}
-            {t(lang, "col_change", { window: t(lang, "window_7d") })}
-          </h2>
+          <h2>{u(lang, "change_title")}</h2>
           <div className="metrics">
             <div className="metric">
               <small>{t(lang, "col_change", { window: t(lang, "window_1h") })}</small>

@@ -319,6 +319,30 @@ nav a:hover { color: var(--text); text-decoration: underline; }
    untouched — only spacing and the divider changed. */
 .method-section { margin: 0 0 8px; padding: 30px 0 0; border-top: 1px solid var(--border); }
 .method-section h2 { font-size: 19px; color: var(--accent); margin: 0 0 12px; }
+/* Methodology package 1+2+3: jump-link index, summary callout, threshold table. */
+.method-toc {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin: 16px 0 18px; font-size: 13px;
+}
+.method-toc .toc-label { color: var(--muted); }
+.method-toc a {
+  border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px;
+  color: var(--accent-link); text-decoration: none; background: var(--surface);
+}
+.method-summary {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-left: 4px solid var(--accent); border-radius: 12px;
+  padding: 16px 18px; margin: 0 0 22px;
+}
+.method-summary p { margin: 8px 0 0; line-height: 1.7; }
+.thresh-title { font-size: 19px; color: var(--accent); margin: 0 0 12px; }
+table.thresh th, table.thresh td { padding: 10px 12px; }
+table.thresh th { color: var(--muted); font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+/* Ticker cleanup: risk-method formula lives behind a disclosure so the
+   score block shows score + components + partial note only. */
+.risk-details { margin: 8px 0; }
+.risk-details summary { cursor: pointer; color: var(--accent-link); font-size: 13px; }
+.risk-details p { margin-top: 8px; }
 /* Donate page: address block + QR. The QR box stays white in both themes
    (scanners need the white quiet zone). */
 .donate-addr {
