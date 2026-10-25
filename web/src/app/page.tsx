@@ -660,6 +660,18 @@ export default function Home() {
             </p>
           </div>
 
+          <div className="tg-card">
+            <svg className="tg-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+            <div className="tg-text">
+              <b>{u(lang, "tg_card_title")}</b>
+              <p>{u(lang, "tg_card_note")}</p>
+              <div className="tg-btns">
+                <a className="btn tg-btn" href="https://t.me/exitradar_en" target="_blank" rel="noreferrer">{u(lang, "tg_ch_en")}</a>
+                <a className="btn tg-btn" href="https://t.me/exitradar_in" target="_blank" rel="noreferrer">{u(lang, "tg_ch_id")}</a>
+              </div>
+            </div>
+          </div>
+
           <div className="foot">
             {u(lang, "method_short")}
             <br />
@@ -668,6 +680,8 @@ export default function Home() {
             <a href="https://www.linkedin.com/in/septian-panjaya">
               {t(lang, "linkedin_label")}
             </a>
+            <br />
+            Telegram: <a href="https://t.me/exitradar_en">EN</a> · <a href="https://t.me/exitradar_in">ID</a>
           </div>
         </>
       )}

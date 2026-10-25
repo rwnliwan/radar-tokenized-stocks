@@ -418,6 +418,8 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             {t(lang, "disclaimer")} {t(lang, "footer_note")}
             <br />
             <a href="https://www.linkedin.com/in/septian-panjaya">{t(lang, "linkedin_label")}</a>
+            <br />
+            Telegram: <a href="https://t.me/exitradar_en">EN</a> · <a href="https://t.me/exitradar_in">ID</a>
           </div>
         </>
       )}
