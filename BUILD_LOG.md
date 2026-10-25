@@ -339,3 +339,27 @@ begitu token asli terpasang.
   di HP/laptop: collapse mobile (tool browser tidak bisa resize —
   desktop masih scroll horizontal) + penilaian visual keseluruhan.
   Tahap 3 cutover menunggu ACC terpisah.
+
+## Tahap 3 cutover — dimulai 2026-10-25 (ACC Septian 12:31 WITA)
+
+- Probe Cloudflare: zona omdanny.site (a57727663b674706db051ec75e063da9,
+  active, Free); Worker route radar.omdanny.site/* -> radar-redirect
+  (id a0aee7b77b854abebca611ae860417cc) MASIH aktif; Pages
+  exit-radar belum punya custom domain.
+- Pages custom domain BERHASIL via API: radar.omdanny.site ditambahkan
+  ke proyek exit-radar (id 83993300-e721-43e3-8b7f-d748a2035084,
+  status initializing, verifikasi pending — aktif setelah DNS
+  mengarah ke Pages).
+- BLOKIR API (bukan bug): token custom.cloudflare TIDAK punya scope
+  DNS (GET dns_records -> 10000 Authentication error) -> CNAME
+  radar HANYA bisa diubah Septian via dashboard. Route Worker JUGA
+  TIDAK dihapus induk dulu: menghapus route selagi DNS masih ke
+  radar-redirect akan membuat subdomain tanpa pelayan (break).
+  Urutan aman: (1) Pages domain [SELESAI via API], (2) Septian
+  ubah CNAME radar -> exit-radar.pages.dev (Proxied) di dashboard
+  DNS, (3) Septian hapus route radar.omdanny.site/*,
+  (4) induk verifikasi (Pages 200 + deep link /TSLAx, tanpa 302
+  Streamlit), (5) Septian pindah monitor UptimeRobot.
+- Rollback (bila cutover bermasalah): CNAME kembali ke
+  radar-redirect.rwnliwan.workers.dev + route dihidupkan lagi
+  (keduanya via dashboard); Streamlit tetap live sebagai fallback.
