@@ -26,7 +26,14 @@ Dedup: for non-redemption types, same (ticker, alert_type) is not
 re-sent within a true 24h of a logged alert (any outcome).
 Redemption types instead use once-per-window: suppressed while an
 alert for the same ticker+type exists since the current closed
-window began (see alerted_in_current_window). Redemption dedups per
+window began (see alerted_in_current_window). SINGLE-SNAPSHOT RULE
+(2026-10-26): one pass reads redemption_windows ONCE
+(snapshot_redemption_rows) and shares that snapshot between
+evaluation and dedup. Previously each side queried separately; a
+poller commit landing between the two reads made evaluation see
+'closed' while dedup saw 'no live window', re-firing 13 redemption
+alerts on 2026-10-26 after the window had opened. Never re-query
+redemption status inside the suppression path. Redemption dedups per
 ticker: ('TSLAx', 'redemption') and ('TSLAx', 'redemption_paused')
 are DISTINCT keys, so a recorded closed alert never suppresses a
 paused alert for the same ticker (and vice versa). Paused is HIGH
@@ -556,7 +563,23 @@ def handle_command(text, lang="en"):
 
 
 # --- Live data assembly (reads only; no sends, no writes) ---
-def load_live_tickers():
+def snapshot_redemption_rows():
+    """One redemption_windows snapshot per pass, shared by evaluation
+    and dedup (see SINGLE-SNAPSHOT RULE in the module docstring).
+    Returns {issuer: [rows DESC by observed_at]}. A pass that reads
+    the status twice can split across a poller commit and fire on a
+    window that already ended; a pass that reads once cannot."""
+    snap = {}
+    for r in db_query("SELECT DISTINCT issuer FROM universe"):
+        iss = r["issuer"]
+        snap[iss] = db_query(
+            "SELECT status, window_note, next_open_at, observed_at "
+            "FROM redemption_windows WHERE issuer = ? "
+            "ORDER BY observed_at DESC LIMIT 500", [iss])
+    return snap
+
+
+def load_live_tickers(red_rows_by_issuer=None):
     uni = db_query(
         "SELECT ticker_id, issuer FROM universe ORDER BY tier, ticker_id")
     latest = {}
@@ -572,12 +595,18 @@ def load_live_tickers():
     # one batch: proven 2026-10-25, the first hourly redemption row
     # landed mid-loop, so the first 3 tickers read 'unknown' and missed
     # the first batch while the other 10 read 'closed'.
+    # When the caller passes red_rows_by_issuer, that snapshot is
+    # reused here AND by dedup, so the whole pass agrees on one status
+    # (2026-10-26 race: separate reads straddled a poller commit).
     red_by_issuer = {}
     por_by_issuer = {}
     for iss in {u["issuer"] for u in uni}:
-        red_rows = db_query(
-            "SELECT status, window_note, next_open_at FROM redemption_windows "
-            "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 1", [iss])
+        if red_rows_by_issuer is not None and iss in red_rows_by_issuer:
+            red_rows = red_rows_by_issuer[iss]
+        else:
+            red_rows = db_query(
+                "SELECT status, window_note, next_open_at FROM redemption_windows "
+                "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 1", [iss])
         red_by_issuer[iss] = red_rows[0] if red_rows else None
         por_rows = db_query(
             "SELECT age_hours, last_update_ts FROM por_feeds "
@@ -670,19 +699,25 @@ def window_start_from_rows(rows, statuses):
     return start
 
 
-def alerted_in_current_window(ticker, alert_type, statuses):
+def alerted_in_current_window(ticker, alert_type, statuses, red_rows=None):
     """True iff an alert for (ticker, alert_type) was already logged since
     the current window (of `statuses`) began. False when no such window
-    is live — so the first alert of a new window always fires."""
-    issuer_rows = db_query(
-        "SELECT issuer FROM universe WHERE ticker_id = ? COLLATE NOCASE",
-        [ticker])
-    if not issuer_rows:
-        return False
-    rows = db_query(
-        "SELECT status, observed_at FROM redemption_windows "
-        "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 500",
-        [issuer_rows[0]["issuer"]])
+    is live — so the first alert of a new window always fires.
+    When red_rows (the pass snapshot) is given, the window is computed
+    from it, never re-queried: re-querying here is what let the
+    2026-10-26 pass fire on a window that had already opened."""
+    if red_rows is None:
+        issuer_rows = db_query(
+            "SELECT issuer FROM universe WHERE ticker_id = ? COLLATE NOCASE",
+            [ticker])
+        if not issuer_rows:
+            return False
+        rows = db_query(
+            "SELECT status, observed_at FROM redemption_windows "
+            "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 500",
+            [issuer_rows[0]["issuer"]])
+    else:
+        rows = red_rows
     start = window_start_from_rows(rows, statuses)
     if start is None:
         return False
@@ -693,13 +728,17 @@ def alerted_in_current_window(ticker, alert_type, statuses):
     return bool(hits and int(hits[0]["n"]) > 0)
 
 
-def suppression_reason(alert):
+def suppression_reason(alert, red_rows_by_issuer=None):
     """None when the alert may fire, else a short reason string.
     Redemption types use the once-per-window rule; all other types use
-    the true 24h dedup."""
+    the true 24h dedup. When the pass snapshot is given, dedup uses it
+    (the same rows evaluation used) instead of re-querying."""
     statuses = REDEMPTION_WINDOW_STATUSES.get(alert["type"])
     if statuses is not None:
-        if alerted_in_current_window(alert["ticker"], alert["type"], statuses):
+        rows = None
+        if red_rows_by_issuer is not None:
+            rows = red_rows_by_issuer.get(alert.get("issuer"))
+        if alerted_in_current_window(alert["ticker"], alert["type"], statuses, rows):
             return "same window"
         return None
     if recent_alert_exists(alert["ticker"], alert["type"]):
@@ -807,12 +846,13 @@ def main():
         if age is not None and age > STALE_MINUTES:
             print("STALE GATE: data older than 30 min — no alerts would be sent.")
             return 0
-        tickers = load_live_tickers()
+        red_snapshot = snapshot_redemption_rows()
+        tickers = load_live_tickers(red_snapshot)
         alerts = evaluate_alerts(tickers, is_market_open(now))
         print(f"market open (ET): {is_market_open(now)}")
         print(f"alerts that would fire: {len(alerts)}")
         for a in alerts:
-            reason = suppression_reason(a)
+            reason = suppression_reason(a, red_snapshot)
             print(f"--- {a['type']} {a['ticker']} (suppressed: {reason}) ---")
             if not reason:
                 print(format_alert(a, "en"))
@@ -855,11 +895,12 @@ def main():
             if age is None or age > STALE_MINUTES:
                 print("STALE GATE: skipping alert evaluation (no fresh data).")
                 return 0
-            tickers = load_live_tickers()
+            red_snapshot = snapshot_redemption_rows()
+            tickers = load_live_tickers(red_snapshot)
             channels = alert_channels()
             sent = 0
             for a in evaluate_alerts(tickers, is_market_open(now)):
-                reason = suppression_reason(a)
+                reason = suppression_reason(a, red_snapshot)
                 if reason:
                     print(f"ALERT suppressed ({reason}): "
                           f"{a['type']} {a['ticker']}")
@@ -907,10 +948,11 @@ def main():
                     if age is None or age > STALE_MINUTES:
                         print("STALE GATE: skipping alert evaluation (no fresh data).")
                     else:
-                        tickers = load_live_tickers()
+                        red_snapshot = snapshot_redemption_rows()
+                        tickers = load_live_tickers(red_snapshot)
                         channels = alert_channels()
                         for a in evaluate_alerts(tickers, is_market_open(now)):
-                            reason = suppression_reason(a)
+                            reason = suppression_reason(a, red_snapshot)
                             if reason:
                                 print(f"ALERT suppressed ({reason}): "
                                       f"{a['type']} {a['ticker']}")
