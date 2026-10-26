@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "./Header";
-import { DevBar, StatusBlip } from "./BlipBar";
+import { DevBar, Sparkline, StatusBlip } from "./BlipBar";
 import { fetchLatest, type LatestResponse, type TickerRow } from "../lib/api";
 import { buildCsv } from "../lib/csv";
 import {
@@ -14,7 +14,6 @@ import {
   fmtWITA,
   redLabel,
   redPill,
-  sparkBlocks,
   statusLabel,
 } from "../lib/format";
 import { t, u, type Lang } from "../lib/i18n";
@@ -157,19 +156,10 @@ export default function Home() {
         : verdict === "caution"
           ? u(lang, "verdict_caution")
           : u(lang, "verdict_danger");
+  /* vNext port (ACC 26 Okt): the three driver facts move from the
+     sub-line into labelled cards below (same values, same sources).
+     Only the coverage line stays in .sub. */
   const verdictFacts: string[] = [];
-  if (worst)
-    verdictFacts.push(
-      `${u(lang, "verdict_dev_worst")}: ${worst.ticker} ${fmtSigned1(worst.dev_bps)} bps`,
-    );
-  if (worstSpread)
-    verdictFacts.push(
-      `${u(lang, "verdict_spread_worst")}: ${worstSpread.ticker} ${worstSpread.spread_pct?.toFixed(2)}%`,
-    );
-  if (minDepth)
-    verdictFacts.push(
-      `${u(lang, "verdict_depth_min")}: ${minDepth.ticker} ${fmtDepth(minDepth.depth_usd)}`,
-    );
   /* Coverage honesty (QA 25 Okt): the verdict skips tickers without a
      deviation, so say so in the card itself, counted live. */
   if (data)
@@ -382,6 +372,28 @@ export default function Home() {
               <div className="lbl">{u(lang, "verdict_label")}</div>
               <div className={`vtext ${verdict ?? ""}`}>{verdictText}</div>
               <div className="worst">{worst ? fmtSigned1(worst.dev_bps) + " bps" : "—"}</div>
+              <div className="verdict-cards">
+                <div className="verdict-card">
+                  <div className="k">{u(lang, "verdict_dev_worst")}</div>
+                  <div className="v">
+                    {worst ? `${worst.ticker} ${fmtSigned1(worst.dev_bps)} bps` : "—"}
+                  </div>
+                </div>
+                <div className="verdict-card">
+                  <div className="k">{u(lang, "verdict_spread_worst")}</div>
+                  <div className="v">
+                    {worstSpread
+                      ? `${worstSpread.ticker} ${worstSpread.spread_pct?.toFixed(2)}%`
+                      : "—"}
+                  </div>
+                </div>
+                <div className="verdict-card">
+                  <div className="k">{u(lang, "verdict_depth_min")}</div>
+                  <div className="v">
+                    {minDepth ? `${minDepth.ticker} ${fmtDepth(minDepth.depth_usd)}` : "—"}
+                  </div>
+                </div>
+              </div>
               <div className="sub">
                 {verdictFacts.length ? verdictFacts.join(" · ") : t(lang, "no_data")}
               </div>
@@ -556,7 +568,9 @@ export default function Home() {
                       >
                         {fmtSigned1(r.change_1h_bps)}
                       </td>
-                      <td className="spark hide-s">{sparkBlocks(r.spark_bps)}</td>
+                      <td className="spark hide-s">
+                        <Sparkline series={r.spark_bps} status={r.status} />
+                      </td>
                       <td>
                         <Link className="detailbtn" href={`/ticker/${r.ticker}`}>
                           {t(lang, "detail_link")} →
@@ -584,7 +598,9 @@ export default function Home() {
                 </div>
                 <div className="mid">
                   <span className="num">{fmtUsd(r.dw_price)}</span>
-                  <span className="spark">{sparkBlocks(r.spark_bps)}</span>
+                  <span className="spark">
+                    <Sparkline series={r.spark_bps} status={r.status} />
+                  </span>
                   <span className="num">
                     <b>{fmtSigned1(r.dev_bps)} bps</b>
                   </span>

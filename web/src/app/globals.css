@@ -141,6 +141,15 @@ nav .soon { color: var(--muted); }
 .verdict .worst { font-size: 38px; font-weight: 700; color: var(--red); margin: 8px 0 4px; }
 .verdict .sub { color: var(--muted); font-size: 13px; line-height: 1.55; }
 .verdict .rule { color: var(--muted); font-size: 12px; margin-top: 10px; }
+/* vNext port (ACC 26 Okt): verdict driver facts as 3 labelled cards
+   (same values as the old sub-line) + SVG trend sparklines. */
+.verdict-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0 4px; }
+.verdict-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; text-align: left; min-width: 0; }
+.verdict-card .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; overflow-wrap: anywhere; }
+.verdict-card .v { margin-top: 4px; font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.spark svg { display: block; }
+.spark-empty { color: var(--muted); }
+.rc .spark svg { width: 64px; height: auto; }
 .cover {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
   padding: 12px 16px; font-size: 14px; color: var(--text2); line-height: 1.55;
@@ -500,6 +509,11 @@ h2.sec::before {
   .verdict-hero .vtext { font-size: 26px; }
   /* The worst-deviation number must not outgrow the verdict on phones. */
   .verdict-hero .worst { font-size: 20px; }
+  /* vNext port: narrower cards on phones so long labels/values stay
+     inside their card even at 320px widths. */
+  .verdict-card { padding: 8px 10px; }
+  .verdict-card .k { font-size: 10px; }
+  .verdict-card .v { font-size: 13px; }
 }
 /* Middle widths (portrait tablets, landscape phones, 521-820px): the
    desktop hero does not fit a narrow column — the 300px scope gets
