@@ -494,7 +494,7 @@ def fmt_next_open(nxt, lang="en"):
 
 def format_alert(alert, lang="en"):
     s = BOT_STR.get(lang, BOT_STR["en"])
-    link = f"{TICKER_PAGE_BASE}/{alert['ticker']}"
+    link = f"{TICKER_PAGE_BASE}/ticker/{alert['ticker']}"
     if alert["type"] == "spread":
         head = s["spread_head"].format(ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
         body = s["spread_body"].format(
