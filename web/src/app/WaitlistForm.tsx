@@ -8,13 +8,23 @@ import { t, u, type Lang } from "../lib/i18n";
 // Position buckets verbatim from dashboard/i18n.py SIZE_BUCKETS.
 const SIZE_BUCKETS = ["<$100", "$100–$1,000", "$1,000–$10,000", ">$10,000"];
 
+// Contact must be reachable: an email address, or a Telegram username
+// (5–32 chars, letters/digits/underscore, optional leading @). Mirrors
+// the waitlist Worker's server-side check; the server check is the one
+// that keeps garbage out of the table.
+function validContact(c: string): boolean {
+  if (c.startsWith("@")) return /^[A-Za-z0-9_]{5,32}$/.test(c.slice(1));
+  if (c.includes("@")) return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c);
+  return /^[A-Za-z0-9_]{5,32}$/.test(c);
+}
+
 export default function WaitlistForm({ lang }: { lang: Lang }) {
   const [contact, setContact] = useState("");
   const [position, setPosition] = useState(SIZE_BUCKETS[1]);
   const [venues, setVenues] = useState("");
   const [price, setPrice] = useState("");
   const [consent, setConsent] = useState(false);
-  const [state, setState] = useState<"idle" | "sending" | "done" | "error" | "saveError">("idle");
+  const [state, setState] = useState<"idle" | "sending" | "done" | "error" | "formatError" | "already" | "saveError">("idle");
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,12 +44,18 @@ export default function WaitlistForm({ lang }: { lang: Lang }) {
       setState("error");
       return;
     }
+    if (!validContact(c)) {
+      setState("formatError");
+      return;
+    }
     setState("sending");
     try {
-      await postWaitlist({ contact: c, position, venues: v, price: price.trim() || undefined, consent: true });
-      setState("done");
-    } catch {
-      setState("saveError");
+      const res = await postWaitlist({ contact: c, position, venues: v, price: price.trim() || undefined, consent: true });
+      setState(res.already ? "already" : "done");
+    } catch (err) {
+      // The Worker rejects malformed contacts with "invalid contact";
+      // surface that as the format message, not a generic save error.
+      setState(err instanceof Error && err.message === "invalid contact" ? "formatError" : "saveError");
     }
   };
 
@@ -47,6 +63,15 @@ export default function WaitlistForm({ lang }: { lang: Lang }) {
     return (
       <div role="status">
         <p>{t(lang, "f_success")}</p>
+        <p className="hint">{t(lang, "f_success_detail")}</p>
+      </div>
+    );
+  }
+
+  if (state === "already") {
+    return (
+      <div role="status">
+        <p>{t(lang, "f_already")}</p>
         <p className="hint">{t(lang, "f_success_detail")}</p>
       </div>
     );
@@ -108,6 +133,11 @@ export default function WaitlistForm({ lang }: { lang: Lang }) {
       {state === "error" && (
         <p className="formerror" role="alert">
           {t(lang, "f_error")}
+        </p>
+      )}
+      {state === "formatError" && (
+        <p className="formerror" role="alert">
+          {t(lang, "f_error_format")}
         </p>
       )}
       {state === "saveError" && (

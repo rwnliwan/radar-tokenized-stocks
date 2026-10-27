@@ -186,6 +186,9 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                 {detail.dev_bps != null ? `${fmtSigned1(detail.dev_bps)} bps` : ""}{" "}
                 <span className={`pill ${detail.status}`}>{statusLabel(lang, detail.status)}</span>
               </div>
+              {detail.dev_pct == null && (
+                <div className="s">{t(lang, "detail_no_median")}</div>
+              )}
             </div>
             <div className="metric">
               <small>{t(lang, "dev_close")}</small>
@@ -223,6 +226,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
               points={history}
               lang={lang}
               label={`${detail.ticker} ${t(lang, "chart_title")}`}
+              hourly={window !== "1h"}
             />
           ) : (
             <p className="hint">{t(lang, "no_data")}</p>

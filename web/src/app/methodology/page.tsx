@@ -209,6 +209,7 @@ const HIST_TYPE_KEYS: Record<string, string> = {
   spread: "hist_type_spread",
   deviation_high: "hist_type_deviation",
   redemption: "hist_type_redemption",
+  redemption_batch: "hist_type_redemption",
   redemption_paused: "hist_type_redemption_paused",
   por: "hist_type_por",
 };

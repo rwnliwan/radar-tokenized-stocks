@@ -19,10 +19,12 @@ export default function HistoryChart({
   points,
   lang,
   label,
+  hourly,
 }: {
   points: HistoryPoint[];
   lang: Lang;
   label: string;
+  hourly?: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
 
@@ -133,7 +135,7 @@ export default function HistoryChart({
       <div className="hchart-tip" aria-live="off">
         {hp
           ? `${fmtWITA(hp.ts, lang)} · ${hp.v >= 0 ? "+" : ""}${hp.v.toFixed(1)} bps`
-          : `${u(lang, "chart_last")} ${pts[pts.length - 1].v >= 0 ? "+" : ""}${pts[pts.length - 1].v.toFixed(1)} bps`}
+          : `${u(lang, hourly ? "chart_last_hourly" : "chart_last")} ${pts[pts.length - 1].v >= 0 ? "+" : ""}${pts[pts.length - 1].v.toFixed(1)} bps`}
       </div>
     </div>
   );

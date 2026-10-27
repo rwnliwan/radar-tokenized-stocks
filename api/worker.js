@@ -385,7 +385,16 @@ async function handleWaitlist(request, env) {
   const position = typeof body.position === "string" ? body.position.trim() : "";
   const venues = typeof body.venues === "string" ? body.venues.trim() : "";
   const price = typeof body.price === "string" ? body.price.trim() : "";
-  // Mirror the Streamlit validation (required contact/position/venues +
+  // Contact must be reachable: an email address, or a Telegram username
+  // (5–32 chars, letters/digits/underscore, optional leading @). Mirrors
+  // the waitlist form's client-side check; the server check is the one
+  // that keeps garbage out of the table.
+  function validContact(c) {
+    if (c.startsWith("@")) return /^[A-Za-z0-9_]{5,32}$/.test(c.slice(1));
+    if (c.includes("@")) return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c);
+    return /^[A-Za-z0-9_]{5,32}$/.test(c);
+  }
+  // Mirror the form validation (required contact/position/venues +
   // consent) plus length caps so one submission cannot bloat the table.
   if (
     !contact ||
@@ -398,6 +407,9 @@ async function handleWaitlist(request, env) {
     body.consent !== true
   ) {
     return json({ error: "validation failed" }, 400);
+  }
+  if (!validContact(contact)) {
+    return json({ error: "invalid contact" }, 400);
   }
   const norm = contact.toLowerCase();
   const nowIso = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
