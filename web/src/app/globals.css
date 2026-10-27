@@ -467,10 +467,14 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 22px 0; }
   padding: 28px 32px; margin: 18px 0 10px;
 }
 .verdict-hero .scope-bg {
-  position: absolute; right: -40px; top: 50%; transform: translateY(-50%);
+  /* Parked top-right (2026-10-27): the old vertically-centered 240px
+     scope crossed the disclaimer line and the third verdict card on
+     desktop. The top-right corner is empty (headline/worst lines are
+     left-aligned and shorter), so a 160px scope there crosses nothing. */
+  position: absolute; right: 16px; top: 16px; transform: none;
   opacity: .5; pointer-events: none;
 }
-.verdict-hero .scope-bg svg { display: block; }
+.verdict-hero .scope-bg svg { display: block; width: 160px; height: 160px; }
 .verdict-hero .verdict { position: relative; }
 .verdict-hero .lbl { display: flex; align-items: center; gap: 8px; }
 .verdict-hero .lbl::before {
