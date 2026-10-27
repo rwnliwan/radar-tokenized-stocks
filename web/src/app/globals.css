@@ -138,7 +138,8 @@ nav .soon { color: var(--muted); }
 .verdict .vtext.safe { color: var(--green); }
 .verdict .vtext.caution { color: var(--orange); }
 .verdict .vtext.danger { color: var(--red); }
-.verdict .worst { font-size: 38px; font-weight: 700; color: var(--red); margin: 8px 0 4px; }
+.verdict .worst { font-size: 38px; font-weight: 700; color: var(--text); margin: 8px 0 4px; }
+.verdict .vcount { font-size: 0.5em; font-weight: 700; }
 .verdict .sub { color: var(--muted); font-size: 13px; line-height: 1.55; }
 .verdict .rule { color: var(--muted); font-size: 12px; margin-top: 10px; }
 /* vNext port (ACC 26 Okt): verdict driver facts as 3 labelled cards
@@ -192,6 +193,9 @@ h2 { font-size: 17px; margin: 22px 0 10px; }
   overflow: auto; border: 1px solid var(--border); border-radius: 12px;
   max-height: 75vh;
 }
+/* Home table grows to full height (no nested vertical scroll): the page
+   scrolls instead, so the last row is never hidden inside the table. */
+.tblwrap.home-tbl { max-height: none; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--surface); }
 thead th {
   position: sticky; top: 0; z-index: 1; background: var(--surface);

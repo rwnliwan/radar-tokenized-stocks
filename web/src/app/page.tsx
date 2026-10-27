@@ -21,7 +21,7 @@ import { t, u, type Lang } from "../lib/i18n";
 const STALE_MIN = 15;
 const POLL_MS = 60000;
 
-type SortKey = "dev" | "depth" | "name" | "price" | "change";
+type SortKey = "dev" | "depth" | "name" | "price";
 
 export default function Home() {
   const [lang, setLang] = useState<Lang>("en");
@@ -91,7 +91,6 @@ export default function Home() {
       depth: (r) => (r.depth_usd ?? -1),
       name: (r) => 0,
       price: (r) => (r.dw_price ?? -1),
-      change: (r) => (r.change_1h_bps ?? -99999),
     };
     return [...list].sort((a, b) => {
       if (sortKey === "name") {
@@ -156,18 +155,10 @@ export default function Home() {
         : verdict === "caution"
           ? u(lang, "verdict_caution")
           : u(lang, "verdict_danger");
-  /* vNext port (ACC 26 Okt): the three driver facts move from the
-     sub-line into labelled cards below (same values, same sources).
-     Only the coverage line stays in .sub. */
-  const verdictFacts: string[] = [];
   /* Coverage honesty (QA 25 Okt): the verdict skips tickers without a
-     deviation, so say so in the card itself, counted live. */
-  if (data)
-    verdictFacts.push(
-      u(lang, "verdict_coverage")
-        .replace("{n}", String(data.tickers.filter((r) => r.dev_bps != null).length))
-        .replace("{total}", String(data.tickers.length)),
-    );
+     deviation, so the headline itself carries the counted coverage. */
+  const covN = data ? data.tickers.filter((r) => r.dev_bps != null).length : 0;
+  const covTotal = data ? data.tickers.length : 0;
   const blips = useMemo(() => {
     const list = (data?.tickers ?? [])
       .filter((r) => r.dev_bps != null)
@@ -370,8 +361,22 @@ export default function Home() {
             </div>
             <div className="verdict">
               <div className="lbl">{u(lang, "verdict_label")}</div>
-              <div className={`vtext ${verdict ?? ""}`}>{verdictText}</div>
-              <div className="worst">{worst ? fmtSigned1(worst.dev_bps) + " bps" : "—"}</div>
+              <div className={`vtext ${verdict ?? ""}`}>
+                {verdictText}
+                {verdict != null && (
+                  <span className="vcount">
+                    {" "}
+                    {u(lang, "verdict_headline_count")
+                      .replace("{n}", String(covN))
+                      .replace("{total}", String(covTotal))}
+                  </span>
+                )}
+              </div>
+              <div className="worst">
+                {worst
+                  ? `${u(lang, "verdict_dev_worst")}: ${worst.ticker} ${fmtSigned1(worst.dev_bps)} bps`
+                  : "—"}
+              </div>
               <div className="verdict-cards">
                 <div className="verdict-card">
                   <div className="k">{u(lang, "verdict_dev_worst")}</div>
@@ -393,9 +398,6 @@ export default function Home() {
                     {minDepth ? `${minDepth.ticker} ${fmtDepth(minDepth.depth_usd)}` : "—"}
                   </div>
                 </div>
-              </div>
-              <div className="sub">
-                {verdictFacts.length ? verdictFacts.join(" · ") : t(lang, "no_data")}
               </div>
               <div className="rule">{u(lang, "verdict_rule")}</div>
             </div>
@@ -504,16 +506,9 @@ export default function Home() {
                   {sortHead("dev", t(lang, "col_dev_bps"))}
                   <th className="hide-s">{t(lang, "col_spread")}</th>
                   {sortHead("depth", t(lang, "col_depth10k"))}
-                  <th className="hide-m">{t(lang, "col_depth_bar")}</th>
                   <th className="hide-s">{t(lang, "redemption_title")}</th>
                   <th className="hide-s">{t(lang, "por_age_label")}</th>
                   <th>{t(lang, "col_status")}</th>
-                  {sortHead(
-                    "change",
-                    t(lang, "col_change", { window: t(lang, "window_1h") }),
-                    "hide-s",
-                  )}
-                  <th className="hide-s">{t(lang, "col_spark")}</th>
                   <th>{t(lang, "detail_link")}</th>
                 </tr>
               </thead>
@@ -538,9 +533,9 @@ export default function Home() {
                         <DevBar devBps={r.dev_bps} status={r.status} />
                       </td>
                       <td className="num hide-s">{fmtPct(r.spread_pct)}</td>
-                      <td className="num hide-s">{fmtDepth(r.depth_usd)}</td>
-                      <td className="hide-m">
-                        <div className="dbar">
+                      <td className="num">
+                        <div>{fmtDepth(r.depth_usd)}</div>
+                        <div className="dbar" style={{ marginLeft: "auto", marginTop: "4px" }}>
                           <i
                             style={{
                               width: `${maxDepth > 0 ? ((r.depth_usd ?? 0) / maxDepth) * 100 : 0}%`,
@@ -562,14 +557,6 @@ export default function Home() {
                         <span className={`pill ${r.status}`}>
                           {statusLabel(lang, r.status)}
                         </span>
-                      </td>
-                      <td
-                        className={`num hide-s ${r.change_1h_bps != null && r.change_1h_bps < 0 ? "neg" : r.change_1h_bps != null && r.change_1h_bps > 0 ? "pos" : ""}`}
-                      >
-                        {fmtSigned1(r.change_1h_bps)}
-                      </td>
-                      <td className="spark hide-s">
-                        <Sparkline series={r.spark_bps} status={r.status} />
                       </td>
                       <td>
                         <Link className="detailbtn" href={`/ticker/${r.ticker}`}>
