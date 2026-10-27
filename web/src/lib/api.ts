@@ -146,6 +146,8 @@ export type WaitlistPayload = {
   venues: string;
   price?: string;
   consent: true;
+  /** Honeypot: always "" from the real form; a filled value is a bot. */
+  website?: string;
 };
 
 export type WaitlistResult = { ok: true; already: boolean };

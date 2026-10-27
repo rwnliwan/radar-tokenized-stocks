@@ -30,6 +30,11 @@ export default function WaitlistForm({ lang }: { lang: Lang }) {
     e.preventDefault();
     const c = contact.trim();
     const v = venues.trim();
+    // Honeypot: a hidden field no human ever sees (see the form below).
+    // Read it straight from the DOM so bots that autofill it get caught.
+    const hp =
+      (e.currentTarget as HTMLFormElement).elements.namedItem("website") as HTMLInputElement | null;
+    const hpValue = hp?.value || "";
     // Mirror the server validation (required + consent + length caps).
     if (
       !c ||
@@ -50,7 +55,7 @@ export default function WaitlistForm({ lang }: { lang: Lang }) {
     }
     setState("sending");
     try {
-      const res = await postWaitlist({ contact: c, position, venues: v, price: price.trim() || undefined, consent: true });
+      const res = await postWaitlist({ contact: c, position, venues: v, price: price.trim() || undefined, consent: true, website: hpValue });
       setState(res.already ? "already" : "done");
     } catch (err) {
       // The Worker rejects malformed contacts with "invalid contact";
@@ -79,6 +84,17 @@ export default function WaitlistForm({ lang }: { lang: Lang }) {
 
   return (
     <form className="form" onSubmit={submit} noValidate>
+      {/* Honeypot: hidden from humans (display:none + aria-hidden +
+          unfocusable). A bot that fills it gets a generic 400. */}
+      <div aria-hidden="true" style={{ display: "none" }}>
+        <input
+          type="text"
+          name="website"
+          tabIndex={-1}
+          autoComplete="off"
+          defaultValue=""
+        />
+      </div>
       <div className="field">
         <label htmlFor="wl-contact">{t(lang, "f_contact")}</label>
         <input

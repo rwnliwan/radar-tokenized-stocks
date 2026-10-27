@@ -372,6 +372,13 @@ async function loadTicker(env, ticker) {
 
 const WAITLIST_HOURLY_CAP = 500;
 
+// Origins allowed to POST /api/waitlist from a browser. GET routes stay
+// Access-Control-Allow-Origin: * (the data is intentionally public).
+const WAITLIST_ORIGINS = [
+  "https://radar.omdanny.site",
+  "https://exit-radar.pages.dev",
+];
+
 async function handleWaitlist(request, env) {
   let body;
   try {
@@ -381,10 +388,22 @@ async function handleWaitlist(request, env) {
   } catch {
     return json({ error: "invalid JSON" }, 400);
   }
+  // Reject cross-site browser POSTs outright: CORS alone would only hide
+  // the response while the row still got inserted. No-Origin requests
+  // (curl, non-browser) still pass — CORS cannot tell them apart, and
+  // the zone rate limit is the abuse backstop for those.
+  const origin = request.headers.get("Origin") || "";
+  if (origin && !WAITLIST_ORIGINS.includes(origin)) {
+    return json({ error: "forbidden origin" }, 403);
+  }
   const contact = typeof body.contact === "string" ? body.contact.trim() : "";
   const position = typeof body.position === "string" ? body.position.trim() : "";
   const venues = typeof body.venues === "string" ? body.venues.trim() : "";
   const price = typeof body.price === "string" ? body.price.trim() : "";
+  // Honeypot: the form renders an empty hidden "website" field no human
+  // ever sees. A filled value means an autofill bot — reject generically
+  // (never name the honeypot in the error).
+  const website = typeof body.website === "string" ? body.website.trim() : "";
   // Contact must be reachable: an email address, or a Telegram username
   // (5–32 chars, letters/digits/underscore, optional leading @). Mirrors
   // the waitlist form's client-side check; the server check is the one
@@ -397,6 +416,7 @@ async function handleWaitlist(request, env) {
   // Mirror the form validation (required contact/position/venues +
   // consent) plus length caps so one submission cannot bloat the table.
   if (
+    website !== "" ||
     !contact ||
     contact.length > 200 ||
     !position ||
@@ -482,14 +502,20 @@ export default {
       // 204 must have a NULL body: new Response with a body + status 204
       // throws (this was error 1101 on every preflight, which broke the
       // waitlist POST from browsers). CORS headers still required.
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
-        },
-      });
+      // Preflight: echo back ONLY an allowlisted waitlist origin. CORS
+      // alone never stops a cross-site POST from executing (it only hides
+      // the response), so handleWaitlist also rejects non-allowlisted
+      // browser Origins outright; this just stops the browser earlier.
+      const origin = request.headers.get("Origin") || "";
+      const headers = {
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        Vary: "Origin",
+      };
+      if (WAITLIST_ORIGINS.includes(origin)) {
+        headers["Access-Control-Allow-Origin"] = origin;
+      }
+      return new Response(null, { status: 204, headers });
     }
     try {
       if (url.pathname === "/api/latest") {
