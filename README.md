@@ -1,7 +1,7 @@
 # Radar Tokenized Stocks
 
-A public radar for **tokenized stocks**: price deviation versus the underlying
-share and across venues, liquidity per venue, redemption-window status,
+A public radar for **tokenized stocks**: price deviation across venues
+(versus the cross-venue median), liquidity per venue, redemption-window status,
 proof-of-reserve freshness, and exit-ability — in one place, for holders and
 DeFi users who cannot simply "just avoid" weekend and off-hours exposure.
 
@@ -13,20 +13,26 @@ DeFi users who cannot simply "just avoid" weekend and off-hours exposure.
 
 > Not financial advice. Prices are market data, not recommendations.
 
-## Live status (honest, as of 24 October 2026)
+## Live status (honest, as of 27 October 2026)
 
 - **Poller: live.** 5-minute polling, 24/7 — 13 xStocks tickers, 35 pools
   (Solana), snapshots + deviations + heartbeat written to Turso.
-- **Dashboard: ready to deploy** (Streamlit app in `dashboard/`).
-- **Telegram bot: waiting on its token** — the bot code is here (`bot.py`,
-  dry-run and live-evaluation modes work without a token); live sending
-  starts once the bot token is configured.
+- **Dashboard: live.** Next.js web at https://radar.omdanny.site
+  (Cloudflare Pages + radar-api Worker); the Streamlit app in `dashboard/`
+  is the earlier trial version, kept as history.
+- **Telegram bot: live.** @TokenizedRadarBot sending to two channels
+  (EN + ID); redemption and spread alerts verified live, with the current
+  alert format and 2-second pacing between messages.
 - **Deviation basis: cross-venue median only.** Deviation versus the equity
   close is intentionally `NULL` until a public-display data licence is
-  secured — no licensed price is shown without one.
-- **Redemption / proof-of-reserve automation: pending.** What is not yet
-  observed from a verified automatic source is shown as unknown, never
-  fabricated.
+  secured — no licensed price is shown without one. Funded path, in order:
+  donation/grant → Marketstack Basic (written display verification first)
+  → Tiingo Display; if no funding arrives, the column stays pending.
+- **Redemption / proof-of-reserve automation: live.** Redemption windows
+  are polled hourly and alerted; PoR freshness (v1) and per-token
+  shares-held / circulating-supply (v2) are fetched hourly per symbol from
+  the xStocks public API. What is not yet observed from a verified
+  automatic source is shown as unknown, never fabricated.
 
 ## Coverage
 
@@ -47,7 +53,11 @@ Solana. Candidates that failed, with reasons, are listed in
   deviations, redemption_windows, por_feeds, alert_log, poller_health,
   waitlist).
 - `seed_universe.py` — seeds the verified universe + pools.
-- `dashboard/` — Streamlit dashboard (ticker pages, heatmap, waitlist form).
+- `dashboard/` — Streamlit dashboard, the earlier trial version
+  (ticker pages, heatmap, waitlist form), kept as history.
+- `web/` — Next.js dashboard, the live site (radar.omdanny.site).
+- `api/` — Cloudflare Worker (radar-api) + deploy script, serving
+  /api/latest, /api/history, /api/ticker, /api/alerts, /api/waitlist.
 - `bot.py` — Telegram bot (alerts, language choice, donation info).
 
 ## Run it
