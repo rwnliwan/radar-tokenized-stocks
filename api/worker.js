@@ -476,7 +476,7 @@ function json(data, status = 200) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === "OPTIONS") {
       // 204 must have a NULL body: new Response with a body + status 204
@@ -493,6 +493,28 @@ export default {
     }
     try {
       if (url.pathname === "/api/latest") {
+        // Edge cache (60s, GET only): the poller refreshes the underlying
+        // data every 5 minutes, so a 60s-old snapshot is not meaningfully
+        // staler — and repeat loads skip the full Turso pipeline, which
+        // cost 1.3-1.9s per request (2026-10-27 baseline). X-Edge-Cache
+        // marks HIT/MISS for verification. Other routes stay uncached.
+        if (request.method === "GET") {
+          const cache = caches.default;
+          const cached = await cache.match(request);
+          if (cached) {
+            const hit = new Response(cached.body, cached);
+            hit.headers.set("X-Edge-Cache", "HIT");
+            return hit;
+          }
+          const fresh = json(await loadLatest(env));
+          const toCache = new Response(fresh.body, fresh);
+          toCache.headers.set("Cache-Control", "public, max-age=60");
+          toCache.headers.set("X-Edge-Cache", "MISS");
+          const put = cache.put(request, toCache.clone());
+          if (ctx && ctx.waitUntil) ctx.waitUntil(put);
+          else await put;
+          return toCache;
+        }
         return json(await loadLatest(env));
       }
       if (url.pathname === "/api/history") {
