@@ -229,8 +229,10 @@ tbody tr:hover td { background: var(--hover-row); }
 .dbar { width: 90px; height: 8px; background: var(--dbar-bg); border-radius: 4px; overflow: hidden; }
 .dbar i { display: block; height: 100%; background: var(--dbar-fill); }
 .pill { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; }
-.pill.closed, .pill.gated { background: var(--border); color: var(--text2); }
-.pill.open { background: var(--green-bg); color: var(--green); }
+/* Schedule-derived redemption states share one muted treatment: only
+   data-confirmed states (ok/watch/alert) and on-chain-confirmed paused
+   keep solid colors. */
+.pill.closed, .pill.gated, .pill.open { background: var(--border); color: var(--text2); }
 .pill.ok { background: var(--green-bg); color: var(--green); }
 .pill.watch { background: var(--orange-bg); color: var(--orange); }
 .pill.alert { background: var(--red-bg); color: var(--red); }

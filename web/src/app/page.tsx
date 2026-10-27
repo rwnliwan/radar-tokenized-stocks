@@ -7,6 +7,7 @@ import { DevBar, Sparkline, StatusBlip } from "./BlipBar";
 import { fetchLatest, type LatestResponse, type TickerRow } from "../lib/api";
 import { buildCsv } from "../lib/csv";
 import {
+  fmtAge,
   fmtDepth,
   fmtPct,
   fmtSigned1,
@@ -412,8 +413,11 @@ export default function Home() {
             </span>
             <span>
               {t(lang, "kpi_por")}:{" "}
-              <b>{porMaxAge != null ? `${Math.round(porMaxAge)}h` : "—"}</b>{" "}
-              {porMaxAge != null ? u(lang, "por_stale_sub") : t(lang, "kpi_por_sub")}
+              <b>{porMaxAge != null ? fmtAge(porMaxAge) : "—"}</b>{" "}
+              {porMaxAge != null
+                ? /* Fresh/stale boundary = bot PoR alert threshold (72h). */
+                  `${porMaxAge > 72 ? u(lang, "por_age_stale") : u(lang, "por_age_fresh")} ${u(lang, "por_stale_sub")}`
+                : t(lang, "kpi_por_sub")}
             </span>
             <span>
               {t(lang, "kpi_redemption")}: <b>{redLabel(lang, redStatus)}</b>{" "}
@@ -528,11 +532,20 @@ export default function Home() {
                       </td>
                       <td className="hide-s">{r.tier ?? "—"}</td>
                       <td className="num">{fmtUsd(r.dw_price)}</td>
-                      <td className="num dev" style={tint}>
+                      <td
+                        className="num dev"
+                        style={tint}
+                        title={r.dev_bps == null ? t(lang, "dash_no_median") : undefined}
+                      >
                         {fmtSigned1(r.dev_bps)}
                         <DevBar devBps={r.dev_bps} status={r.status} />
                       </td>
-                      <td className="num hide-s">{fmtPct(r.spread_pct)}</td>
+                      <td
+                        className="num hide-s"
+                        title={r.spread_pct == null ? t(lang, "dash_no_median") : undefined}
+                      >
+                        {fmtPct(r.spread_pct)}
+                      </td>
                       <td className="num">
                         <div>{fmtDepth(r.depth_usd)}</div>
                         <div className="dbar" style={{ marginLeft: "auto", marginTop: "4px" }}>
@@ -550,10 +563,10 @@ export default function Home() {
                       </td>
                       <td className="dim hide-s">
                         {r.por_age_hours != null
-                          ? `${Math.round(r.por_age_hours)}h`
+                          ? fmtAge(r.por_age_hours)
                           : t(lang, "por_not_published")}
                       </td>
-                      <td>
+                      <td title={r.status === "na" ? t(lang, "dash_no_median") : undefined}>
                         <span className={`pill ${r.status}`}>
                           {statusLabel(lang, r.status)}
                         </span>

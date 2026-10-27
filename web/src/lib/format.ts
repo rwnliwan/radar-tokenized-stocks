@@ -51,6 +51,13 @@ export function fmtPct(n: number | null | undefined): string {
   return `${n.toFixed(2)}%`;
 }
 
+/** PoR age: minutes below one hour (rows would otherwise all read 0h,
+ *  since the hourly poller fetches every token in one slot), hours above. */
+export function fmtAge(hours: number): string {
+  if (hours < 1) return `${Math.round(hours * 60)}m`;
+  return `${Math.round(hours)}h`;
+}
+
 export function sparkBlocks(series: number[]): string {
   if (series.length < 2) return "—";
   const lo = Math.min(...series);
