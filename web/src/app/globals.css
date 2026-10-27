@@ -421,8 +421,12 @@ table.thresh td.num { text-align: left; }
   width: fit-content; max-width: 100%;
 }
 /* Address width = its characters + 3 spaces of breathing room before the
-   Copy button (Septian's spec); no more flex stretch. */
-.donate-addr .num { flex: none; padding-right: 3ch; overflow-wrap: anywhere; font-size: 14px; }
+   Copy button (Septian's spec); no more flex stretch. The address MUST
+   be allowed to shrink: flex:none + min-width:auto made the unbroken
+   44-char string overflow the card on narrow screens (measured 413px
+   page width at 390px viewport) even with overflow-wrap:anywhere, because
+   the item itself never shrank so its content never needed to wrap. */
+.donate-addr .num { flex: 1 1 auto; min-width: 0; padding-right: 3ch; overflow-wrap: anywhere; font-size: 14px; }
 .donate-addr .refresh { margin-left: 0; }
 .qrbox { display: inline-block; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 6px 0 12px; }
 .qrbox img { display: block; }
