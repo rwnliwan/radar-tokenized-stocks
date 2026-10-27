@@ -41,9 +41,19 @@ export function fmtDepth(n: number | null | undefined): string {
   return `$${Math.round(n)}`;
 }
 
+/** Signed fixed-point without negative zero: a tiny negative that rounds
+ *  to zero renders "+0.0", not "-0.0" (AAPLx showed "-0.0" bps). Only the
+ *  negative-zero string changes; every other value keeps toFixed rounding. */
+export function fmtSigned(n: number, digits: number): string {
+  const s = n.toFixed(digits);
+  const zero = "0." + "0".repeat(digits);
+  if (s === "-" + zero) return "+" + zero;
+  return `${n >= 0 ? "+" : ""}${s}`;
+}
+
 export function fmtSigned1(n: number | null | undefined): string {
   if (n == null) return "—";
-  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}`;
+  return fmtSigned(n, 1);
 }
 
 export function fmtPct(n: number | null | undefined): string {

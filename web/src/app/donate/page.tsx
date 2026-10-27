@@ -13,6 +13,7 @@ const PAY_URL = `solana:${ADDR}?label=EXIT%20RADAR`;
 export default function DonatePage() {
   const [lang, setLang] = useState<Lang>("en");
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   useEffect(() => {
     try {
@@ -33,12 +34,25 @@ export default function DonatePage() {
   };
 
   const copyAddr = async () => {
+    setCopyFailed(false);
     try {
       await navigator.clipboard.writeText(ADDR);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      /* clipboard unavailable: the address stays selectable as text */
+      /* Clipboard unavailable: select the address text so the user can
+         copy it manually, and say so — silently doing nothing was the
+         "no visible confirmation" report. Never claim Copied! here: the
+         copy genuinely did not happen. */
+      const el = document.querySelector(".donate-addr .num");
+      if (el) {
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+      setCopyFailed(true);
     }
   };
 
@@ -54,6 +68,9 @@ export default function DonatePage() {
           {copied ? u(lang, "copied_label") : u(lang, "copy_label")}
         </button>
       </div>
+      {copyFailed && (
+        <p className="hint" role="status">{u(lang, "copy_failed_note")}</p>
+      )}
       <div className="qrbox">
         <img src="/donate-qr.png" alt={u(lang, "donate_qr_alt")} width={220} height={220} />
       </div>

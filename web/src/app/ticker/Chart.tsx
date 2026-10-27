@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { fmtWITA } from "../../lib/format";
+import { fmtSigned1, fmtWITA } from "../../lib/format";
 import { u, type Lang } from "../../lib/i18n";
 import type { HistoryPoint } from "../../lib/api";
 
@@ -134,8 +134,8 @@ export default function HistoryChart({
       </svg>
       <div className="hchart-tip" aria-live="off">
         {hp
-          ? `${fmtWITA(hp.ts, lang)} · ${hp.v >= 0 ? "+" : ""}${hp.v.toFixed(1)} bps`
-          : `${u(lang, hourly ? "chart_last_hourly" : "chart_last")} ${pts[pts.length - 1].v >= 0 ? "+" : ""}${pts[pts.length - 1].v.toFixed(1)} bps`}
+          ? `${fmtWITA(hp.ts, lang)} · ${fmtSigned1(hp.v)} bps`
+          : `${u(lang, hourly ? "chart_last_hourly" : "chart_last")} ${fmtSigned1(pts[pts.length - 1].v)} bps`}
       </div>
     </div>
   );

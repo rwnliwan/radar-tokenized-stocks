@@ -13,6 +13,7 @@ import {
 import {
   fmtDepth,
   fmtPct,
+  fmtSigned,
   fmtSigned1,
   fmtUsd,
   fmtWITA,
@@ -180,7 +181,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             <div className="metric">
               <small>{t(lang, "dev_median")}</small>
               <div className="v">
-                {detail.dev_pct != null ? `${detail.dev_pct >= 0 ? "+" : ""}${detail.dev_pct.toFixed(3)}%` : "—"}
+                {detail.dev_pct != null ? `${fmtSigned(detail.dev_pct, 3)}%` : "—"}
               </div>
               <div className="s">
                 {detail.dev_bps != null ? `${fmtSigned1(detail.dev_bps)} bps` : ""}{" "}
