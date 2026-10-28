@@ -289,6 +289,8 @@ tr.detail-row td { white-space: normal; background: var(--surface2); }
   color: var(--muted); font-size: 13px; line-height: 1.6;
   border-top: 1px solid var(--border); margin-top: 26px; padding-top: 14px;
 }
+/* Footer links must meet the 24px minimum touch-target size. */
+.foot a { display: inline-block; padding: 4px 2px; }
 
 @media (max-width: 760px) {
   .kpis { grid-template-columns: 1fr 1fr; }
@@ -368,8 +370,8 @@ nav a:hover { color: var(--text); text-decoration: underline; }
 .tg-icon { flex: none; width: 32px; height: 32px; fill: #229ED9; margin-top: 2px; }
 .tg-text p { margin: 6px 0 12px; color: var(--text2); line-height: 1.6; }
 .tg-btns { display: flex; flex-wrap: wrap; gap: 10px; }
-.tg-btn { background: #229ED9; text-decoration: none; }
-.tg-btn:hover { filter: brightness(1.12); }
+.tg-btn { background: #1577a0; text-decoration: none; }
+.tg-btn:hover { background: #0f6f9f; }
 .formerror { color: var(--error-text); font-size: 14px; margin: 0; }
 
 .method-intro { font-size: 16px; line-height: 1.65; color: var(--text); }

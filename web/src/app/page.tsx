@@ -572,7 +572,7 @@ export default function Home() {
                         </span>
                       </td>
                       <td>
-                        <Link className="detailbtn" href={`/ticker/${r.ticker}`}>
+                        <Link className="detailbtn" href={`/ticker/${r.ticker}`} aria-label={`${t(lang, "detail_link")} ${r.ticker}`}>
                           {t(lang, "detail_link")} →
                         </Link>
                       </td>
@@ -609,7 +609,7 @@ export default function Home() {
                   <span className="dim">
                     {t(lang, "col_depth10k")}: {fmtDepth(r.depth_usd)}
                   </span>
-                  <Link className="detailbtn" href={`/ticker/${r.ticker}`}>
+                  <Link className="detailbtn" href={`/ticker/${r.ticker}`} aria-label={`${t(lang, "detail_link")} ${r.ticker}`}>
                     {t(lang, "detail_link")} →
                   </Link>
                 </div>

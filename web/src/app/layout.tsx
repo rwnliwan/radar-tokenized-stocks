@@ -28,8 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${mono.variable}`}>
       <body>
+        <link rel="preconnect" href="https://api.omdanny.site" crossOrigin="anonymous" />
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-        {children}
+        <main>{children}</main>
       </body>
     </html>
   );
