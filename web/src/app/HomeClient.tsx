@@ -1,4 +1,5 @@
-/* SSR initial data (ACC 28 Okt 2026): server page passes the latest snapshot as initialData; client polling (60s) keeps it fresh afterwards. */
+/* SSR initial data (ACC 28 Okt 2026): server page passes the latest snapshot as initialData; client polling (60s) keeps it fresh afterwards.
+   Perf fix 28 Okt 2026 (ACC Septian): mount refetch skipped when initialData exists — see the polling effect below. */
 "use client";
 
 import Link from "next/link";
@@ -64,7 +65,12 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
       if (cancelled) return;
       await load();
     };
-    run();
+    // Perf fix 2026-10-28 (ACC Septian): skip the mount refetch when SSR
+    // initialData exists — the server-rendered verdict stays until the 60s
+    // poll refreshes it, so the verdict is no longer replaced on mount
+    // (the 2.36s element render delay in the 28 Oct PSI). When SSR had
+    // no data, the mount fetch still runs as the fallback.
+    if (initialData == null) run();
     const id = setInterval(run, POLL_MS);
     const tickId = setInterval(() => setTick((x) => x + 1), 30000);
     return () => {
@@ -72,7 +78,7 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
       clearInterval(id);
       clearInterval(tickId);
     };
-  }, [load]);
+  }, [load, initialData]);
 
   const toggleLang = (l: Lang) => {
     setLang(l);
