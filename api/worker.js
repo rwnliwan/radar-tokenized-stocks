@@ -111,15 +111,13 @@ async function loadLatest(env) {
     [
       // 2026-10-30 read-burn fix: the old correlated MAX(ts) subquery made
       // SQLite scan `snapshots` once per row (~207K reads/run in Top Queries).
-      // WITH latest forces one grouped index pass over (pool_id, ts), then
-      // 35 point lookups -> ~100 reads total. Same result rows as before.
-      "WITH latest AS (SELECT pool_id, MAX(ts) AS mts FROM snapshots " +
-        "WHERE pool_id IN (SELECT pool_id FROM pools WHERE is_active = 1) " +
-        "GROUP BY pool_id) " +
-        "SELECT p.ticker_id, p.dex, s.price_usd, s.reserve_usd " +
-        "FROM pools p JOIN latest l ON l.pool_id = p.pool_id " +
-        "JOIN snapshots s ON s.pool_id = l.pool_id AND s.ts = l.mts " +
-        "WHERE p.is_active = 1 ORDER BY s.reserve_usd DESC",
+      // Global MAX(ts) + point lookup via idx_snapshots_ts -> ~106 reads.
+      // Poller writes all pools in one batch ts (verified 35/35 at MAX(ts)).
+      // Byte-identical to per-pool MAX version.
+      "SELECT p.ticker_id, p.dex, s.price_usd, s.reserve_usd " +
+        "FROM pools p JOIN snapshots s ON s.pool_id = p.pool_id " +
+        "WHERE p.is_active = 1 AND s.ts = (SELECT MAX(ts) FROM snapshots) " +
+        "ORDER BY s.reserve_usd DESC",
     ],
     [
       "SELECT (SELECT COUNT(*) FROM pools WHERE is_active = 1) AS total, " +
