@@ -13,6 +13,9 @@ export const metadata: Metadata = {
   title: "EXIT RADAR — Tokenized-stock deviation & redemption radar",
   description:
     "Deviation & redemption radar for tokenized stocks — free, public, human-checked methodology.",
+  authors: [
+    { name: "Septian Panjaya", url: "https://www.linkedin.com/in/septian-panjaya" },
+  ],
 };
 
 export const viewport: Viewport = {
