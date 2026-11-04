@@ -207,6 +207,29 @@ async function loadLatest(env) {
   };
 }
 
+async function loadHealthMeta(env) {
+  // 2026-11-04 read-burn fix: /api/health (dipoll UptimeRobot tiap ~5 mnt)
+  // dulu memanggil loadLatest() penuh (~40K reads: scan 1 jam deviations
+  // 39K baris index). Health cuma butuh sinyal freshness -> satu pipeline
+  // murah (~200 reads). Bentuk JSON response TIDAK berubah.
+  const [r] = await pipeline(env, [
+    [
+      "SELECT (SELECT MAX(ts) FROM snapshots) AS latest_ts, " +
+        "(SELECT COUNT(*) FROM pools WHERE is_active = 1) AS total, " +
+        "(SELECT COUNT(DISTINCT pool_id) FROM snapshots " +
+        "WHERE ts = (SELECT MAX(ts) FROM snapshots)) AS live, " +
+        "(SELECT cycle_ts FROM poller_health ORDER BY id DESC LIMIT 1) AS plc",
+    ],
+  ]);
+  const row = rowsOf(r)[0] || {};
+  return {
+    latest_ts: row.latest_ts || null,
+    venues_live: row.live != null ? Number(row.live) : 0,
+    venues_total: row.total != null ? Number(row.total) : 0,
+    poller_last_cycle: row.plc || null,
+  };
+}
+
 async function loadHistory(env, ticker, window) {
   const hours = window === "7d" ? 168 : window === "24h" ? 24 : 1;
   let sql;
@@ -574,7 +597,7 @@ export default {
         return json(await loadAlerts(env));
       }
       if (url.pathname === "/api/health") {
-        const { meta } = await loadLatest(env);
+        const meta = await loadHealthMeta(env);
         const ageMin = meta.latest_ts
           ? (Date.now() - Date.parse(meta.latest_ts)) / 60000
           : null;
