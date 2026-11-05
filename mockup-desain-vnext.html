@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EXIT RADAR — Desain vNext (DRAFT, not live)</title>
+<style>
+  /* ============ TOKENS: dark default, light via [data-theme="light"] ============ */
+  :root, [data-theme="dark"] {
+    --bg: #070b12; --surface: #0e1524; --surface2: #111c30; --border: #1e293b;
+    --text: #e8edf5; --text2: #c3ccd9; --muted: #8a93a6;
+    --accent: #fbbf24; --accent-ink: #fbbf24;
+    --green: #34d399; --green-bg: rgba(52,211,153,.14);
+    --red: #f87171; --red-bg: rgba(248,113,113,.14);
+    --amber: #fbbf24; --amber-bg: rgba(251,191,36,.14);
+    --hover: #16203a; --bar-track: #1e293b;
+  }
+  [data-theme="light"] {
+    --bg: #f3f5f8; --surface: #ffffff; --surface2: #eef1f5; --border: #d9dee6;
+    --text: #0f172a; --text2: #334155; --muted: #64748b;
+    --accent: #b45309; --accent-ink: #92400e;
+    --green: #047857; --green-bg: #d1fae5;
+    --red: #dc2626; --red-bg: #fee2e2;
+    --amber: #b45309; --amber-bg: #fef3c7;
+    --hover: #f1f5f9; --bar-track: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* ALL numbers monospace: JetBrains Mono first in stack when installed,
+     system mono otherwise. No webfont is fetched: this file has zero
+     external dependencies. */
+  .num {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 18px 16px 48px; }
+
+  /* ============ DRAFT RIBBON (mockup scaffolding, not part of the site) ============ */
+  .draft {
+    border: 1px solid var(--accent); border-left: 6px solid var(--accent);
+    border-radius: 10px; padding: 10px 14px; margin: 0 0 20px;
+    background: var(--surface2); font-size: 13px; line-height: 1.5; color: var(--text2);
+  }
+  .draft b { color: var(--accent-ink); }
+  .live-note { display: none; border: 1px solid var(--amber); border-radius: 10px;
+    padding: 10px 14px; margin: 0 0 20px; background: var(--amber-bg);
+    font-size: 13px; line-height: 1.5; color: var(--text); }
+  body.fallback .live-note { display: block; }
+  body.fallback .live-note b { color: var(--amber); }
+
+  /* ============ HEADER ============ */
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+  .logo { display: inline-flex; align-items: center; gap: 10px;
+    font-size: 20px; font-weight: 800; letter-spacing: .12em; color: var(--text);
+    text-decoration: none; margin-right: auto; }
+  .logo b { color: var(--accent-ink); }
+  .logo svg { flex: none; }
+  .nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  .nav a { color: var(--text2); text-decoration: none; font-size: 13.5px; font-weight: 600;
+    padding: 7px 11px; border-radius: 8px; }
+  .nav a:hover { background: var(--hover); color: var(--text); }
+  .nav a.on { background: var(--surface2); color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--border); }
+  .theme-btn { border: 1px solid var(--border); background: var(--surface);
+    color: var(--text); border-radius: 8px; padding: 7px 11px; font-size: 13px;
+    font-weight: 600; cursor: pointer; }
+  .theme-btn:hover { background: var(--hover); }
+
+  /* ============ HERO VERDICT ============ */
+  .hero { display: grid; grid-template-columns: 1fr 168px; gap: 20px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 22px 22px 18px; margin-top: 20px; }
+  .eyebrow { font-size: 11.5px; letter-spacing: .14em; color: var(--muted);
+    font-weight: 700; text-transform: uppercase; margin: 0 0 8px; }
+  .verdict { font-size: 46px; line-height: 1.02; font-weight: 850;
+    letter-spacing: -.01em; margin: 0; }
+  .verdict.green { color: var(--green); }
+  .verdict.amber { color: var(--amber); }
+  .verdict.red { color: var(--red); }
+  .coverage { color: var(--muted); font-size: 13.5px; margin: 10px 0 0; }
+  .coverage b { color: var(--text2); }
+  .live-badge { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px;
+    color: var(--text2); margin-top: 12px; }
+  .live-badge i { width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+    flex: none; }
+  .scope-box { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .scope-box svg { width: 168px; height: 168px; }
+  .scope-legend { font-size: 11px; color: var(--muted); text-align: center; line-height: 1.5; }
+  .scope-legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+    vertical-align: -1px; margin: 0 2px 0 8px; }
+  /* Why-strip: the three binding facts behind the verdict (auditable at a glance) */
+  .why { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 18px; }
+  .why .cell { background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px; min-width: 0; }
+  .why .lbl { font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; margin-bottom: 5px; }
+  .why .val { font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .why .val small { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .why .thr { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .legend { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 14px 2px 0; }
+
+  /* ============ SECTION HEADS ============ */
+  h2.sec { font-size: 15px; letter-spacing: .06em; text-transform: uppercase;
+    margin: 30px 0 12px; display: flex; align-items: baseline; gap: 10px; }
+  h2.sec span { font-size: 12.5px; letter-spacing: 0; text-transform: none;
+    color: var(--muted); font-weight: 500; }
+
+  /* ============ TICKER TABLE (grid rows; no horizontal scroll anywhere) ============ */
+  .tbl { background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    overflow: hidden; }
+  .trow { display: grid; grid-template-columns: 104px 1.5fr 84px 100px 112px 84px;
+    gap: 10px; align-items: center; padding: 10px 16px;
+    border-bottom: 1px solid var(--border); min-width: 0; }
+  .trow:last-child { border-bottom: 0; }
+  .trow:hover { background: var(--hover); }
+  .thead { background: var(--surface2); font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--muted); font-weight: 700; }
+  .thead:hover { background: var(--surface2); }
+  .thead .num, .thead .r { font-family: inherit; }
+  .r { text-align: right; }
+  .tick { font-weight: 800; font-size: 15px; white-space: nowrap; }
+  .tick .tier { font-size: 10px; font-weight: 700; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 5px; padding: 1px 4px; margin-left: 5px; }
+  .dev { font-size: 15px; font-weight: 700; }
+  .dev .na, .spr .na { color: var(--muted); font-weight: 600; }
+  .dev.pos { color: var(--red); } .dev.neg { color: var(--green); }
+  .dev.na { color: var(--muted); }
+  .bar { height: 4px; max-width: 180px; background: var(--bar-track); border-radius: 2px;
+    margin-top: 5px; position: relative; overflow: hidden; }
+  .bar i { display: block; height: 100%; border-radius: 2px; background: var(--green); }
+  .bar i.watch { background: var(--amber); } .bar i.alert { background: var(--red); }
+  .bar .tick100 { position: absolute; top: -1px; bottom: -1px; width: 1px;
+    background: var(--muted); opacity: .7; }
+  .spr, .dep { font-size: 14px; font-weight: 600; color: var(--text2); }
+  .pill { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .05em;
+    padding: 4px 9px; border-radius: 999px; text-align: center; white-space: nowrap; }
+  .pill.ok { color: var(--green); background: var(--green-bg); }
+  .pill.watch { color: var(--amber); background: var(--amber-bg); }
+  .pill.alert { color: var(--red); background: var(--red-bg); }
+  .pill.na { color: var(--muted); background: var(--surface2); }
+  .cl { display: none; }
+
+  /* ============ REDEMPTION + PoR ============ */
+  .redcard { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 20px 22px; }
+  .red-top { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .red-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .red-status .big { font-size: 20px; font-weight: 800; }
+  .red-next { font-size: 14px; color: var(--text2); margin-top: 6px; }
+  .red-next b { color: var(--text); }
+  .timeline { position: relative; margin: 26px 8px 4px; height: 2px; background: var(--border); }
+  .timeline .dot { position: absolute; top: -4px; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--accent); }
+  .timeline .dot.now { left: 0; background: var(--muted); }
+  .timeline .dot.next { right: 0; }
+  .timeline .lbl { position: absolute; top: 12px; font-size: 11.5px; color: var(--muted);
+    white-space: nowrap; transform: translateX(-50%); }
+  .timeline .lbl.first { left: 0; transform: none; }
+  .timeline .lbl.last { right: 0; transform: none; }
+  .red-note { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 34px 0 0; }
+  .por { display: flex; gap: 10px 24px; flex-wrap: wrap; align-items: baseline;
+    border-top: 1px solid var(--border); margin-top: 16px; padding-top: 14px;
+    font-size: 13.5px; color: var(--text2); }
+  .por b { color: var(--text); }
+  .por .fresh { color: var(--green); font-weight: 700; }
+  .por .stale { color: var(--red); font-weight: 700; }
+
+  /* ============ ALERT HISTORY ============ */
+  .alerts { background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; overflow: hidden; }
+  .arow { display: grid; grid-template-columns: 150px 90px 1fr 70px; gap: 10px;
+    padding: 9px 16px; border-bottom: 1px solid var(--border); font-size: 13.5px;
+    color: var(--text2); }
+  .arow:last-child { border-bottom: 0; }
+  .arow .t { color: var(--muted); }
+  .arow .tk { font-weight: 700; color: var(--text); }
+  .alerts-note { font-size: 12.5px; color: var(--muted); margin: 10px 2px 0; }
+
+  /* ============ FOOTER ============ */
+  footer { border-top: 1px solid var(--border); margin-top: 34px; padding-top: 16px;
+    font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+  footer a { color: var(--muted); }
+
+  /* ============ MOBILE (portrait-first reflow; zero horizontal overflow) ============ */
+  @media (max-width: 719px) {
+    .wrap { padding: 14px 12px 40px; }
+    .logo { font-size: 17px; }
+    .nav a { padding: 6px 8px; font-size: 12.5px; }
+    .hero { grid-template-columns: 1fr 104px; padding: 18px 16px 14px; gap: 12px; }
+    .verdict { font-size: 30px; }
+    .scope-box svg { width: 104px; height: 104px; }
+    .scope-legend { font-size: 10px; line-height: 1.5; }
+    .why { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .why .cell { padding: 10px 9px; }
+    .why .val { font-size: 13px; white-space: normal; line-height: 1.3; }
+    .why .lbl { font-size: 10px; }
+    .thead { display: none; }
+    .trow { grid-template-columns: 1fr 1fr 1fr 1fr;
+      grid-template-areas: "tick tick tick status" "dev trend spr dep";
+      padding: 12px 14px; gap: 8px 10px; }
+    .tick { grid-area: tick; } .stc { grid-area: status; text-align: right; }
+    .devc { grid-area: dev; } .trc { grid-area: trend; }
+    .spr { grid-area: spr; } .dep { grid-area: dep; }
+    .cl { display: block; font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
+      color: var(--muted); font-weight: 700; margin-bottom: 3px; }
+    .spr, .dep { font-size: 13px; }
+    .dev { font-size: 14px; }
+    .red-top { grid-template-columns: 1fr; }
+    .arow { grid-template-columns: 118px 64px 1fr 44px; font-size: 12.5px; padding: 9px 14px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="draft"><b>DRAFT — kandidat desain vNext.</b> Bukan situs live. Data dibaca langsung dari
+    <span class="num">radar-api</span> (sama seperti situs live); bila API tidak terjangkau, tampil
+    <b>Data ilustratif</b> dengan spanduk peringatan. Toggle tema di kanan atas; tema terang
+    dirancang setara dengan tema gelap.</div>
+  <div class="live-note"><b>Data ilustratif</b> — API radar tidak terjangkau dari perangkat ini,
+    jadi angka di bawah adalah contoh (bukan data live). Buka lagi saat koneksi normal untuk data live.</div>
+
+  <header>
+    <a class="logo" href="https://radar.omdanny.site/">
+      <svg width="26" height="26" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="44" fill="none" stroke="#fbbf24" stroke-width="6"/><circle cx="50" cy="50" r="26" fill="none" stroke="#fbbf24" stroke-width="4" opacity=".6"/><circle cx="50" cy="50" r="7" fill="#fbbf24"/><line x1="50" y1="6" x2="50" y2="20" stroke="#fbbf24" stroke-width="4"/><line x1="50" y1="80" x2="50" y2="94" stroke="#fbbf24" stroke-width="4"/><line x1="6" y1="50" x2="20" y2="50" stroke="#fbbf24" stroke-width="4"/><line x1="80" y1="50" x2="94" y2="50" stroke="#fbbf24" stroke-width="4"/></svg>
+      EXIT&nbsp;<b>RADAR</b>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a class="on" href="https://radar.omdanny.site/">Home</a>
+      <a href="https://radar.omdanny.site/ticker">Ticker</a>
+      <a href="https://radar.omdanny.site/methodology">Methodology</a>
+      <a href="https://radar.omdanny.site/waitlist">Waitlist</a>
+      <a href="https://radar.omdanny.site/donate">Donate</a>
+    </nav>
+    <button class="theme-btn" id="themeBtn" type="button">☀ Tema terang</button>
+  </header>
+
+  <section class="hero" aria-label="DEX verdict">
+    <div>
+      <p class="eyebrow">DEX verdict — composite · deviation + depth + spread</p>
+      <h1 class="verdict green" id="verdictWord">WITHIN THRESHOLDS</h1>
+      <p class="coverage" id="coverage">Deviation available for — of 13 tickers</p>
+      <p class="live-badge"><i></i><span id="liveBadge">Loading live data…</span></p>
+    </div>
+    <div class="scope-box">
+      <svg id="scopeSvg" viewBox="0 0 160 160" aria-hidden="true"></svg>
+      <div class="scope-legend">Blip = ticker status:
+        <span class="dot" style="background:var(--green)"></span>OK
+        <span class="dot" style="background:var(--amber)"></span>Watch
+        <span class="dot" style="background:var(--red)"></span>Alert
+        <span class="dot" style="background:var(--muted)"></span>n/a
+      </div>
+    </div>
+    <div class="why" style="grid-column: 1 / -1;">
+      <div class="cell"><div class="lbl">Worst deviation</div>
+        <div class="val num" id="whyDev">—</div>
+        <div class="thr">vs cross-venue median</div></div>
+      <div class="cell"><div class="lbl">Worst spread</div>
+        <div class="val num" id="whySpr">—</div>
+        <div class="thr">across venues, same ticker</div></div>
+      <div class="cell"><div class="lbl">Thinnest depth</div>
+        <div class="val num" id="whyDep">—</div>
+        <div class="thr">deepest pool, qualifying only</div></div>
+    </div>
+  </section>
+  <p class="legend">Thresholds, unchanged from live: <b>Watch &gt; 50 bps · Alert &gt; 100 bps</b> ·
+    spread <b>≥ 1%</b> or depth <b>&lt; $250K</b> also triggers Caution · Deviation is vs the
+    cross-venue median · The vs-close column stays pending until a display licence is verified.</p>
+
+  <h2 class="sec">Tickers <span>13 tokenized stocks · xStocks · deviation vs median · pools ≥ $100K only</span></h2>
+  <div class="tbl" id="tbl" role="table" aria-label="Ticker deviations">
+    <div class="trow thead" role="row">
+      <div role="columnheader">Ticker</div>
+      <div role="columnheader">Dev vs median</div>
+      <div role="columnheader">Trend</div>
+      <div class="r" role="columnheader">Spread</div>
+      <div class="r" role="columnheader">Depth</div>
+      <div class="r" role="columnheader">Status</div>
+    </div>
+    <div id="rows"></div>
+  </div>
+
+  <h2 class="sec">Redemption <span>program-wide · same for all 13 tickers</span></h2>
+  <section class="redcard" aria-label="Redemption">
+    <div class="red-top">
+      <div>
+        <div class="red-status"><span class="big" id="redStatus">—</span><span id="redPill"></span></div>
+        <div class="red-next" id="redNext">—</div>
+      </div>
+      <div>
+        <div class="timeline" aria-hidden="true">
+          <span class="dot now"></span><span class="dot next"></span>
+          <span class="lbl first">Now</span><span class="lbl last" id="tlNext">Next open</span>
+        </div>
+      </div>
+    </div>
+    <p class="red-note" id="redNote">Redemption status is schedule-derived from the NYSE calendar
+      (conservative) and cross-checked on-chain: the program is program-wide, not per ticker.</p>
+    <div class="por">
+      <span>Proof of reserves: <b id="porAge">—</b> <span id="porState"></span></span>
+      <span>Stale above 72 h</span>
+      <span>Source: xStocks public API, polled hourly</span>
+      <span>Per-ticker shares held vs supply on the ticker page</span>
+    </div>
+  </section>
+
+  <h2 class="sec">Recent alerts <span>latest 6 of the last 30</span></h2>
+  <div class="alerts" id="alerts" role="table" aria-label="Recent alerts"></div>
+  <p class="alerts-note" id="alertsNote"></p>
+
+  <footer>
+    Sources: DEX pools via DexScreener (xStocks, Solana) · Redemption schedule: NYSE calendar +
+    on-chain Token-2022 pause state · PoR: xStocks public API.
+    Deviation = depth-weighted price vs cross-venue median, pools ≥ $100K only.
+    Free tier, permanently — dashboard, bot, and weekly report.
+    <a href="https://radar.omdanny.site/methodology">Full methodology</a> ·
+    <a href="https://t.me/exitradar_en">Telegram EN</a> ·
+    <a href="https://t.me/exitradar_in">Telegram ID</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var API = "https://radar-api.rwnliwan.workers.dev";
+
+  /* ---------- theme: ?theme= wins, then localStorage, default dark ---------- */
+  var themeBtn = document.getElementById("themeBtn");
+  function applyTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("er-theme", t); } catch (e) {}
+    themeBtn.textContent = (t === "dark") ? "☀ Light theme" : "☾ Dark theme";
+  }
+  var param = new URLSearchParams(location.search).get("theme");
+  var stored = null;
+  try { stored = localStorage.getItem("er-theme"); } catch (e) {}
+  applyTheme(param === "light" || param === "dark" ? param : (stored || "dark"));
+  themeBtn.addEventListener("click", function () {
+    var cur = document.documentElement.getAttribute("data-theme");
+    applyTheme(cur === "dark" ? "light" : "dark");
+  });
+
+  /* ---------- formatters (spread_pct is ALREADY a percent: never x100) ---------- */
+  var witaDT = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Makassar",
+    day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+  function fmtWITA(iso) { try { return witaDT.format(new Date(iso)) + " WITA"; } catch (e) { return "—"; } }
+  function fmtDay(iso) { try {
+    return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Makassar",
+      weekday: "short", day: "numeric", month: "short", hour: "2-digit",
+      minute: "2-digit", hour12: false }).format(new Date(iso)) + " WITA";
+  } catch (e) { return "—"; } }
+  function fmtBps(v) {
+    if (v === null || v === undefined) return "n/a";
+    return (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1);
+  }
+  function fmtSpr(v) { return (v === null || v === undefined) ? "n/a" : v.toFixed(2) + "%"; }
+  function fmtDepth(v) {
+    if (v === null || v === undefined) return "n/a";
+    if (v >= 1e6) return "$" + (v / 1e6).toFixed(2) + "M";
+    if (v >= 1e3) return "$" + (v / 1e3).toFixed(1) + "K";
+    return "$" + Math.round(v);
+  }
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+
+  /* ---------- fallback: clearly-example numbers, used ONLY when API fails ---------- */
+  function fallbackData() {
+    function t(ticker, tier, dev, spr, dep, pools, spark) {
+      return { ticker: ticker, tier: tier, issuer: "xStocks", dw_price: 100,
+        dev_bps: dev, spread_pct: spr, depth_usd: dep, pools_used: String(pools),
+        redemption_status: "closed", redemption_next_open: "2026-10-26T04:00:00Z",
+        redemption_note_en: "Schedule-derived: weekend/NYSE holiday → closed. On-chain: 0/13 mints paused.",
+        por_age_hours: 0.4, spark_bps: spark || [],
+        status: dev === null ? "na" : (Math.abs(dev) > 100 ? "alert" : (Math.abs(dev) > 50 ? "watch" : "ok")) };
+    }
+    return { tickers: [
+      t("COINx", "1", null, null, 1363666, 1), t("CRCLx", "1", -8.6, 0.23, 6047058, 3, [-1, -8, 11, 0, 1, 1, 4, 3, 4, 2, -2, -8.6]),
+      t("GLDx", "1", -2.9, 0.44, 1241327, 4, [1, 4, 2, -1, -8, -8, -10, 2, -8, -9, -4, -2.9]),
+      t("GOOGLx", "1", null, null, 1261207, 1), t("HOODx", "1", null, null, 1238238, 1),
+      t("METAx", "1", null, null, 851527, 1), t("MSTRx", "1", 0.3, 0.06, 1764313, 2, [1, 0, -1, 1, 1, 1, 0, -1, 0, 0, 0, 0.3]),
+      t("NVDAx", "1", 0.9, 0.28, 4181990, 6, [0, -1, 4, 7, 7, 5, -1, 4, -1, 4, -1, 0.9]),
+      t("QQQx", "1", -3.3, 0.08, 2370013, 2, [-10, -9, 0, -6, -5, -6, -3, 3, -2, -7, 4, -3.3]),
+      t("SPYx", "1", -23.0, 0.98, 4625258, 5, [-9, 2, -4, -4, -2, 1, 16, 12, 3, 0, -30, -23.0]),
+      t("TSLAx", "1", -4.8, 0.27, 3023153, 4, [8, -1, 5, 9, 6, 9, 7, 8, 1, 1, -2, -4.8]),
+      t("AAPLx", "2", 0.1, 0.03, 540225, 2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0.1]),
+      t("MSFTx", "2", -0.1, 0.02, 786348, 2, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -0.1])
+    ], meta: { latest_ts: null, venues_live: 35, venues_total: 35 } };
+  }
+
+  /* ---------- verdict: composite, thresholds UNCHANGED from live ---------- */
+  function verdictOf(ts) {
+    var withDev = ts.filter(function (x) { return x.dev_bps !== null && x.dev_bps !== undefined; });
+    var worstDev = null, worstSpr = null, thin = null;
+    withDev.forEach(function (x) {
+      if (!worstDev || Math.abs(x.dev_bps) > Math.abs(worstDev.dev_bps)) worstDev = x;
+    });
+    ts.forEach(function (x) {
+      if (x.spread_pct !== null && x.spread_pct !== undefined &&
+          (!worstSpr || x.spread_pct > worstSpr.spread_pct)) worstSpr = x;
+      if (x.depth_usd !== null && x.depth_usd !== undefined &&
+          (!thin || x.depth_usd < thin.depth_usd)) thin = x;
+    });
+    var v = "WITHIN THRESHOLDS", cls = "green";
+    if (worstDev && Math.abs(worstDev.dev_bps) >= 100) { v = "HOLD"; cls = "red"; }
+    else if ((worstDev && Math.abs(worstDev.dev_bps) >= 50) ||
+             (worstSpr && worstSpr.spread_pct >= 1) ||
+             (thin && thin.depth_usd < 250000)) { v = "CAUTION"; cls = "amber"; }
+    return { word: v, cls: cls, worstDev: worstDev, worstSpr: worstSpr, thin: thin,
+             coverage: withDev.length + " of " + ts.length };
+  }
+
+  function sparkSVG(points, status) {
+    if (!points || points.length < 2) return '<span style="color:var(--muted)">—</span>';
+    var w = 72, h = 22, min = Math.min.apply(null, points), max = Math.max.apply(null, points);
+    var span = (max - min) || 1;
+    var pts = points.map(function (v, i) {
+      var x = (i / (points.length - 1)) * w;
+      var y = h - 3 - ((v - min) / span) * (h - 6);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    }).join(" ");
+    var color = status === "alert" ? "var(--red)" : status === "watch" ? "var(--amber)" :
+                status === "na" ? "var(--muted)" : "var(--green)";
+    var last = pts.split(" ").pop().split(",");
+    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" aria-hidden="true">' +
+      '<polyline points="' + pts + '" fill="none" stroke="' + color + '" stroke-width="1.5" stroke-linejoin="round"/>' +
+      '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2.5" fill="' + color + '"/></svg>';
+  }
+
+  function scopeSVG(ts) {
+    var cx = 80, cy = 80, r = 54, out = "";
+    [28, 52, 76].forEach(function (rad) {
+      out += '<circle cx="' + cx + '" cy="' + cy + '" r="' + rad + '" fill="none" stroke="var(--muted)" stroke-opacity=".35" stroke-width="1"/>';
+    });
+    out += '<line x1="' + cx + '" y1="4" x2="' + cx + '" y2="156" stroke="var(--muted)" stroke-opacity=".3" stroke-width="1"/>' +
+           '<line x1="4" y1="' + cy + '" x2="156" y2="' + cy + '" stroke="var(--muted)" stroke-opacity=".3" stroke-width="1"/>';
+    ts.forEach(function (x, i) {
+      var a = (-90 + i * (360 / ts.length)) * Math.PI / 180;
+      var bx = (cx + r * Math.cos(a)).toFixed(1), by = (cy + r * Math.sin(a)).toFixed(1);
+      var c = x.status === "alert" ? "var(--red)" : x.status === "watch" ? "var(--amber)" :
+              x.status === "na" ? "var(--muted)" : "var(--green)";
+      out += '<circle cx="' + bx + '" cy="' + by + '" r="5" fill="' + c + '"><title>' + esc(x.ticker) + '</title></circle>';
+    });
+    out += '<circle cx="' + cx + '" cy="' + cy + '" r="6" fill="var(--accent)"/>';
+    return out;
+  }
+
+  function pill(status) {
+    if (status === "ok") return '<span class="pill ok">OK</span>';
+    if (status === "watch") return '<span class="pill watch">WATCH</span>';
+    if (status === "alert") return '<span class="pill alert">ALERT</span>';
+    return '<span class="pill na">n/a</span>';
+  }
+
+  function render(data, isLive) {
+    var ts = data.tickers, meta = data.meta || {};
+    document.body.classList.toggle("fallback", !isLive);
+    var v = verdictOf(ts);
+    var vw = document.getElementById("verdictWord");
+    vw.textContent = v.word;
+    vw.className = "verdict " + v.cls;
+    document.getElementById("coverage").innerHTML =
+      "Deviation available for <b>" + esc(v.coverage) + " tickers</b>";
+    document.getElementById("liveBadge").textContent = isLive
+      ? "Live · updated " + fmtWITA(meta.latest_ts) + " · " + meta.venues_live + "/" + meta.venues_total + " venues"
+      : "Illustrative data — API unreachable";
+    document.getElementById("scopeSvg").innerHTML = scopeSVG(ts);
+    document.getElementById("whyDev").innerHTML = v.worstDev
+      ? esc(v.worstDev.ticker) + " " + fmtBps(v.worstDev.dev_bps) + ' <small>bps</small>' : "—";
+    document.getElementById("whySpr").innerHTML = v.worstSpr
+      ? esc(v.worstSpr.ticker) + " " + fmtSpr(v.worstSpr.spread_pct) : "—";
+    document.getElementById("whyDep").innerHTML = v.thin
+      ? esc(v.thin.ticker) + " " + fmtDepth(v.thin.depth_usd) : "—";
+
+    var rows = document.getElementById("rows");
+    rows.innerHTML = ts.map(function (x) {
+      var st = x.status || "na";
+      var devCls = x.dev_bps === null || x.dev_bps === undefined ? "na" :
+                   x.dev_bps >= 0 ? "pos" : "neg";
+      var barW = (x.dev_bps === null || x.dev_bps === undefined) ? 0 :
+                 Math.min(Math.abs(x.dev_bps), 150) / 150 * 100;
+      var barCls = st === "watch" ? "watch" : st === "alert" ? "alert" : "";
+      return '<div class="trow" role="row">' +
+        '<div class="tick">' + esc(x.ticker) + '<span class="tier">T' + esc(x.tier) + '</span></div>' +
+        '<div class="devc"><span class="cl">Dev vs median</span>' +
+          '<span class="dev num ' + devCls + '">' + fmtBps(x.dev_bps) + (x.dev_bps !== null && x.dev_bps !== undefined ? ' <small style="font-size:11px;color:var(--muted)">bps</small>' : "") + '</span>' +
+          '<div class="bar"><i class="' + barCls + '" style="width:' + barW.toFixed(1) + '%"></i><span class="tick100" style="left:66.7%"></span></div></div>' +
+        '<div class="trc"><span class="cl">Trend</span>' + sparkSVG(x.spark_bps, st) + '</div>' +
+        '<div class="spr num r"><span class="cl">Spread</span>' + fmtSpr(x.spread_pct) + '</div>' +
+        '<div class="dep num r"><span class="cl">Depth</span>' + fmtDepth(x.depth_usd) + '</div>' +
+        '<div class="stc r">' + pill(st) + '</div>' +
+      '</div>';
+    }).join("");
+
+    var rs = ts[0].redemption_status, no = ts[0].redemption_next_open;
+    document.getElementById("redStatus").textContent =
+      rs ? rs.toUpperCase() : "UNKNOWN";
+    document.getElementById("redPill").innerHTML =
+      rs === "open" ? '<span class="pill ok">OPEN</span>' :
+      rs === "gated" || rs === "paused" ? '<span class="pill watch">' + esc(rs.toUpperCase()) + '</span>' :
+      '<span class="pill na">' + esc((rs || "unknown").toUpperCase()) + '</span>';
+    document.getElementById("redNext").innerHTML = rs === "open"
+      ? "Open now · aligned US trading hours (24/5)"
+      : "Next open <b>" + esc(fmtDay(no)) + "</b>";
+    document.getElementById("tlNext").textContent = rs === "open" ? "Open" : "Next open " + fmtWITA(no);
+    var m = /(\d+)\/13 mints paused/.exec(ts[0].redemption_note_en || "");
+    if (m) document.getElementById("redNote").textContent =
+      "Schedule-derived from the NYSE calendar (conservative), program-wide — not per ticker. " +
+      "On-chain cross-check: " + m[1] + "/13 mints paused.";
+    var ages = ts.map(function (x) { return x.por_age_hours; }).filter(function (a) { return a !== null && a !== undefined; });
+    var age = ages.length ? Math.max.apply(null, ages) : null;
+    document.getElementById("porAge").textContent = age === null ? "—" : age.toFixed(1) + " h";
+    document.getElementById("porState").innerHTML = age === null ? "" :
+      (age > 72 ? '<span class="stale">STALE</span>' : '<span class="fresh">FRESH</span>');
+  }
+
+  function renderAlerts(list) {
+    var box = document.getElementById("alerts");
+    var labels = { redemption: "Redemption", redemption_batch: "Redemption (batch)",
+                   redemption_paused: "Redemption paused" };
+    var shown = (list || []).slice(0, 6);
+    box.innerHTML = shown.map(function (a) {
+      return '<div class="arow" role="row"><span class="t num">' + esc(fmtWITA(a.ts)) + '</span>' +
+        '<span class="tk">' + (a.ticker === "ALL" ? "—" : esc(a.ticker)) + '</span>' +
+        '<span>' + esc(labels[a.type] || String(a.type).replace(/_/g, " ")) + '</span>' +
+        '<span class="num r">' + (a.figure === null || a.figure === undefined ? "—" : esc(String(a.figure))) + '</span></div>';
+    }).join("") || '<div class="arow"><span>No alerts in the last 30.</span></div>';
+    document.getElementById("alertsNote").textContent =
+      "Showing latest " + shown.length + " of " + (list || []).length + " in the last 30.";
+  }
+
+  function fetchJSON(url, ms) {
+    var ctl = new AbortController();
+    var to = setTimeout(function () { ctl.abort(); }, ms);
+    return fetch(url, { signal: ctl.signal }).then(function (r) {
+      clearTimeout(to);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+
+  fetchJSON(API + "/api/latest", 10000).then(function (data) {
+    render(data, true);
+    return fetchJSON(API + "/api/alerts", 10000).then(function (a) {
+      renderAlerts(a.alerts || []);
+    }).catch(function () { renderAlerts([]); });
+  }).catch(function () {
+    render(fallbackData(), false);
+    renderAlerts([]);
+  });
+})();
+</script>
+</body>
+</html>

@@ -9,6 +9,7 @@ Exit 0 = ALL PASS. Exit 1 = at least one FAIL (details in JSON on stdout).
 """
 import datetime
 import json
+import os
 import subprocess
 import sys
 
@@ -96,12 +97,23 @@ def main():
         data = json.loads(body) if code == 200 else {}
         tickers = data.get("tickers", [])
         ok_n = len(tickers) == 13
-        ok_fields = all(t.get("dev_bps") is not None and t.get("ticker") for t in tickers)
+        # dev_bps is NULL by poller design when <2 pools qualify for the
+        # cross-pool median (v1-median-only); only flag NULLs with >=2 pools.
+        def _pools_used(t):
+            try:
+                return int(t.get("pools_used") or 0)
+            except (TypeError, ValueError):
+                return 0
+        bad = [t.get("ticker") for t in tickers
+               if t.get("dev_bps") is None and _pools_used(t) >= 2]
+        ok_fields = (not bad) and all(t.get("ticker") for t in tickers)
         lts = parse_ts((data.get("meta") or {}).get("latest_ts"))
         lts_age = (now - lts).total_seconds() / 60 if lts else 1e9
         all_ok &= check("api_200", code == 200, f"http={code}")
         all_ok &= check("api_13_tickers", ok_n, f"n={len(tickers)}")
-        all_ok &= check("api_fields_valid", ok_fields, "dev_bps+ticker present" if ok_fields else "missing fields")
+        all_ok &= check("api_fields_valid", ok_fields,
+                        "dev_bps+ticker present" if ok_fields
+                        else "null dev_bps with >=2 pools: " + ",".join(bad))
         all_ok &= check("api_latest_ts_fresh", lts_age < 20, f"age={lts_age:.1f}m")
     except Exception as e:
         all_ok &= check("api_latest", False, e)
@@ -109,13 +121,16 @@ def main():
     # 5. Alert pipeline: bot --once evaluates without error
     # (genuine alerts may send per the code's own thresholds/dedup; no test sends)
     try:
+        # Keep the caller's env (proxy vars etc. — the VM egress needs them)
+        # and only inject the two alert chat IDs.
+        env = dict(os.environ)
+        env.update({"RADAR_ALERT_CHAT_ID_EN": CHAT_EN,
+                    "RADAR_ALERT_CHAT_ID_ID": CHAT_ID})
         r = subprocess.run(
             ["python3", "bot.py", "--once", "--offset-file",
              "/home/hatch/workspace/goals/radar-tokenized-stocks-kabar-berkala/hidden_files/bot_updates.json"],
             cwd=ROOT, capture_output=True, text=True, timeout=180,
-            env={"PATH": "/usr/bin:/bin",
-                 "RADAR_ALERT_CHAT_ID_EN": CHAT_EN,
-                 "RADAR_ALERT_CHAT_ID_ID": CHAT_ID})
+            env=env)
         err = "evaluation error" in (r.stdout + r.stderr).lower()
         all_ok &= check("bot_once_no_eval_error",
                         r.returncode == 0 and not err,
@@ -123,7 +138,7 @@ def main():
     except Exception as e:
         all_ok &= check("bot_once", False, e)
 
-    verdict = "PASS" if all(results) else "FAIL"
+    verdict = "PASS" if all(r["ok"] for r in results) else "FAIL"
     print(json.dumps({"verdict": verdict,
                       "checked_at_utc": now.isoformat(),
                       "results": results}, indent=1))

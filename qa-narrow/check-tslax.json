@@ -1,0 +1,476 @@
+{
+  "target": "https://radar.omdanny.site/ticker/TSLAx",
+  "timestamp": "2026-10-25T12:34:56.345Z",
+  "viewports_tested": [
+    "Mobile Portrait",
+    "Mobile Landscape",
+    "Tablet Portrait",
+    "Tablet Landscape",
+    "Small Desktop",
+    "Large Desktop"
+  ],
+  "pages_tested": [
+    "https://radar.omdanny.site/ticker/TSLAx"
+  ],
+  "issues": [
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead > tr",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 25 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead > tr > th:nth-of-type(4)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 104 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead > tr > th:nth-of-type(6)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead > tr > th:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 25 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr > td.num:nth-of-type(4)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 104 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr > td:nth-of-type(6)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr > td:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 205 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr > td:nth-of-type(8) > a",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 25 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2) > td.num:nth-of-type(4)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 104 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2) > td:nth-of-type(6)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2) > td:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 205 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2) > td:nth-of-type(8) > a",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 25 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3) > td.num:nth-of-type(4)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 104 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3) > td:nth-of-type(6)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3) > td:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 205 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3) > td:nth-of-type(8) > a",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 25 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4) > td.num:nth-of-type(4)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 104 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4) > td:nth-of-type(6)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 227 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4) > td:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Mobile Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 205 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4) > td:nth-of-type(8) > a",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead > tr",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 51 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead > tr > th.hide-s:nth-of-type(7)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > thead > tr > th:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 51 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr > td.hide-s:nth-of-type(7)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr > td:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 152 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr > td:nth-of-type(8) > a",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 51 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2) > td.hide-s:nth-of-type(7)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2) > td:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 152 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(2) > td:nth-of-type(8) > a",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 51 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3) > td.hide-s:nth-of-type(7)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3) > td:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 152 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(3) > td:nth-of-type(8) > a",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 51 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4) > td.hide-s:nth-of-type(7)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 175 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4) > td:nth-of-type(8)",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Tablet Portrait",
+      "type": "VIEWPORT OVERFLOW",
+      "severity": "CRITICAL",
+      "message": "Element overflowed the right edge of the screen by 152 pixels.",
+      "element": "body > div.wrap:nth-of-type(2) > div.tblwrap:nth-of-type(5) > table > tbody > tr:nth-of-type(4) > td:nth-of-type(8) > a",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Small Desktop",
+      "type": "CONTAINER OVERFLOW",
+      "severity": "WARNING",
+      "message": "Content overflowed its container vertically by 4 pixels.",
+      "element": "[aria-label=\"TSLAx Deviation history (vs cross-venue median)\"] > g:nth-of-type(4) > text",
+      "screenshot": null
+    },
+    {
+      "page": "https://radar.omdanny.site/ticker/TSLAx",
+      "viewport": "Large Desktop",
+      "type": "CONTAINER OVERFLOW",
+      "severity": "WARNING",
+      "message": "Content overflowed its container vertically by 4 pixels.",
+      "element": "[aria-label=\"TSLAx Deviation history (vs cross-venue median)\"] > g:nth-of-type(4) > text",
+      "screenshot": null
+    }
+  ]
+}

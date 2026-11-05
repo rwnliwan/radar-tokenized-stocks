@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EXIT RADAR — Signature Identity Mockup (DRAFT, not live)</title>
+<style>
+  /* ============ TOKENS — carried forward verbatim from web/src/app/globals.css ============ */
+  :root {
+    --bg: #070b12; --surface: #0f172a; --surface2: #111827; --border: #1e293b;
+    --text: #e6eaf2; --text2: #cbd5e1; --muted: #8a93a6;
+    --accent: #fbbf24; --green: #34d399; --green-bg: #123326;
+    --red: #f87171; --red-bg: #3f1210; --orange: #fb923c; --orange-bg: #3a2312;
+    --hover-row: #16203a; --tg: #229ED9;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* System mono stack stands in for JetBrains Mono (no webfont fetch: this
+     file must render anywhere with no build step). Rule kept: ALL numbers mono. */
+  .num, .vtext, .worst, .price, .dev, .depth, .score-num, .blip-bar i {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 40px; }
+
+  /* ============ VETTING NOTE (top of file, not part of the site) ============ */
+  .vetting {
+    border: 1px solid var(--accent); border-left: 6px solid var(--accent);
+    border-radius: 12px; padding: 18px 20px; margin: 0 0 28px; background: var(--surface2);
+  }
+  .vetting h1 { font-size: 19px; margin: 0 0 4px; }
+  .vetting h1 span { color: var(--accent); }
+  .vetting .sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  .vetting h2 { font-size: 14px; margin: 16px 0 6px; color: var(--accent); letter-spacing: .04em; text-transform: uppercase; }
+  .vetting ul { margin: 0; padding-left: 20px; line-height: 1.65; font-size: 14px; color: var(--text2); }
+  .vetting li b { color: var(--text); }
+  .vetting p { font-size: 14px; line-height: 1.65; color: var(--text2); margin: 8px 0; }
+
+  /* ============ SECTION DIVIDERS (mockup scaffolding, not part of the site) ============ */
+  .mock-label {
+    display: flex; align-items: center; gap: 12px;
+    margin: 44px 0 16px; color: var(--muted); font-size: 13px;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  .mock-label::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .mock-label b { color: var(--accent); }
+
+  /* ============ HEADER (live structure, signature tweaks) ============ */
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    flex-wrap: wrap; gap: 12px; border-bottom: 1px solid var(--border); padding-bottom: 14px;
+  }
+  .logo { font-size: 22px; font-weight: 800; letter-spacing: .14em; display: inline-flex; align-items: center; gap: 10px; }
+  .logo b { color: var(--accent); }
+  .navseg { display: inline-flex; gap: 2px; border: 1px solid var(--border); border-radius: 8px; padding: 2px; }
+  .navseg a { color: var(--muted); text-decoration: none; padding: 4px 12px; border-radius: 6px; font-size: 14px; white-space: nowrap; }
+  .navseg a.active { background: var(--border); color: var(--text); font-weight: 600; }
+  .live { display: flex; gap: 10px; align-items: center; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); animation: pl 1.6s infinite; }
+  @keyframes pl { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+  .lang { border: 1px solid var(--border); border-radius: 8px; padding: 2px; display: inline-flex; gap: 2px; }
+  .lang span { padding: 3px 9px; border-radius: 6px; font-size: 13px; color: var(--muted); }
+  .lang span.on { background: var(--border); color: var(--text); }
+
+  /* ============ SIGNATURE 1 — VERDICT AS HERO (scope = backdrop, not side art) ============ */
+  .verdict-hero {
+    position: relative; overflow: hidden;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 28px 32px; margin: 18px 0 10px;
+  }
+  .verdict-hero .scope-bg { position: absolute; right: -40px; top: 50%; transform: translateY(-50%); opacity: .5; pointer-events: none; }
+  .verdict-hero .scope-bg .sweep { transform-origin: 150px 150px; animation: spin 12s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .verdict-hero .inner { position: relative; }
+  .verdict-hero .lbl { color: var(--muted); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+  .verdict-hero .lbl::before { content: ""; width: 22px; height: 22px; border: 1.5px solid var(--accent); border-radius: 50%; display: inline-block; box-shadow: inset 0 0 0 4px var(--surface), inset 0 0 0 5.5px var(--accent); }
+  .verdict-hero .vtext { font-size: 44px; font-weight: 800; margin: 10px 0 6px; letter-spacing: -.01em; }
+  .verdict-hero .vtext.safe { color: var(--green); }
+  .verdict-hero .facts { color: var(--text2); font-size: 14px; line-height: 1.6; }
+  .verdict-hero .facts b { color: var(--text); }
+  .verdict-hero .rule { color: var(--muted); font-size: 12px; margin-top: 12px; line-height: 1.5; }
+  .statstrip { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 13px; margin: 0 0 6px; }
+  .statstrip b { color: var(--text); }
+
+  /* ============ SIGNATURE 2 — SECTION HEADERS CARRY THE RING GLYPH ============ */
+  h2.sec {
+    font-size: 17px; margin: 26px 0 10px; display: flex; align-items: center; gap: 10px;
+  }
+  h2.sec::before {
+    content: ""; flex: none; width: 18px; height: 18px; border-radius: 50%;
+    border: 1.5px solid var(--accent);
+    box-shadow: inset 0 0 0 3px var(--bg), inset 0 0 0 4.5px var(--accent);
+  }
+  .hint { color: var(--muted); font-size: 13px; margin: -4px 0 10px; line-height: 1.5; }
+
+  /* ============ TABLE (pro density + radar blip column + deviation range bar) ============ */
+  .tblwrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; max-height: 75vh; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; background: var(--surface); }
+  thead th {
+    position: sticky; top: 0; z-index: 1; background: var(--surface);
+    text-align: left; padding: 10px 12px; color: var(--muted); font-size: 12px;
+    letter-spacing: .05em; text-transform: uppercase; border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  /* Signature: amber hairline under the header row = the scope ring's edge. */
+  thead th { box-shadow: inset 0 -2px 0 var(--accent); }
+  thead th:first-child { left: 0; z-index: 2; }
+  tbody td.tk { position: sticky; left: 0; z-index: 1; background: var(--surface); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tbody tr:hover td { background: var(--hover-row); }
+  .num { text-align: right; }
+  .tk b { letter-spacing: .02em; }
+  .dev { font-weight: 700; }
+  .neg { color: var(--red); } .pos { color: var(--green); } .dim { color: var(--muted); }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .pill.ok { background: var(--green-bg); color: var(--green); }
+  .pill.na { background: var(--border); color: var(--muted); }
+  .pill.closed { background: var(--border); color: var(--text2); }
+  /* Blip dot = ticker's scope position: status color, same language as hero blips. */
+  .blip { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: 1px; }
+  .blip.ok { background: var(--green); } .blip.na { background: var(--muted); }
+  /* Deviation range bar: 64px track, zero line center, blip at dev value (scale ±100 bps). */
+  .blip-bar { display: inline-block; position: relative; width: 64px; height: 8px; background: var(--border); border-radius: 4px; vertical-align: middle; margin-left: 8px; }
+  .blip-bar::after { content: ""; position: absolute; left: 50%; top: 0; width: 1px; height: 8px; background: var(--muted); }
+  .blip-bar i { position: absolute; top: 1px; width: 6px; height: 6px; border-radius: 50%; background: var(--green); transform: translateX(-50%); }
+
+  /* ============ TELEGRAM CARD (unchanged live component, kept secondary) ============ */
+  .tg-card { display: flex; gap: 14px; align-items: flex-start; background: var(--surface2); border: 1px solid var(--border); border-left: 4px solid var(--tg); border-radius: 12px; padding: 16px 18px; margin: 22px 0; }
+  .tg-card h3 { margin: 0 0 4px; font-size: 16px; }
+  .tg-card p { margin: 6px 0 12px; color: var(--text2); line-height: 1.6; font-size: 14px; }
+  .tg-btns { display: flex; flex-wrap: wrap; gap: 10px; }
+  .tg-btn { background: var(--tg); color: #fff; text-decoration: none; border-radius: 8px; padding: 8px 16px; font-size: 14px; font-weight: 600; }
+
+  /* ============ TICKER DETAIL ============ */
+  h1 { font-size: 24px; margin: 22px 0 6px; }
+  .meta { color: var(--muted); font-size: 14px; margin: 0 0 14px; }
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 14px 0; }
+  .metric { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .metric small { color: var(--muted); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+  .metric .v { font-size: 22px; font-weight: 700; margin: 4px 0; }
+  .metric .s { color: var(--muted); font-size: 13px; }
+  .chartbox { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; }
+  .chartbox svg { width: 100%; height: auto; display: block; }
+  .chartbox .cap { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  /* Signature 3 — weekend score as a SEGMENTED BAR (maxima 40/25/20/15). */
+  .scorebox { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin: 0 0 18px; }
+  .scorebox .total { font-size: 20px; font-weight: 700; margin: 2px 0 10px; }
+  .scorebar { display: flex; gap: 3px; height: 14px; }
+  .scorebar .seg { background: var(--border); border-radius: 4px; position: relative; overflow: hidden; }
+  .scorebar .seg i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+  .scorebar .seg.risk i { background: var(--orange); }
+  .score-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .score-legend b { color: var(--text); }
+  .score-note { color: var(--muted); font-size: 13px; line-height: 1.55; margin-top: 10px; }
+  /* Redemption card (live .redcard shape, scope-blip timeline). */
+  .redcard { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 10px 0 18px; }
+  .redcard-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .redcard-next { font-size: 14px; }
+  .redcard-timeline { display: flex; align-items: center; margin: 14px 6px 4px; }
+  .redcard-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text2); flex: none; }
+  .redcard-dot.next { background: transparent; border: 2px solid var(--accent); box-shadow: 0 0 0 3px rgba(251,191,36,.25); }
+  .redcard-line { flex: 1; height: 2px; background: var(--border); }
+  .redcard-timeline-labels { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .redcard-rows p { margin: 6px 0; font-size: 14px; }
+  .redcard .small { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .redcard-por { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; font-size: 14px; }
+
+  /* ============ MOBILE FRAME (portrait ≤520px, shown as a framed mock) ============ */
+  .phone-frame {
+    width: 390px; max-width: 100%; margin: 0 auto;
+    border: 1px solid var(--border); border-radius: 24px; padding: 16px 14px 22px;
+    background: var(--bg); box-shadow: 0 0 0 6px var(--surface);
+  }
+  .phone-frame header { flex-wrap: nowrap; }
+  .phone-frame .logo { font-size: 18px; }
+  .phone-frame .navseg a { padding: 4px 8px; font-size: 12px; }
+  .phone-frame .verdict-hero { padding: 18px; text-align: center; }
+  .phone-frame .verdict-hero .scope-bg { position: static; transform: none; opacity: .8; margin: 0 auto 8px; }
+  .phone-frame .verdict-hero .lbl { justify-content: center; }
+  .phone-frame .verdict-hero .vtext { font-size: 26px; }
+  .phone-frame .verdict-hero .facts { font-size: 13px; }
+  .rowcards { display: grid; gap: 10px; }
+  .rc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .rc .top { display: flex; justify-content: space-between; align-items: center; }
+  .rc .top b { font-size: 16px; }
+  .rc .mid { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 14px; }
+  .rc .bot { display: flex; justify-content: space-between; margin-top: 6px; font-size: 13px; color: var(--muted); }
+
+  .foot { color: var(--muted); font-size: 13px; line-height: 1.6; border-top: 1px solid var(--border); margin-top: 26px; padding-top: 14px; }
+  @media (prefers-reduced-motion: reduce) {
+    .dot, .verdict-hero .scope-bg .sweep { animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ================= VETTING NOTE (Bahasa Indonesia, bukan bagian situs) ================= -->
+  <section class="vetting">
+    <h1>CATATAN MOCKUP — <span>Signature Identity</span> (DRAF, bukan situs live)</h1>
+    <p class="sub">Satu arah desain, dieksekusi penuh. File ini tidak ter-commit, tidak ter-deploy, dan tidak menyentuh folder <code>web/</code>. Mockup konten berbahasa Inggris (default live); catatan ini Bahasa Indonesia agar mudah diveto.</p>
+
+    <h2>Apa yang berubah vs situs sekarang</h2>
+    <ul>
+      <li><b>Vonis jadi hero, bukan kartu samping.</b> Sekarang scope SVG duduk di kiri dan teks vonis di kanan; di mockup ini scope menjadi <i>backdrop</i> kartu vonis selebar penuh, dan kata vonisnya ("WITHIN THRESHOLDS") menjadi tipografi terbesar di halaman. Alasan: vonis adalah produknya — pengunjung harus membacanya pertama, bukan tabelnya.</li>
+      <li><b>Motif radar menjalar ke seluruh halaman, bukan cuma hero.</b> Judul seksi memakai glyph cincin kecil; tiap baris tabel punya titik blip warna status + batang deviasi mini (batang 64px, garis nol di tengah, blip di posisi deviasi, skala ±100 bps); timeline redemption memakai blip bercincin amber; footer memakai divider sweep. Identitas terbaca di semua bagian, bukan cuma di atas.</li>
+      <li><b>Skor akhir pekan divisualkan, bukan cuma angka.</b> Sekarang skor hanya baris angka "0.3 · 0.0 · 20.0 · 0.1". Di mockup, skor menjadi batang tersegmen (lebar segmen = bobot maksimum 40/25/20/15, isi = nilai komponen) — langsung kelihatan bahwa risiko akhir pekan ini hampir seluruhnya berasal dari redemption yang tutup, bukan dari deviasi.</li>
+      <li><b>Yang TIDAK berubah (sengaja):</b> palet (amber fosfor #fbbf24 + hijau/merah/oranye status yang sama), tanpa gradien, tanpa emoji, semua angka monospace, lebar kolom 1180px, kartu Telegram tetap sekunder (aksen biru kiri), ambang/status/semantik data dan semua kata tidak diubah.</li>
+    </ul>
+
+    <h2>Kejujuran data mockup</h2>
+    <ul>
+      <li><b>Angka live:</b> harga, deviasi (bps), depth, dan status 13 ticker = snapshot API live 25 Okt 2026 11:31Z (CRCLx terburuk +10,5 bps; 9 ticker berdeviasi, 4 null: COINx, GOOGLx, HOODx, METAx; depth minimum AAPLx $528.093; 35/35 venue).</li>
+      <li><b>Ilustrasi bentuk (bukan angka live):</b> spread terburuk, skor detail TSLAx (total 20,4 dari verifikasi v2 19:17 WITA — komponen 0,3/0,0/20,0/0,1), rincian 4 pool TSLAx (dibuat agar jumlahnya persis = depth live $2.933.667), bentuk chart, dan waktu "Next open" (Senin 27 Okt 12:00 WITA = awal hari ET Senin). Bila arah ini di-ACC, angka-angka ini tetap dibaca dari API, bukan dari mockup.</li>
+    </ul>
+  </section>
+
+  <!-- ================= A — HOMEPAGE (desktop) ================= -->
+  <div class="mock-label"><b>A</b> — Beranda, desktop (1180px)</div>
+
+  <header>
+    <div class="logo">
+      <svg width="30" height="30" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="none" stroke="#fbbf24" stroke-width="2"/><circle cx="20" cy="20" r="11" fill="none" stroke="#fbbf24" stroke-width="1" opacity=".55"/><circle cx="20" cy="20" r="4" fill="none" stroke="#fbbf24" stroke-width="1" opacity=".55"/><path d="M20 20 L20 4 A16 16 0 0 1 31 9 Z" fill="#fbbf24" opacity=".45"/><circle cx="27" cy="14" r="2.6" fill="#fbbf24"/><circle cx="13" cy="26" r="2.2" fill="#4ade80"/></svg>
+      EXIT <b>RADAR</b>
+    </div>
+    <nav class="navseg"><a class="active" href="#">Home</a><a href="#">Ticker</a><a href="#">Methodology</a><a href="#">Waitlist</a><a href="#">Donate</a></nav>
+    <div class="live"><span class="dot"></span> LIVE 19:31 WITA <span class="lang"><span class="on">EN</span><span>ID</span></span></div>
+  </header>
+
+  <!-- Verdict hero: scope as backdrop -->
+  <section class="verdict-hero">
+    <svg class="scope-bg" width="300" height="300" viewBox="0 0 300 300" aria-hidden="true">
+      <circle cx="150" cy="150" r="140" fill="none" stroke="#fbbf24" stroke-width="1.5" opacity=".8"/>
+      <circle cx="150" cy="150" r="98" fill="none" stroke="#8ba190" stroke-width="1" opacity=".5"/>
+      <circle cx="150" cy="150" r="56" fill="none" stroke="#8ba190" stroke-width="1" opacity=".5"/>
+      <g class="sweep"><path d="M150 150 L150 14 A136 136 0 0 1 246 54 Z" fill="#fbbf24" opacity=".14"/></g>
+      <circle cx="150" cy="150" r="4" fill="#fbbf24"/>
+      <!-- Blips: radius = |dev| capped 100 bps; all 9 live devs are < 11 bps, so blips hug the center (honest). -->
+      <circle cx="171" cy="141" r="6" fill="#34d399"/><text x="181" y="144" fill="#cbd5e1" font-size="12">CRCLx</text>
+      <circle cx="136" cy="165" r="4" fill="#34d399"/><text x="112" y="184" fill="#cbd5e1" font-size="12">SPYx</text>
+      <circle cx="161" cy="136" r="4" fill="#34d399"/>
+      <circle cx="142" cy="158" r="4" fill="#34d399"/>
+      <circle cx="155" cy="145" r="4" fill="#34d399"/>
+      <circle cx="146" cy="154" r="4" fill="#34d399"/>
+      <circle cx="153" cy="147" r="4" fill="#34d399"/>
+      <circle cx="148" cy="152" r="4" fill="#34d399"/>
+      <circle cx="152" cy="149" r="4" fill="#34d399"/>
+    </svg>
+    <div class="inner">
+      <div class="lbl">DEX exit verdict</div>
+      <div class="vtext safe">WITHIN THRESHOLDS</div>
+      <div class="facts">
+        Worst deviation: <b>CRCLx +10.5 bps</b> · Worst spread: <b>MSTRx 0.42%</b> · Thinnest depth: <b>AAPLx $528,093</b> · Deviation available for <b>9 of 13</b> tickers
+      </div>
+      <div class="rule">Danger iff worst deviation ≥ 100 bps · Caution iff worst deviation ≥ 50 bps, worst spread ≥ 1%, or thinnest depth &lt; $250k · Missing signals are skipped, never zeroed.</div>
+    </div>
+  </section>
+  <div class="statstrip">
+    <span>13 <b>tickers</b> · <b>35/35</b> venues live</span>
+    <span>PoR age: <b>0.3h</b></span>
+    <span>Last update: <b>Sun 25 Oct 2026, 19:31 WITA</b></span>
+  </div>
+
+  <h2 class="sec">Tickers — deviation vs cross-venue median</h2>
+  <p class="hint">Sorted by |deviation|. Blip = status; mini bar = deviation on a ±100 bps scale, zero line center. “—” means the ticker has fewer than 2 qualifying pools, so no median exists (honest gap, not zero).</p>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Ticker</th><th style="text-align:right">Price (DW)</th><th style="text-align:right">Deviation ▼</th><th style="text-align:right">Depth</th><th style="text-align:right">Pools</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td class="tk"><span class="blip ok"></span><b>CRCLx</b></td><td class="num">$85.04</td><td class="num"><span class="dev pos">+10.5 bps</span><span class="blip-bar"><i style="left:55.2%"></i></span></td><td class="num">$6,089,902</td><td class="num">3</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip ok"></span><b>SPYx</b></td><td class="num">$764.39</td><td class="num"><span class="dev neg">−8.8 bps</span><span class="blip-bar"><i style="left:45.6%"></i></span></td><td class="num">$4,900,153</td><td class="num">5</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip ok"></span><b>QQQx</b></td><td class="num">$707.03</td><td class="num"><span class="dev neg">−5.8 bps</span><span class="blip-bar"><i style="left:47.1%"></i></span></td><td class="num">$2,369,564</td><td class="num">2</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip ok"></span><b>TSLAx</b></td><td class="num">$370.89</td><td class="num"><span class="dev neg">−3.3 bps</span><span class="blip-bar"><i style="left:48.4%"></i></span></td><td class="num">$2,933,667</td><td class="num">4</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip ok"></span><b>GLDx</b></td><td class="num">$365.31</td><td class="num"><span class="dev pos">+1.9 bps</span><span class="blip-bar"><i style="left:51.0%"></i></span></td><td class="num">$1,281,461</td><td class="num">4</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip ok"></span><b>MSTRx</b></td><td class="num">$143.66</td><td class="num"><span class="dev neg">−0.3 bps</span><span class="blip-bar"><i style="left:49.8%"></i></span></td><td class="num">$1,771,095</td><td class="num">2</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip ok"></span><b>NVDAx</b></td><td class="num">$212.24</td><td class="num"><span class="dev pos">+0.2 bps</span><span class="blip-bar"><i style="left:50.1%"></i></span></td><td class="num">$4,166,588</td><td class="num">6</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip ok"></span><b>MSFTx</b></td><td class="num">$525.77</td><td class="num"><span class="dev neg">−0.2 bps</span><span class="blip-bar"><i style="left:49.9%"></i></span></td><td class="num">$790,141</td><td class="num">2</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip ok"></span><b>AAPLx</b></td><td class="num">$347.41</td><td class="num"><span class="dev pos">+0.1 bps</span><span class="blip-bar"><i style="left:50.1%"></i></span></td><td class="num">$528,093</td><td class="num">2</td><td><span class="pill ok">ok</span></td></tr>
+        <tr><td class="tk"><span class="blip na"></span><b>COINx</b></td><td class="num">$163.80</td><td class="num dim">—</td><td class="num">$1,369,953</td><td class="num">1</td><td><span class="pill na">n/a</span></td></tr>
+        <tr><td class="tk"><span class="blip na"></span><b>GOOGLx</b></td><td class="num">$321.23</td><td class="num dim">—</td><td class="num">$1,262,522</td><td class="num">2</td><td><span class="pill na">n/a</span></td></tr>
+        <tr><td class="tk"><span class="blip na"></span><b>HOODx</b></td><td class="num">$94.83</td><td class="num dim">—</td><td class="num">$1,238,300</td><td class="num">1</td><td><span class="pill na">n/a</span></td></tr>
+        <tr><td class="tk"><span class="blip na"></span><b>METAx</b></td><td class="num">$642.71</td><td class="num dim">—</td><td class="num">$833,246</td><td class="num">1</td><td><span class="pill na">n/a</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tg-card">
+    <div>
+      <h3>Get alerts on Telegram</h3>
+      <p>Alerts land here when redemption closes, spreads widen, or proof of reserve goes stale.</p>
+      <div class="tg-btns"><a class="tg-btn" href="#">t.me/exitradar_en</a><a class="tg-btn" href="#">t.me/exitradar_in</a></div>
+    </div>
+  </div>
+
+  <!-- ================= B — TICKER DETAIL ================= -->
+  <div class="mock-label"><b>B</b> — Detail ticker (TSLAx)</div>
+
+  <h1>TSLAx <span style="color:var(--muted); font-size:16px; font-weight:400">· Tesla, Inc. · xStocks · Tier 1</span></h1>
+  <p class="meta">Depth-weighted price across qualifying pools (≥ $100k reserve). Deviation vs cross-venue median.</p>
+
+  <div class="metrics">
+    <div class="metric"><small>Price (DW)</small><div class="v">$370.89</div><div class="s">Best venue: Raydium</div></div>
+    <div class="metric"><small>Deviation</small><div class="v neg">−3.3 bps</div><div class="s">−0.033% vs median</div></div>
+    <div class="metric"><small>Depth</small><div class="v">$2,933,667</div><div class="s">4 pools ≥ $100k</div></div>
+  </div>
+
+  <div class="chartbox">
+    <svg viewBox="0 0 600 120" aria-hidden="true">
+      <line x1="0" y1="60" x2="600" y2="60" stroke="#475569" stroke-width="1" stroke-dasharray="4 3"/>
+      <polyline points="0,52 60,58 120,48 180,62 240,55 300,66 360,58 420,50 480,57 540,62 600,54" fill="none" stroke="#e07b4a" stroke-width="2" stroke-linejoin="round"/>
+    </svg>
+    <div class="cap">Deviation history, 24h (illustrative shape). Live chart keeps the current SVG 1h / 24h / 7d ranges.</div>
+  </div>
+
+  <h2 class="sec">Weekend exit-risk score</h2>
+  <div class="scorebox">
+    <div class="total">Total / 100: <span class="score-num">20.4</span> <span style="color:var(--muted); font-size:14px; font-weight:400">(Weekend exit-risk method v1)</span></div>
+    <!-- Segment widths = component maxima (40/25/20/15); fill = component value. -->
+    <div class="scorebar">
+      <div class="seg" style="flex:40" title="Deviation 0.3 / 40"><i style="width:0.8%"></i></div>
+      <div class="seg" style="flex:25" title="Depth 0.0 / 25"><i style="width:0%"></i></div>
+      <div class="seg risk" style="flex:20" title="Redemption 20.0 / 20"><i style="width:100%"></i></div>
+      <div class="seg" style="flex:15" title="PoR age 0.1 / 15"><i style="width:0.7%"></i></div>
+    </div>
+    <div class="score-legend">
+      <span>Deviation: <b>0.3</b> / 40</span>
+      <span>Depth: <b>0.0</b> / 25</span>
+      <span>Redemption: <b>20.0</b> / 20</span>
+      <span>PoR age: <b>0.1</b> / 15</span>
+    </div>
+    <div class="score-note">Experimental score. Reading it at a glance: the bar is almost empty except the redemption segment — this weekend's risk is the closed window, not the price. Full formula stays behind the existing method disclosure.</div>
+  </div>
+
+  <h2 class="sec">Redemption</h2>
+  <section class="redcard">
+    <div class="redcard-head">
+      <span class="pill closed">Closed</span>
+      <span class="redcard-next">Next open: Mon 27 Oct 2026, 12:00 WITA</span>
+    </div>
+    <div class="redcard-timeline"><span class="redcard-dot"></span><span class="redcard-line"></span><span class="redcard-dot next"></span></div>
+    <div class="redcard-timeline-labels"><span>Closed</span><span>Next open</span></div>
+    <div class="redcard-rows">
+      <p><b>Observed:</b> Sun 25 Oct 2026, 19:31 WITA</p>
+      <p><b>Source:</b> xStocks 24/5 schedule + Solana RPC (public)</p>
+    </div>
+    <p class="small">Redemption follows the official xStocks 24/5 schedule, aligned with US market hours. Minimum $5,000, no fee, settlement about 30 seconds when open. Status is schedule-derived, not a live issuer confirmation.</p>
+    <div class="redcard-por">
+      <b>Proof-of-reserve freshness:</b> PoR age: 0.3 h
+      <div>Shares held: 189,837 · Circulating supply: 189,483.93</div>
+    </div>
+  </section>
+
+  <h2 class="sec">Venues</h2>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>Venue</th><th style="text-align:right">Price</th><th style="text-align:right">Depth</th></tr></thead>
+      <tbody>
+        <tr><td>Raydium</td><td class="num">$370.91</td><td class="num">$1,402,111</td></tr>
+        <tr><td>Raydium</td><td class="num">$370.85</td><td class="num">$890,204</td></tr>
+        <tr><td>Orca</td><td class="num">$370.93</td><td class="num">$441,207</td></tr>
+        <tr><td>Raydium</td><td class="num">$370.88</td><td class="num">$200,145</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="hint" style="margin-top:12px">Venue rows illustrative in shape; reserves sum exactly to the live depth ($2,933,667). Live rows come from the same pool snapshots as the homepage table.</p>
+
+  <!-- ================= C — PORTRAIT MOBILE ================= -->
+  <div class="mock-label"><b>C</b> — Portrait HP (frame 390px)</div>
+
+  <div class="phone-frame">
+    <header>
+      <div class="logo">
+        <svg width="24" height="24" viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="18" fill="none" stroke="#fbbf24" stroke-width="2"/><circle cx="20" cy="20" r="11" fill="none" stroke="#fbbf24" stroke-width="1" opacity=".55"/><path d="M20 20 L20 4 A16 16 0 0 1 31 9 Z" fill="#fbbf24" opacity=".45"/><circle cx="27" cy="14" r="2.6" fill="#fbbf24"/><circle cx="13" cy="26" r="2.2" fill="#4ade80"/></svg>
+        EXIT <b>RADAR</b>
+      </div>
+      <nav class="navseg"><a class="active" href="#">Home</a><a href="#">Ticker</a><a href="#">More</a></nav>
+    </header>
+
+    <section class="verdict-hero">
+      <svg class="scope-bg" width="150" height="150" viewBox="0 0 300 300" aria-hidden="true">
+        <circle cx="150" cy="150" r="140" fill="none" stroke="#fbbf24" stroke-width="1.5" opacity=".8"/>
+        <circle cx="150" cy="150" r="98" fill="none" stroke="#8ba190" stroke-width="1" opacity=".5"/>
+        <circle cx="150" cy="150" r="56" fill="none" stroke="#8ba190" stroke-width="1" opacity=".5"/>
+        <g class="sweep"><path d="M150 150 L150 14 A136 136 0 0 1 246 54 Z" fill="#fbbf24" opacity=".14"/></g>
+        <circle cx="150" cy="150" r="4" fill="#fbbf24"/>
+        <circle cx="171" cy="141" r="6" fill="#34d399"/>
+        <circle cx="136" cy="165" r="4" fill="#34d399"/>
+        <circle cx="161" cy="136" r="4" fill="#34d399"/>
+      </svg>
+      <div class="inner">
+        <div class="lbl">DEX exit verdict</div>
+        <div class="vtext safe">WITHIN THRESHOLDS</div>
+        <div class="facts">Worst: <b>CRCLx +10.5 bps</b> · Deviation for <b>9 of 13</b> tickers</div>
+      </div>
+    </section>
+
+    <div class="rowcards">
+      <div class="rc">
+        <div class="top"><span><span class="blip ok"></span><b>CRCLx</b></span><span class="pill ok">ok</span></div>
+        <div class="mid"><span class="price">$85.04</span><span class="dev pos">+10.5 bps</span></div>
+        <div class="bot"><span>Depth $6,089,902</span><span>3 pools</span></div>
+      </div>
+      <div class="rc">
+        <div class="top"><span><span class="blip ok"></span><b>TSLAx</b></span><span class="pill ok">ok</span></div>
+        <div class="mid"><span class="price">$370.89</span><span class="dev neg">−3.3 bps</span></div>
+        <div class="bot"><span>Depth $2,933,667</span><span>4 pools</span></div>
+      </div>
+      <div class="rc">
+        <div class="top"><span><span class="blip ok"></span><b>SPYx</b></span><span class="pill ok">ok</span></div>
+        <div class="mid"><span class="price">$764.39</span><span class="dev neg">−8.8 bps</span></div>
+        <div class="bot"><span>Depth $4,900,153</span><span>5 pools</span></div>
+      </div>
+      <div class="rc">
+        <div class="top"><span><span class="blip na"></span><b>COINx</b></span><span class="pill na">n/a</span></div>
+        <div class="mid"><span class="price">$163.80</span><span class="dim">—</span></div>
+        <div class="bot"><span>Depth $1,369,953</span><span>1 pool</span></div>
+      </div>
+    </div>
+    <p class="hint" style="margin-top:12px">Row-cards keep the live portrait pattern (table → cards ≤520px); the signature addition is the blip + verdict-first order, same as desktop.</p>
+  </div>
+
+  <div class="foot">
+    EXIT RADAR — public dashboard · No paywall · Methodology · Telegram: EN · ID<br>
+    Mockup draft only — not the live site. Data: deviation vs cross-venue median; vs-close pending a data license.
+  </div>
+
+</div>
+</body>
+</html>

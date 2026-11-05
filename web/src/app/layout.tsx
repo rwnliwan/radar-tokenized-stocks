@@ -33,6 +33,32 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <link rel="preconnect" href="https://api.omdanny.site" crossOrigin="anonymous" />
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        {/* Schema.org Person — Septian Panjaya */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "Person",
+              name: "Septian Panjaya",
+              url: "https://www.linkedin.com/in/septian-panjaya",
+              jobTitle: "Finance Risk Analytics",
+              knowsAbout: ["Credit Risk", "Fraud/AML Analytics", "Financial Modeling", "Financial Statement Analysis"],
+              sameAs: [
+                "https://www.linkedin.com/in/septian-panjaya",
+                "https://github.com/rwnliwan",
+                "https://fmva-sprint.pages.dev/",
+                "https://fsa-lab.pages.dev/",
+                "https://credit-desk-afy.pages.dev/",
+                "https://investment-desk.pages.dev/",
+                "https://simulator-fmva.pages.dev/",
+                "https://learn-platform-cyo.pages.dev/v2",
+                "https://radar.omdanny.site/",
+              ],
+            }),
+          }}
+        />
+
         <main>{children}</main>
       </body>
     </html>

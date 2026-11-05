@@ -1,0 +1,60 @@
+{
+ "390x844-phone-portrait": {
+  "pageScrollW": 375,
+  "innerW": 390,
+  "pageOverflow": -15,
+  "headerRows": {
+   "logoTop": 20,
+   "navTop": 67,
+   "liveTop": 110
+  },
+  "nav": {
+   "clientW": 333,
+   "scrollW": 350,
+   "overflow": 17,
+   "linkTops": [
+    70
+   ],
+   "linkCount": 5
+  },
+  "hero": {
+   "cardL": 20,
+   "cardR": 355,
+   "cardW": 335,
+   "scopeL": 53,
+   "scopeR": 322,
+   "scopeInsideCard": true,
+   "scopePosition": "static",
+   "vtextPx": "26px"
+  }
+ },
+ "768x1024-tablet-portrait": {
+  "pageScrollW": 753,
+  "innerW": 768,
+  "pageOverflow": -15,
+  "headerRows": {
+   "logoTop": 20,
+   "navTop": 22,
+   "liveTop": 67
+  },
+  "nav": {
+   "clientW": 397,
+   "scrollW": 397,
+   "overflow": 0,
+   "linkTops": [
+    25
+   ],
+   "linkCount": 5
+  },
+  "hero": {
+   "cardL": 20,
+   "cardR": 733,
+   "cardW": 713,
+   "scopeL": 53,
+   "scopeR": 700,
+   "scopeInsideCard": true,
+   "scopePosition": "static",
+   "vtextPx": "32px"
+  }
+ }
+}

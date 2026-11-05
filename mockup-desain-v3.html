@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EXIT RADAR — Mockup Desain v3 (Signature)</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#070b08; --surface:#0e1510; --surface2:#111d15; --border:#1e2b21;
+  --text:#e8efe9; --text2:#c3d2c5; --muted:#8ba190;
+  --amber:#fbbf24; --amber-dim:#b45309; --green:#4ade80; --green-bg:#12351f;
+  --red:#f87171; --red-bg:#3f1210; --orange:#fb923c; --orange-bg:#3a2312;
+  --chart:#e07b4a; --grid:#1e2b21;
+}
+[data-theme="light"]{
+  --bg:#f7f7f2; --surface:#ffffff; --surface2:#f1f5ef; --border:#dde4d8;
+  --text:#131a13; --text2:#334133; --muted:#667765;
+  --amber:#b45309; --amber-dim:#b45309; --green:#15803d; --green-bg:#dcfce7;
+  --red:#dc2626; --red-bg:#fee2e2; --orange:#ea580c; --orange-bg:#ffedd5;
+  --chart:#c2410c; --grid:#dde4d8;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--amber)}
+.wrap{max-width:1180px;margin:0 auto;padding:20px 20px 40px}
+header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;border-bottom:1px solid var(--border);padding-bottom:14px}
+.logo{display:flex;align-items:center;gap:10px;font-size:22px;font-weight:800;letter-spacing:.14em}
+.logo .mark{flex:0 0 auto}
+.logo b{color:var(--amber)}
+.navseg{display:inline-flex;gap:2px;border:1px solid var(--border);border-radius:8px;padding:2px}
+.navseg a,.navseg span{color:var(--muted);text-decoration:none;padding:4px 12px;border-radius:6px;font-size:14px;white-space:nowrap}
+.navseg a:hover{color:var(--text)}
+.navseg .active{background:var(--border);color:var(--text);font-weight:600}
+.live{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--muted);flex-wrap:wrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green);animation:pl 1.6s infinite}
+@keyframes pl{0%,100%{opacity:1}50%{opacity:.35}}
+.iconbtn{background:none;border:1px solid var(--border);border-radius:8px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text);padding:0}
+.iconbtn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+[data-theme="dark"] .icon-moon{display:none}
+[data-theme="light"] .icon-sun{display:none}
+.lang{border:1px solid var(--border);border-radius:8px;padding:2px;display:inline-flex;gap:2px}
+.lang button{background:none;border:0;color:var(--muted);cursor:pointer;padding:3px 9px;border-radius:6px;font-size:13px}
+.lang button[aria-pressed="true"]{background:var(--border);color:var(--text)}
+.banner{background:var(--orange-bg);border:1px solid var(--orange);color:var(--text);border-radius:10px;padding:10px 14px;font-size:14px;margin:18px 0 0}
+/* --- v3 signature: radar scope hero --- */
+.scope-hero{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;margin:18px 0 10px;display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+.scope{flex:0 0 auto}
+.scope svg{display:block}
+.sweep{transform-origin:120px 120px;animation:spin 9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.sweep,.dot{animation:none!important}}
+.verdict{flex:1;min-width:260px}
+.verdict .lbl{color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.verdict .v{font-size:30px;font-weight:800;color:var(--green);margin:6px 0}
+.verdict .worst{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:38px;font-weight:700;color:var(--red);margin:8px 0 4px}
+.verdict .sub{color:var(--muted);font-size:13px;line-height:1.55}
+.verdict .rule{color:var(--muted);font-size:12px;margin-top:10px}
+.statstrip{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13px;margin:0 0 6px}
+.statstrip b{color:var(--text)}
+h2{font-size:17px;margin:22px 0 10px}
+.tblwrap{overflow:auto;border:1px solid var(--border);border-radius:12px;max-height:75vh}
+table{width:100%;border-collapse:collapse;font-size:14px;background:var(--surface)}
+thead th{text-align:left;padding:10px 12px;color:var(--muted);font-size:12px;letter-spacing:.05em;text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+tbody tr:hover td{background:var(--surface2)}
+.num{text-align:right;font-family:"JetBrains Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.neg{color:var(--red)} .pos{color:var(--green)} .dim{color:var(--muted)}
+.spark{letter-spacing:1px;color:var(--amber)}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600}
+.pill.closed,.pill.gated{background:var(--border);color:var(--text2)}
+.pill.open,.pill.ok{background:var(--green-bg);color:var(--green)}
+.pill.watch{background:var(--orange-bg);color:var(--orange)}
+.pill.alert{background:var(--red-bg);color:var(--red)}
+.pill.na{background:var(--border);color:var(--muted)}
+.rowcards{display:none}
+.rc{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+.rc .top{display:flex;justify-content:space-between;align-items:center}
+.rc .mid{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:14px}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+.metric{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;min-width:0}
+.metric small{color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+.metric .v{font-size:22px;font-weight:700;margin:4px 0;font-family:"JetBrains Mono",ui-monospace,monospace}
+.metric .s{color:var(--muted);font-size:13px}
+.method-wrap{max-width:820px}
+.method-section{margin:0 0 8px;padding:30px 0 0;border-top:1px solid var(--border)}
+.method-section h2{font-size:19px;margin:0 0 12px;color:var(--amber)}
+.method{font-size:15px;line-height:1.7;color:var(--text2);margin:0 0 20px}
+.foot{color:var(--muted);font-size:13px;line-height:1.6;border-top:1px solid var(--border);margin-top:26px;padding-top:14px}
+@media(max-width:760px){.hide-s{display:none}.metrics{grid-template-columns:1fr}.metrics .metric{text-align:center}}
+@media(max-width:520px){
+  .home-tbl{display:none}.rowcards{display:grid;gap:10px}
+  .scope-hero{flex-direction:column;text-align:center}
+  .verdict{text-align:center}
+  .scope svg{width:200px;height:200px}
+}
+@media(max-width:400px){.navseg a{padding:4px 8px;font-size:13px}}
+@media(orientation:landscape) and (max-width:950px){.wrap{padding:16px 16px 40px}}
+</style>
+<script>
+(function(){try{
+  var q=new URLSearchParams(location.search).get('theme');
+  var t=q==='light'||q==='dark'?q:(localStorage.getItem('exit-radar-mock-theme')||'dark');
+  document.documentElement.setAttribute('data-theme',t);
+  window.__setTheme=function(n){document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('exit-radar-mock-theme',n)}catch(e){}};
+}catch(e){}
+})();
+</script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <svg class="mark" width="30" height="30" viewBox="0 0 40 40" aria-hidden="true">
+        <circle cx="20" cy="20" r="18" fill="none" stroke="#fbbf24" stroke-width="2"/>
+        <circle cx="20" cy="20" r="11" fill="none" stroke="#fbbf24" stroke-width="1" opacity=".55"/>
+        <circle cx="20" cy="20" r="4" fill="none" stroke="#fbbf24" stroke-width="1" opacity=".55"/>
+        <path d="M20 20 L20 4 A16 16 0 0 1 31 9 Z" fill="#fbbf24" opacity=".45"/>
+        <circle cx="27" cy="14" r="2.6" fill="#fbbf24"/>
+        <circle cx="13" cy="26" r="2.2" fill="#4ade80"/>
+      </svg>
+      EXIT <b>RADAR</b>
+    </div>
+    <nav class="navseg" aria-label="Primary">
+      <span class="active">Home</span><a href="#">Ticker</a><a href="#">Methodology</a><a href="#">Waitlist</a><a href="#">Donate</a>
+    </nav>
+    <div class="live">
+      <span class="dot" aria-hidden="true"></span><span>LIVE</span><span>Last updated: 25 Oct 2026, 13:36 WITA</span>
+      <button class="iconbtn" onclick="__setTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark')" aria-label="Ganti tema">
+        <svg class="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
+      <span class="lang"><button aria-pressed="true">EN</button><button>ID</button></span>
+    </div>
+  </header>
+
+  <div class="banner">MOCKUP v3 — DATA CONTOH, BUKAN SITUS LIVE. Tema: ikon matahari/bulan di kanan atas. Tema terang/dark tersimpan di browser.</div>
+
+  <!-- Radar scope hero + exit verdict -->
+  <div class="scope-hero">
+    <div class="scope">
+      <svg width="240" height="240" viewBox="0 0 240 240" role="img" aria-label="Radar scope: blip per ticker menurut deviasi">
+        <circle cx="120" cy="120" r="112" fill="none" stroke="#fbbf24" stroke-width="1.5" opacity=".8"/>
+        <circle cx="120" cy="120" r="78" fill="none" stroke="#8ba190" stroke-width="1" opacity=".5"/>
+        <circle cx="120" cy="120" r="44" fill="none" stroke="#8ba190" stroke-width="1" opacity=".5"/>
+        <line x1="120" y1="8" x2="120" y2="232" stroke="#8ba190" stroke-width="1" opacity=".35"/>
+        <line x1="8" y1="120" x2="232" y2="120" stroke="#8ba190" stroke-width="1" opacity=".35"/>
+        <g class="sweep">
+          <path d="M120 120 L120 14 A106 106 0 0 1 195 45 Z" fill="#fbbf24" opacity=".28"/>
+          <line x1="120" y1="120" x2="120" y2="14" stroke="#fbbf24" stroke-width="2"/>
+        </g>
+        <circle cx="120" cy="120" r="4" fill="#fbbf24"/>
+        <!-- blips: jarak dari pusat = |deviasi|, warna = status -->
+        <circle cx="196" cy="66" r="6" fill="#f87171"/><text x="196" y="88" text-anchor="middle" fill="#f87171" font-size="12" font-family="JetBrains Mono, monospace">GOOGLx</text>
+        <circle cx="146" cy="92" r="5" fill="#4ade80"/><text x="154" y="96" fill="#4ade80" font-size="11" font-family="JetBrains Mono, monospace">TSLAx</text>
+        <circle cx="88" cy="150" r="5" fill="#4ade80"/><text x="58" y="170" fill="#4ade80" font-size="11" font-family="JetBrains Mono, monospace">NVDAx</text>
+        <circle cx="162" cy="168" r="5" fill="#fb923c"/><text x="140" y="188" fill="#fb923c" font-size="11" font-family="JetBrains Mono, monospace">GLDx</text>
+        <circle cx="96" cy="78" r="4" fill="#4ade80"/>
+        <circle cx="136" cy="140" r="4" fill="#4ade80"/>
+      </svg>
+    </div>
+    <div class="verdict">
+      <div class="lbl">Exit verdict — sekarang</div>
+      <div class="v">AMAN KELUAR SEKARANG</div>
+      <div class="worst">−44,6 bps</div>
+      <div class="sub">Deviasi terburuk: GOOGLx · depth $1,36M · 35/35 venue melapor. Semua ticker di bawah ambang Watch 50 bps, tidak ada Alert.</div>
+      <div class="rule">Aturan vonis (tampilan saja): Aman &lt;50 bps · Hati-hati 50–100 bps · Jangan dulu &gt;100 bps, dari deviasi terburuk saat ini. Bukan saran finansial.</div>
+    </div>
+  </div>
+  <div class="statstrip">
+    <span>13 Ticker · <b>35/35</b> pool melapor</span>
+    <span>PoR: <b>—</b> belum ada feed</span>
+    <span>Redemption: <b>Closed</b> · buka lagi 26 Okt 12:00 WITA</span>
+  </div>
+
+  <h2>All tickers — latest deviation</h2>
+  <div class="tblwrap home-tbl"><table>
+    <thead><tr><th>Ticker</th><th>Tier</th><th>Depth-weighted price</th><th>Dev vs median</th><th>Spread</th><th>Depth</th><th>Redemption</th><th>PoR age</th><th>Status</th><th>Spark 24h</th><th>Detail</th></tr></thead>
+    <tbody>
+      <tr><td><b>GOOGLx</b></td><td>1</td><td class="num">$280,14</td><td class="num neg">−44,6</td><td class="num">0,12%</td><td class="num">$1,36M</td><td><span class="pill closed">Closed</span></td><td class="dim">Not published</td><td><span class="pill ok">OK</span></td><td class="spark">███▁▁▁▁▁▁▁▁▁</td><td>Detail →</td></tr>
+      <tr><td><b>GLDx</b></td><td>1</td><td class="num">$412,05</td><td class="num neg">−31,2</td><td class="num">0,09%</td><td class="num">$0,98M</td><td><span class="pill closed">Closed</span></td><td class="dim">Not published</td><td><span class="pill ok">OK</span></td><td class="spark">▃▃▄▅▆▇▆▅▃▃▂</td><td>Detail →</td></tr>
+      <tr><td><b>TSLAx</b></td><td>1</td><td class="num">$371,79</td><td class="num pos">+5,4</td><td class="num">0,18%</td><td class="num">$2,41M</td><td><span class="pill closed">Closed</span></td><td class="dim">Not published</td><td><span class="pill ok">OK</span></td><td class="spark">▁▁▁▄▄▆▇▅▇▂▇█</td><td>Detail →</td></tr>
+      <tr><td><b>NVDAx</b></td><td>1</td><td class="num">$187,33</td><td class="num pos">+12,8</td><td class="num">0,11%</td><td class="num">$1,87M</td><td><span class="pill closed">Closed</span></td><td class="dim">Not published</td><td><span class="pill ok">OK</span></td><td class="spark">▂▃▄▅▆▆▅▄▃▂▁</td><td>Detail →</td></tr>
+      <tr><td><b>METAx</b></td><td>1</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td><span class="pill closed">Closed</span></td><td class="dim">Not published</td><td><span class="pill na">—</span></td><td class="dim">—</td><td>Detail →</td></tr>
+    </tbody>
+  </table></div>
+  <div class="rowcards">
+    <div class="rc"><div class="top"><b>GOOGLx</b><span class="pill ok">OK</span></div><div class="mid"><span class="num">$280,14</span><span class="spark">███▁▁▁▁▁▁▁▁▁</span><span class="num"><b>−44,6 bps</b></span></div><div class="mid"><span class="dim">Depth: $1,36M</span><span>Detail →</span></div></div>
+    <div class="rc"><div class="top"><b>TSLAx</b><span class="pill ok">OK</span></div><div class="mid"><span class="num">$371,79</span><span class="spark">▁▁▁▄▄▆▇▅▇▂▇█</span><span class="num"><b>+5,4 bps</b></span></div><div class="mid"><span class="dim">Depth: $2,41M</span><span>Detail →</span></div></div>
+  </div>
+
+  <h2>Cuplikan ticker — TSLAx</h2>
+  <div class="metrics">
+    <div class="metric"><small>Depth-weighted price</small><div class="v">$371,79</div></div>
+    <div class="metric"><small>Deviation vs median</small><div class="v">+0,054%</div><div class="s">+5,4 bps <span class="pill ok">OK</span></div></div>
+    <div class="metric"><small>Deviation vs stock close</small><div class="v">License pending</div></div>
+  </div>
+
+  <div class="method-wrap">
+    <div class="method-section"><h2>Deviation &amp; spread</h2>
+    <p class="method">Contoh seksi metodologi dengan gaya v3: judul seksi memakai aksen amber, pembatas antar seksi tetap, kata tidak diubah saat build beneran.</p>
+    </div>
+  </div>
+
+  <div class="foot">EXIT RADAR — mockup desain v3. Elemen baru vs v2: logo scope, hero radar scope + exit verdict, aksen amber fosfor (ganti teal), nav 5 tab (Donate ikut). Data, ambang, dan teks metodologi tidak berubah saat build beneran.</div>
+</div>
+</body>
+</html>
