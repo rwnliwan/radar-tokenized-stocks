@@ -561,3 +561,31 @@ begitu token asli terpasang.
   dev selalu NULL; COINx/HOODx/METAx single-pool by design. Check
   history harness dipindah ke TSLAx (3 pool, dev live); check detail
   tetap di GOOGLx (mencakup jalur null-dev).
+- Fix ronde 5 Terra (SELESAI 8 Nov 2026, skor Radar 6,7): M1 stale gate
+  bot kini berjangkar siklus sukses terakhir (`load_health_age_minutes`
+  membaca `cycles_ok`; baris gagal bertimestamp segar tak lagi
+  membutakan gate 30 menit) + test `qa/test_r5_fix.py` (12 checks PASS);
+  M2 spread bot + median alert memakai populasi pool lolos (reserve
+  ≥$100k) + guard 25% — sama dengan poller/Worker (`bot.py: LIQ_MIN`,
+  `load_live_tickers`, `evaluate_alerts`; konsekuensi: alert NVDAx
+  4,426% 6 Nov tidak akan menyala lagi karena pool low-nya $96.257,
+  test guard diperbarui 18→20 checks PASS); M3 `best_exit_venues`
+  memfilter `reserve_usd >= $100k` (tanpa pool lolos → []); M4 SATU
+  kontrak freshness (umur sejak sukses terakhir + failed streak,
+  stale bila >15 mnt atau streak ≥2) di `logic.py: freshness_status`,
+  `api/worker.js: healthSummary` → `/api/health` + meta `/api/latest`,
+  dan frontend memanggil `/api/health` (kontrak didokumentasi di
+  `GATE-A1-G0.md` §4); S1 median alert deviasi = median poller
+  (lolos + guard); S2 nilai hilang dirender "—" bukan $0,00; S3 tulis
+  waitlist Streamlit lewat Worker dulu + `insert_waitlist` menegakkan
+  validasi/dedup atomik yang identik (fallback aman); N1 label ambang
+  status UI vs alert Telegram (web + dashboard); N2 judul exit jadi
+  "Deepest reserve venue by size"; N3 docstring `TICKER_PAGE_BASE`
+  diluruskan ke rute live `/ticker/<ticker>`; N4 klaim snapshot
+  redemption dibatasi ke yang benar-benar dicegah (eval-vs-dedup);
+  N5 LIMIT 500 didokumentasi aman untuk 13 ticker (tanpa perubahan
+  kode). Ambang alert, dedup 24 jam, jadwal cron, guard 25% di 3
+  komponen, dan definisi G0 TIDAK berubah. Worker TIDAK di-deploy
+  (koordinator yang deploy via `deploy_worker.py`); bot.py live
+  setelah commit via cron; dashboard Streamlit + web Next.js live
+  setelah push (deploy masing-masing platform).

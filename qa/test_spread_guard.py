@@ -69,9 +69,13 @@ SPYX_1906 = {
 # NVDAx, cycle 2026-11-06T19:11:00Z (6 active pools; deviations row:
 # dw=187.82412248448196, dev=0.058132000363294266, depth=3122274.87,
 # pools_used=4, pools_excluded=0). Note the $179.55 pool (reserve
-# $96,257 < $100k) is NOT a poller qualifying pool, but the bot's
-# venue list has never filtered on reserve — it stays in the fixture
-# exactly as the live bot saw it.
+# $96,257 < $100k) is NOT a poller qualifying pool. Before fix ronde 5
+# (M2) the bot's venue list never filtered on reserve, so that pool set
+# the low and the 4.426% spread alert fired. After M2 the bot uses the
+# same qualifying population as the poller, so this fixture NO LONGER
+# fires (qualifying-only spread 0.325%) — the alert was driven by a
+# non-qualifying pool. The genuine-alert coverage moves to
+# NVDAX_QUAL below, where the low pool qualifies.
 NVDAX_1911 = {
     "ticker": "NVDAx", "issuer": "xStocks",
     "venues": [
@@ -80,6 +84,24 @@ NVDAX_1911 = {
         {"dex": "raydium", "price": 187.57, "reserve": 109721.01},
         {"dex": "orca", "price": 187.86, "reserve": 251691.86},
         {"dex": "orca", "price": 179.55, "reserve": 96257.05},
+        {"dex": "meteora", "price": 187.55, "reserve": 93400.45},
+    ],
+    "dw": 187.82412248448196, "dev_med": 0.058132000363294266,
+    "depth": 3122274.87, "pools_used": 4, "median": 187.56,
+    "redemption_status": "open", "por_age_hours": 6.0,
+}
+# NVDAX_QUAL: same prices as NVDAX_1911, but the $179.55 low pool now
+# qualifies (reserve $150,000 >= $100k). The meteora pool ($93,400)
+# stays sub-$100k and is filtered out, so 5 qualifying venues remain
+# and the genuine 4.424% spread still fires on qualifying pools only.
+NVDAX_QUAL = {
+    "ticker": "NVDAx", "issuer": "xStocks",
+    "venues": [
+        {"dex": "raydium", "price": 187.25, "reserve": 131476.02},
+        {"dex": "raydium", "price": 187.86, "reserve": 2629385.98},
+        {"dex": "raydium", "price": 187.57, "reserve": 109721.01},
+        {"dex": "orca", "price": 187.86, "reserve": 251691.86},
+        {"dex": "orca", "price": 179.55, "reserve": 150000.0},
         {"dex": "meteora", "price": 187.55, "reserve": 93400.45},
     ],
     "dw": 187.82412248448196, "dev_med": 0.058132000363294266,
@@ -132,9 +154,17 @@ def main():
     check("guard keeps all NVDAx venues (low pool 4.27% off median)",
           len(kept_nv) == 6, f"kept={len(kept_nv)} median={med_nv}")
 
-    # 6) THE PRESERVATION: genuine NVDAx spread alert STILL fires.
-    nv = spreads(NVDAX_1911)
-    check("NVDAx 19:11 genuine alert STILL fires",
+    # 6) M2 (fix ronde 5): the ORIGINAL NVDAx alert no longer fires —
+    # its low pool ($179.55, reserve $96,257) is below LIQ_MIN, so it is
+    # not a qualifying pool; the qualifying-only spread is 0.325% (< 1%).
+    # The genuine alert is preserved on qualifying pools (NVDAX_QUAL).
+    check("NVDAx 19:11 original NO LONGER fires (low pool sub-$100k, M2)",
+          spreads(NVDAX_1911) == [], f"alerts={spreads(NVDAX_1911)}")
+    check("NVDAx qualifying-only spread is 0.325% (< 1%)",
+          abs((187.86 - 187.25) / NVDAX_1911["dw"] * 100.0 - 0.325) < 0.001,
+          f"qual spread={(187.86 - 187.25) / NVDAX_1911['dw'] * 100.0:.3f}%")
+    nv = spreads(NVDAX_QUAL)
+    check("NVDAx genuine alert STILL fires on qualifying pools",
           len(nv) == 1, f"alerts={nv}")
     if nv:
         check("NVDAx spread value 4.424% (>= 1.0%)",
@@ -144,8 +174,8 @@ def main():
               and nv[0]["low_venue"]["price"] == 179.55
               and nv[0]["low_venue"]["dex"] == "orca",
               f"hi={nv[0]['high_venue']} lo={nv[0]['low_venue']}")
-        check("NVDAx pools_used counts guarded venues (6)",
-              nv[0]["pools_used"] == 6, f"got {nv[0]['pools_used']}")
+        check("NVDAx pools_used counts qualifying guarded venues (5)",
+              nv[0]["pools_used"] == 5, f"got {nv[0]['pools_used']}")
 
     # 7) Guard is skipped with <3 venues (same limitation as poller):
     # a 2-venue 1.006% spread (existing test_bot_alerts scenario) fires.

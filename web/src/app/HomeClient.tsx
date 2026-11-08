@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "./Header";
 import { DevBar, Sparkline, StatusBlip } from "./BlipBar";
-import { fetchLatest, type LatestResponse, type TickerRow } from "../lib/api";
+import { fetchHealth, fetchLatest, type HealthResponse, type LatestResponse, type TickerRow } from "../lib/api";
 import { buildCsv } from "../lib/csv";
 import {
   fmtAge,
@@ -29,6 +29,7 @@ type SortKey = "dev" | "depth" | "name" | "price";
 export default function HomeClient({ initialData }: { initialData: LatestResponse | null }) {
   const [lang, setLang] = useState<Lang>("en");
   const [data, setData] = useState<LatestResponse | null>(initialData);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(initialData == null);
   const [sortKey, setSortKey] = useState<SortKey>("dev");
@@ -54,6 +55,15 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
       setError(false);
     } catch {
       setError(true);
+    }
+    // Freshness contract (fix ronde 5, M4): /api/health is the canonical
+    // freshness verdict (age since last successful cycle + failed
+    // streak). A health fetch failure never blocks the table — the
+    // snapshot-age fallback below still applies.
+    try {
+      setHealth(await fetchHealth());
+    } catch {
+      /* keep previous health (or none) */
     } finally {
       setLoading(false);
     }
@@ -208,7 +218,13 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
   const ageMin = latestTs
     ? Math.round((Date.now() - Date.parse(latestTs)) / 60000)
     : null;
-  const stale = ageMin != null && ageMin > STALE_MIN;
+  // Freshness contract (M4): prefer the Worker's /api/health verdict;
+  // /api/latest meta carries the same fields as a second fallback.
+  // Snapshot age is only the last resort when health is unreachable.
+  const healthStale = health?.stale ?? data?.meta.stale ?? null;
+  const stale =
+    healthStale != null ? healthStale : ageMin != null && ageMin > STALE_MIN;
+  const staleTime = health?.last_success_ts ?? latestTs;
 
   const redStatus = useMemo(() => {
     const found = data?.tickers.find((r) => r.redemption_status != null);
@@ -294,9 +310,9 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
     <div className="wrap">
       <Header lang={lang} onLangChange={toggleLang} active="home" right={<span>{freshnessText}</span>} />
 
-      {stale && latestTs && (
+      {stale && staleTime && (
         <div className="banner" role="status">
-          {t(lang, "stale_banner", { time: fmtWITA(latestTs, lang) })}
+          {t(lang, "stale_banner", { time: fmtWITA(staleTime, lang) })}
         </div>
       )}
       {error && data && (
@@ -589,6 +605,7 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
               </tbody>
             </table>
           </div>
+          <p className="hint">{t(lang, "status_note")}</p>
           <div className="rowcards">
             {rows.map((r) => (
               <div className="rc" key={r.ticker}>

@@ -1,13 +1,22 @@
 """Pure dashboard logic (no Streamlit, no I/O) — unit-testable.
 
-Freshness (design §6.3): stale when the last successful poller cycle
-is older than 15 minutes OR the last 2 cycles both failed.
+Freshness (design §6.3, unified contract 2026-11-08, fix ronde 5 M4):
+stale when the last SUCCESSFUL poller cycle is older than 15 minutes
+OR the last 2 cycles both failed. The age is anchored on the last
+success, never on a failed cycle's timestamp — a failed cycle writes
+a fresh-timestamped row, so anchoring on it would understate how old
+the data really is. The same contract (age since last success,
+failed_streak, stale) is exposed by /api/health and used by the public
+frontend; the Telegram bot uses the same age with its own 30-min gate.
 WITA = UTC + 8 (Asia/Makassar has no DST).
 Best exit venue (design §6.1.8): deepest qualifying pool per size,
 flagged when the size exceeds 5% of that pool's reserve. This is an
 estimate from depth, never an execution promise.
 """
 from datetime import datetime, timedelta, timezone
+
+LIQ_MIN = 100000.0  # qualifying pool: reserve >= $100k (same as poller
+# LIQ_MIN, bot.py LIQ_MIN, api/worker.js LIQ_MIN).
 
 WITA = timezone(timedelta(hours=8))
 MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -51,26 +60,46 @@ def fmt_wita(iso, lang="en"):
 def freshness_status(health_rows, now_utc):
     """health_rows: newest-first list of {cycle_ts, cycles_ok}.
 
-    Returns {last_ts, age_min, failed_streak, stale}.
-    Empty input -> stale (no heartbeat at all).
+    Returns {last_ts, last_cycle_ts, last_success_ts, age_min,
+    failed_streak, stale}. last_ts is the last SUCCESSFUL cycle's ts
+    (the honest "last updated" stamp); last_cycle_ts is the newest row
+    whatever its outcome. Empty input, or no success at all -> stale
+    (no heartbeat / no trustworthy data).
     """
     if not health_rows:
-        return {"last_ts": None, "age_min": None, "failed_streak": 0, "stale": True}
-    last_ts = parse_ts(health_rows[0].get("cycle_ts"))
-    if last_ts is None:
-        return {"last_ts": None, "age_min": None, "failed_streak": 0, "stale": True}
-    age_min = (now_utc - last_ts).total_seconds() / 60.0
+        return {"last_ts": None, "last_cycle_ts": None, "last_success_ts": None,
+                "age_min": None, "failed_streak": 0, "stale": True}
+    last_cycle_ts = parse_ts(health_rows[0].get("cycle_ts"))
     streak = 0
+    last_success = None
     for row in health_rows:
         try:
             ok = int(row.get("cycles_ok") or 0)
         except (TypeError, ValueError):
             ok = 0
         if ok == 1:
+            last_success = parse_ts(row.get("cycle_ts"))
             break
         streak += 1
+    if last_success is None:
+        return {"last_ts": None,
+                "last_cycle_ts": health_rows[0].get("cycle_ts"),
+                "last_success_ts": None, "age_min": None,
+                "failed_streak": streak, "stale": True}
+    age_min = (now_utc - last_success).total_seconds() / 60.0
     stale = age_min > 15.0 or streak >= 2
-    return {"last_ts": health_rows[0].get("cycle_ts"), "age_min": age_min,
+    last_success_ts = None
+    for row in health_rows:
+        try:
+            ok = int(row.get("cycles_ok") or 0)
+        except (TypeError, ValueError):
+            ok = 0
+        if ok == 1:
+            last_success_ts = row.get("cycle_ts")
+            break
+    return {"last_ts": last_success_ts,
+            "last_cycle_ts": health_rows[0].get("cycle_ts"),
+            "last_success_ts": last_success_ts, "age_min": age_min,
             "failed_streak": streak, "stale": stale}
 
 
@@ -95,11 +124,15 @@ def fmt_abbr(v):
 def best_exit_venues(venue_rows, sizes=(1000, 5000, 10000)):
     """venue_rows: latest snapshot per pool with reserve_usd + dex + price.
 
-    Returns one row per size: deepest pool, flagged when size > 5% of
-    its reserve. Empty input -> [] (caller shows 'no data').
+    Returns one row per size: deepest QUALIFYING pool (reserve_usd >=
+    LIQ_MIN, $100k — fix ronde 5, M3), flagged when size > 5% of its
+    reserve. No qualifying pool -> [] (caller shows 'no data'): a
+    sub-$100k pool must never be crowned "best exit venue" while the
+    Worker reports best_price null for the same ticker.
     """
     usable = [v for v in venue_rows
-              if v.get("reserve_usd") is not None and v.get("price_usd") is not None]
+              if v.get("reserve_usd") is not None and v.get("price_usd") is not None
+              and float(v["reserve_usd"]) >= LIQ_MIN]
     if not usable:
         return []
     best = max(usable, key=lambda v: float(v["reserve_usd"]))

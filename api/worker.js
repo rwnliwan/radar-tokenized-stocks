@@ -107,6 +107,42 @@ function crossVenueSpread(venues, dw) {
   return ((Math.max(...guarded) - Math.min(...guarded)) / dw) * 100;
 }
 
+// Shared freshness contract (fix ronde 5, M4): ONE definition used by
+// /api/health, /api/latest meta, dashboard/logic.py freshness_status,
+// and (with its own 30-min gate) the Telegram bot's stale gate.
+// Input: newest-first poller_health rows {cycle_ts, cycles_ok}.
+// Age is anchored on the last SUCCESSFUL cycle (cycles_ok = 1): a
+// failed cycle writes a fresh-timestamped row, so anchoring on the
+// newest row understates data age — the old /api/health did exactly
+// that, and the old bot gate was blind the same way. stale = no success
+// ever, or age > 15 min, or >= 2 consecutive failed cycles.
+function healthSummary(health) {
+  let failedStreak = 0;
+  let lastSuccessTs = null;
+  let cyclesOk = null;
+  if (health.length) {
+    cyclesOk = health[0].cycles_ok;
+    for (const h of health) {
+      if (Number(h.cycles_ok) === 1) {
+        lastSuccessTs = h.cycle_ts;
+        break;
+      }
+      failedStreak += 1;
+    }
+  }
+  const ageMin =
+    lastSuccessTs != null ? (Date.now() - Date.parse(lastSuccessTs)) / 60000 : null;
+  const stale = ageMin == null || ageMin > 15 || failedStreak >= 2;
+  return {
+    cycles_ok: cyclesOk,
+    failed_streak: failedStreak,
+    last_success_ts: lastSuccessTs,
+    age_minutes: ageMin != null ? Math.round(ageMin * 10) / 10 : null,
+    stale,
+    fresh: !stale,
+  };
+}
+
 async function loadLatest(env) {
   const [
     uniR,
@@ -122,6 +158,10 @@ async function loadLatest(env) {
     [
       "SELECT ticker_id, ts, depth_weighted_price, dev_vs_median_pct, " +
         "qualifying_depth_usd, pools_used FROM deviations " +
+        // LIMIT 500 capacity (fix ronde 5, N5): 13 tickers x ~38 cycles
+        // (~3.2h at the 5-min cadence) — the newest row per ticker
+        // always survives inside the window. Revisit if the universe
+        // grows a lot.
         "ORDER BY ts DESC, id DESC LIMIT 500",
     ],
     [
@@ -148,7 +188,7 @@ async function loadLatest(env) {
         "COUNT(DISTINCT pool_id) AS live FROM snapshots " +
         "WHERE ts = (SELECT MAX(ts) FROM snapshots)",
     ],
-    ["SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 1"],
+    ["SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 12"],
     [
       "SELECT ticker_id, ts, dev_vs_median_pct FROM deviations " +
         "WHERE ts >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour') " +
@@ -176,7 +216,8 @@ async function loadLatest(env) {
     (seriesByTicker[r.ticker_id] ||= []).push(r);
   }
   const vl = rowsOf(venuesLiveR)[0] || {};
-  const health = rowsOf(healthR)[0] || null;
+  const health = rowsOf(healthR);
+  const hs = healthSummary(health);
 
   let latestTs = null;
   const tickers = uni.map((u) => {
@@ -226,7 +267,13 @@ async function loadLatest(env) {
       latest_ts: latestTs,
       venues_live: vl.live != null ? Number(vl.live) : 0,
       venues_total: vl.total != null ? Number(vl.total) : 0,
-      poller_last_cycle: health ? health.cycle_ts : null,
+      poller_last_cycle: health.length ? health[0].cycle_ts : null,
+      // Freshness contract (M4): same fields as /api/health.
+      cycles_ok: hs.cycles_ok,
+      failed_streak: hs.failed_streak,
+      last_success_ts: hs.last_success_ts,
+      stale: hs.stale,
+      fresh: hs.fresh,
     },
   };
 }
@@ -235,8 +282,10 @@ async function loadHealthMeta(env) {
   // 2026-11-04 read-burn fix: /api/health (dipoll UptimeRobot tiap ~5 mnt)
   // dulu memanggil loadLatest() penuh (~40K reads: scan 1 jam deviations
   // 39K baris index). Health cuma butuh sinyal freshness -> satu pipeline
-  // murah (~200 reads). Bentuk JSON response TIDAK berubah.
-  const [r] = await pipeline(env, [
+  // murah (~200 reads). Bentuk JSON response TIDAK berubah — kecuali
+  // penambahan field kontrak freshness (M4, 2026-11-08): cycles_ok,
+  // failed_streak, last_success_ts, stale (lihat healthSummary).
+  const [r, hR] = await pipeline(env, [
     [
       "SELECT (SELECT MAX(ts) FROM snapshots) AS latest_ts, " +
         "(SELECT COUNT(*) FROM pools WHERE is_active = 1) AS total, " +
@@ -244,13 +293,21 @@ async function loadHealthMeta(env) {
         "WHERE ts = (SELECT MAX(ts) FROM snapshots)) AS live, " +
         "(SELECT cycle_ts FROM poller_health ORDER BY id DESC LIMIT 1) AS plc",
     ],
+    ["SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 12"],
   ]);
   const row = rowsOf(r)[0] || {};
+  const hs = healthSummary(rowsOf(hR));
   return {
     latest_ts: row.latest_ts || null,
     venues_live: row.live != null ? Number(row.live) : 0,
     venues_total: row.total != null ? Number(row.total) : 0,
     poller_last_cycle: row.plc || null,
+    cycles_ok: hs.cycles_ok,
+    failed_streak: hs.failed_streak,
+    last_success_ts: hs.last_success_ts,
+    age_minutes: hs.age_minutes,
+    stale: hs.stale,
+    fresh: hs.fresh,
   };
 }
 
@@ -622,14 +679,15 @@ export default {
       }
       if (url.pathname === "/api/health") {
         const meta = await loadHealthMeta(env);
-        const ageMin = meta.latest_ts
-          ? (Date.now() - Date.parse(meta.latest_ts)) / 60000
-          : null;
         return json({
           latest_ts: meta.latest_ts,
           poller_last_cycle: meta.poller_last_cycle,
-          age_minutes: ageMin != null ? Math.round(ageMin * 10) / 10 : null,
-          fresh: ageMin != null && ageMin <= 15,
+          age_minutes: meta.age_minutes,
+          fresh: meta.fresh,
+          stale: meta.stale,
+          cycles_ok: meta.cycles_ok,
+          failed_streak: meta.failed_streak,
+          last_success_ts: meta.last_success_ts,
           venues_live: meta.venues_live,
           venues_total: meta.venues_total,
         });

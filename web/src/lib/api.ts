@@ -29,6 +29,12 @@ export type LatestResponse = {
     venues_live: number;
     venues_total: number;
     poller_last_cycle: string | null;
+    // Freshness contract (fix ronde 5, M4): mirrored from /api/health.
+    cycles_ok?: number | null;
+    failed_streak?: number;
+    last_success_ts?: string | null;
+    stale?: boolean;
+    fresh?: boolean;
   };
 };
 
@@ -38,6 +44,30 @@ export async function fetchLatest(signal?: AbortSignal): Promise<LatestResponse>
   const res = await fetch(`${base}/api/latest`, { cache: "no-store", signal });
   if (!res.ok) throw new Error(`API HTTP ${res.status}`);
   return (await res.json()) as LatestResponse;
+}
+
+export type HealthResponse = {
+  latest_ts: string | null;
+  poller_last_cycle: string | null;
+  age_minutes: number | null;
+  fresh: boolean;
+  stale: boolean;
+  cycles_ok: number | null;
+  failed_streak: number;
+  last_success_ts: string | null;
+  venues_live: number;
+  venues_total: number;
+};
+
+/* Freshness contract (fix ronde 5, M4): the homepage banner uses the
+   Worker's /api/health verdict (age since last SUCCESSFUL cycle +
+   failed streak), not a locally computed snapshot age. */
+export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  const base = process.env.NEXT_PUBLIC_RADAR_API_BASE;
+  if (!base) throw new Error("API base URL is not configured");
+  const res = await fetch(`${base}/api/health`, { cache: "no-store", signal });
+  if (!res.ok) throw new Error(`API HTTP ${res.status}`);
+  return (await res.json()) as HealthResponse;
 }
 
 export type AlertRow = {

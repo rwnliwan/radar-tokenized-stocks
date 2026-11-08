@@ -98,3 +98,58 @@ bersamaan dengan G0 (vote Q6 A, 3–0 bulat).
   suatu hari ada jeda on-chain sungguhan, atau diuji dengan simulasi
   (butuh keputusan terpisah). Bukan blocker G0, tapi jangan klaim
   format 🔴 sudah teruji.
+
+## 4. Kontrak freshness tunggal + populasi qualifying (fix ronde 5, 8 Nov 2026)
+
+Review ronde 5 (Terra) menemukan tiga permukaan memakai definisi
+berbeda untuk data "segar" dan venue "lolos". Sejak fix ini berlaku
+SATU kontrak bersama — ambang TIDAK berubah (alert spread ≥1,0%,
+|dev| ≥3,0%, dedup 24 jam, stale gate bot 30 menit, guard 25%).
+
+### Freshness (umur + failed streak)
+- Definisi: `last_success_ts` = cycle_ts baris `poller_health`
+  terbaru dengan `cycles_ok = 1`; `age_min` = menit sejak
+  `last_success_ts` (null bila belum pernah sukses);
+  `failed_streak` = jumlah baris `cycles_ok = 0` berturut-turut dari
+  yang terbaru; `stale` = `age_min` null ATAU `age_min > 15` ATAU
+  `failed_streak >= 2`.
+- Dipakai di: `dashboard/logic.py: freshness_status` (umur kini
+  berjangkar sukses terakhir, bukan baris terbaru — baris gagal
+  bertimestamp segar sebelumnya menyembunyikan umur data);
+  `api/worker.js: healthSummary` → `/api/health` (field baru:
+  `cycles_ok`, `failed_streak`, `last_success_ts`, `stale`; field lama
+  dipertahankan) dan meta `/api/latest` (field yang sama);
+  frontend publik `web/src/app/HomeClient.tsx` (memanggil
+  `/api/health` tiap poll 60 detik; fallback ke meta `/api/latest`,
+  lalu ke umur snapshot bila health tak terjangkau).
+- Bot Telegram memakai umur yang sama (`bot.py:
+  load_health_age_minutes` berjangkar sukses terakhir) dengan
+  gerbangnya sendiri 30 menit. Sengaja TIDAK memicu gate pada
+  `failed_streak >= 2` saja: itu akan menurunkan ambang efektif
+  menjadi ~10 menit pada kadensi 5 menit — ambang 30 menit adalah
+  keputusan Septian dan tidak diubah.
+
+### Populasi qualifying (reserve ≥ $100k + guard 25%)
+- `LIQ_MIN = $100.000` kini ditegakkan di semua tempat yang menghitung
+  dari venue: poller (sumber aturan), `bot.py` (query snapshot +
+  `evaluate_alerts`), `api/worker.js` (`crossVenueSpread`, best pool),
+  `dashboard/logic.py: best_exit_venues` (tanpa pool lolos → []),
+  `dashboard/app.py: cross_venue_spread`.
+- Median alert deviasi = median harga pool lolos SETELAH guard 25%
+  (`bot.py: load_live_tickers`) — median yang sama dengan yang
+  dipakai poller untuk `dev_med`, bukan median snapshot mentah.
+- Konsekuensi tercatat: alert spread NVDAx 6 Nov 19:11 (4,426%)
+  didorong pool $179,55 dengan reserve $96.257 (< $100k) — setelah
+  M2 alert itu TIDAK akan menyala lagi (spread khusus-pool-lolos
+  0,325%); alert asli pada pool lolos tetap menyala (fixture
+  `NVDAX_QUAL`, 4,424%). Test guard diperbarui untuk ini:
+  `qa/test_spread_guard.py` kini 20 checks (dari 18).
+
+### Waitlist: satu jalur validasi + dedup
+- Submit dashboard Streamlit kini lewat Worker `/api/waitlist` dulu
+  (validasi format kontak, batas panjang, cap 500/jam, dedup atomik
+  `WHERE NOT EXISTS`); bila Worker tak terjangkau, fallback ke
+  `dashboard/turso_read.py: insert_waitlist`, yang kini menegakkan
+  aturan IDENTIK di dalam proses — jadi tidak ada lagi jalur tulis
+  yang bisa menduplikasi kontak dan mencemari angka bukti G0.
+  Penolakan validasi (400) bersifat final, tidak di-fallback.

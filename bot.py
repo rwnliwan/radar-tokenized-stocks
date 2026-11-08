@@ -36,7 +36,12 @@ evaluation and dedup. Previously each side queried separately; a
 poller commit landing between the two reads made evaluation see
 'closed' while dedup saw 'no live window', re-firing 13 redemption
 alerts on 2026-10-26 after the window had opened. Never re-query
-redemption status inside the suppression path. Redemption dedups per
+redemption status inside the suppression path. Precision (fix ronde 5):
+the snapshot is one query PER ISSUER in sequence, not one atomic
+database snapshot — a poller commit between two issuer queries can
+still split status ACROSS issuers. What the rule guarantees is that
+evaluation and dedup agree on the same rows; it does not guarantee
+the window is still closed by the time a message is sent. Redemption dedups per
 ticker: ('TSLAx', 'redemption') and ('TSLAx', 'redemption_paused')
 are DISTINCT keys, so a recorded closed alert never suppresses a
 paused alert for the same ticker (and vice versa). Paused is HIGH
@@ -52,10 +57,9 @@ sending fails fast with a clear message — the token does not exist
 yet (Septian creates the bot via BotFather). No token value is ever
 printed, logged, or written anywhere. No placeholder token is used.
 
-TICKER_PAGE_BASE is the INTENDED subdomain URL pattern
-(https://radar.omdanny.site/<ticker>). It activates only when the
-subdomain decision lands (see BUILD_LOG_FASE2.md); until then the
-link in dry-run messages is a template, not a live page.
+TICKER_PAGE_BASE is the live public-site base URL
+(https://radar.omdanny.site); alert links point at the real
+/ticker/<ticker> route (web/src/app/ticker/[id]/page.tsx).
 """
 import argparse
 import json
@@ -290,7 +294,8 @@ def parse_ts(iso):
 
 
 # --- Alert evaluation (pure: data in, alert dicts out) ---
-TICKER_PAGE_BASE = "https://radar.omdanny.site"  # intended; pending subdomain decision
+# Live public ticker pages: https://radar.omdanny.site/ticker/<ticker>
+TICKER_PAGE_BASE = "https://radar.omdanny.site"
 SPREAD_THRESHOLD = 1.0
 DEV_HIGH_THRESHOLD = 3.0
 PRICE_GUARD_MAX_DEV = 0.25  # poller price-sanity guard: drop prices >25% from median
@@ -325,6 +330,10 @@ def guarded_venues(venues):
 
 
 DEPTH_MIN = 250000.0
+LIQ_MIN = 100000.0  # qualifying pool: reserve >= $100k (same as poller
+# LIQ_MIN and api/worker.js LIQ_MIN). Fix ronde 5 (M2): the spread
+# check used to run on ALL active pools regardless of reserve, while
+# dw/depth/dev come from the poller, which only uses qualifying pools.
 POR_STALE_HOURS = 72.0
 DEDUP_HOURS = 24.0
 STALE_MINUTES = 30.0
@@ -344,8 +353,12 @@ def evaluate_alerts(tickers_data, market_open):
     ticker). Other alert types stay per-ticker as before."""
     alerts = []
     for d in tickers_data:
+        # Qualifying venues only (fix ronde 5, M2): same population the
+        # poller uses for dw/dev (reserve >= LIQ_MIN), then the 25%
+        # price-sanity guard. A sub-$100k pool can no longer set hi/lo.
         venues = [v for v in d.get("venues", [])
-                  if v.get("price") is not None and v.get("reserve") is not None]
+                  if v.get("price") is not None and v.get("reserve") is not None
+                  and v["reserve"] >= LIQ_MIN]
         depth = d.get("depth")
         # Spread is evaluated on price-sanity-guarded venues (see
         # guarded_venues): a pool the poller guard excluded must not
@@ -416,16 +429,16 @@ BOT_STR = {
         "spread_head": "🔴 SPREAD — {ticker} ({issuer})",
         "spread_body": ("Highest venue: {hi_dex} ${hi_price:,.2f} · "
                         "Lowest venue: {lo_dex} ${lo_price:,.2f}\n"
-                        "Depth-weighted price: ${dw:,.2f} · Spread: {spread:.2f}% "
+                        "Depth-weighted price: {dw_s} · Spread: {spread:.2f}% "
                         "(threshold {thr:.1f}%)\n"
-                        "Qualifying depth: ${depth:,.0f} across {n} pools · "
-                        "Reference: cross-venue median ${median:,.2f}"),
+                        "Qualifying depth: {depth_s} across {n_s} pools · "
+                        "Reference: cross-venue median {median_s}"),
         "dev_head": "🟠 HIGH DEVIATION — {ticker} ({issuer})",
-        "dev_body": ("Depth-weighted price: ${dw:,.2f} · "
+        "dev_body": ("Depth-weighted price: {dw_s} · "
                     "Deviation vs cross-venue median: {dev:+.2f}% "
                     "(high-priority threshold {thr:.1f}%)\n"
-                    "Qualifying depth: ${depth:,.0f} across {n} pools · "
-                    "Reference: cross-venue median ${median:,.2f} · "
+                    "Qualifying depth: {depth_s} across {n_s} pools · "
+                    "Reference: cross-venue median {median_s} · "
                     "Note: vs-close is unavailable (data license pending), "
                     "so this alert uses the median basis."),
         "red_head": "🟡 REDEMPTION — {ticker} ({issuer})",
@@ -433,8 +446,8 @@ BOT_STR = {
         "red_body": ("Redemption window: {status}\n"
                     "Next opening: {nxt}\n"
                     "\n"
-                    "Price (depth-weighted): ${dw:,.2f}\n"
-                    "Qualifying depth: ${depth:,.0f} across {n} pools\n"
+                    "Price (depth-weighted): {dw_s}\n"
+                    "Qualifying depth: {depth_s} across {n_s} pools\n"
                     "\n"
                     "{note}"),
         "red_batch_status_closed": "closed",
@@ -451,8 +464,8 @@ BOT_STR = {
         "por_head": "🟡 PROOF-OF-RESERVE STALE — {ticker} ({issuer})",
         "por_body": ("PoR feed age: {age:.1f} hours (threshold {thr:.0f}h) · "
                     "Last update: {upd}\n"
-                    "Depth-weighted price: ${dw:,.2f} · "
-                    "Qualifying depth: ${depth:,.0f} across {n} pools\n"
+                    "Depth-weighted price: {dw_s} · "
+                    "Qualifying depth: {depth_s} across {n_s} pools\n"
                     "Reserves freshness for this issuer is not confirmed."),
         "disclaimer": "Not financial advice. Prices are market data, not recommendations.",
     },
@@ -460,16 +473,16 @@ BOT_STR = {
         "spread_head": "🔴 SPREAD — {ticker} ({issuer})",
         "spread_body": ("Venue tertinggi: {hi_dex} ${hi_price:,.2f} · "
                         "Venue terendah: {lo_dex} ${lo_price:,.2f}\n"
-                        "Harga tertimbang kedalaman: ${dw:,.2f} · Spread: {spread:.2f}% "
+                        "Harga tertimbang kedalaman: {dw_s} · Spread: {spread:.2f}% "
                         "(ambang {thr:.1f}%)\n"
-                        "Kedalaman lolos: ${depth:,.0f} di {n} pool · "
-                        "Acuan: median lintas-venue ${median:,.2f}"),
+                        "Kedalaman lolos: {depth_s} di {n_s} pool · "
+                        "Acuan: median lintas-venue {median_s}"),
         "dev_head": "🟠 DEVIASI TINGGI — {ticker} ({issuer})",
-        "dev_body": ("Harga tertimbang kedalaman: ${dw:,.2f} · "
+        "dev_body": ("Harga tertimbang kedalaman: {dw_s} · "
                     "Deviasi vs median lintas-venue: {dev:+.2f}% "
                     "(ambang prioritas tinggi {thr:.1f}%)\n"
-                    "Kedalaman lolos: ${depth:,.0f} di {n} pool · "
-                    "Acuan: median lintas-venue ${median:,.2f} · "
+                    "Kedalaman lolos: {depth_s} di {n_s} pool · "
+                    "Acuan: median lintas-venue {median_s} · "
                     "Catatan: vs-close belum tersedia (lisensi menunggu), "
                     "jadi alert ini memakai basis median."),
         "red_head": "🟡 REDEMPTION — {ticker} ({issuer})",
@@ -477,8 +490,8 @@ BOT_STR = {
         "red_body": ("Status jendela redemption: {status}\n"
                     "Pembukaan berikutnya: {nxt}\n"
                     "\n"
-                    "Harga (tertimbang kedalaman): ${dw:,.2f}\n"
-                    "Kedalaman lolos: ${depth:,.0f} di {n} pool\n"
+                    "Harga (tertimbang kedalaman): {dw_s}\n"
+                    "Kedalaman lolos: {depth_s} di {n_s} pool\n"
                     "\n"
                     "{note}"),
         "red_batch_status_closed": "tutup",
@@ -495,8 +508,8 @@ BOT_STR = {
         "por_head": "🟡 PROOF-OF-RESERVE BASI — {ticker} ({issuer})",
         "por_body": ("Umur feed PoR: {age:.1f} jam (ambang {thr:.0f} jam) · "
                     "Pembaruan terakhir: {upd}\n"
-                    "Harga tertimbang kedalaman: ${dw:,.2f} · "
-                    "Kedalaman lolos: ${depth:,.0f} di {n} pool\n"
+                    "Harga tertimbang kedalaman: {dw_s} · "
+                    "Kedalaman lolos: {depth_s} di {n_s} pool\n"
                     "Kesegaran cadangan issuer ini tidak terkonfirmasi."),
         "disclaimer": "Bukan nasihat keuangan. Harga adalah data pasar, bukan rekomendasi.",
     },
@@ -505,6 +518,21 @@ BOT_STR = {
 
 def _fmt_money(x):
     return f"{float(x):,.2f}"
+
+
+def _usd(x):
+    """'$1,234.56' for a price, '—' when the value is missing (fix ronde 5,
+    S2: missing data must never render as $0.00 — 'unavailable' is not zero)."""
+    return f"${float(x):,.2f}" if x is not None else "—"
+
+
+def _usd0(x):
+    """'$1,234,567' for a depth, '—' when missing."""
+    return f"${float(x):,.0f}" if x is not None else "—"
+
+
+def _count(x):
+    return str(x) if x is not None else "—"
 
 
 # --- WITA rendering for next-opening (alert format, ACC 25 Okt 2026) ---
@@ -540,14 +568,15 @@ def format_alert(alert, lang="en"):
         body = s["spread_body"].format(
             hi_dex=alert["high_venue"]["dex"], hi_price=alert["high_venue"]["price"],
             lo_dex=alert["low_venue"]["dex"], lo_price=alert["low_venue"]["price"],
-            dw=alert["dw"], spread=alert["spread_pct"], thr=SPREAD_THRESHOLD,
-            depth=alert["depth"], n=alert["pools_used"], median=alert["median"])
+            dw_s=_usd(alert["dw"]), spread=alert["spread_pct"], thr=SPREAD_THRESHOLD,
+            depth_s=_usd0(alert["depth"]), n_s=_count(alert["pools_used"]),
+            median_s=_usd(alert["median"]))
     elif alert["type"] == "deviation_high":
         head = s["dev_head"].format(ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
         body = s["dev_body"].format(
-            dw=alert["dw"], dev=alert["dev_pct"], thr=DEV_HIGH_THRESHOLD,
-            depth=alert["depth"] or 0, n=alert["pools_used"] or 0,
-            median=alert["median"])
+            dw_s=_usd(alert["dw"]), dev=alert["dev_pct"], thr=DEV_HIGH_THRESHOLD,
+            depth_s=_usd0(alert["depth"]), n_s=_count(alert["pools_used"]),
+            median_s=_usd(alert["median"]))
     elif alert["type"] in ("redemption", "redemption_paused"):
         paused = alert["type"] == "redemption_paused"
         head = (s["red_paused_head"] if paused else s["red_head"]).format(
@@ -561,8 +590,8 @@ def format_alert(alert, lang="en"):
             lang)
         body = s["red_body"].format(
             status=status_txt, note=note, nxt=nxt,
-            dw=alert.get("dw") or 0, depth=alert.get("depth") or 0,
-            n=alert.get("pools_used") or 0)
+            dw_s=_usd(alert.get("dw")), depth_s=_usd0(alert.get("depth")),
+            n_s=_count(alert.get("pools_used")))
         if paused:
             body = s["red_batch_paused_priority"] + "\n\n" + body
     elif alert["type"] == "por":
@@ -570,8 +599,8 @@ def format_alert(alert, lang="en"):
         body = s["por_body"].format(
             age=alert["age_hours"], thr=POR_STALE_HOURS,
             upd=alert.get("last_update") or "—",
-            dw=alert.get("dw") or 0, depth=alert.get("depth") or 0,
-            n=alert.get("pools_used") or 0)
+            dw_s=_usd(alert.get("dw")), depth_s=_usd0(alert.get("depth")),
+            n_s=_count(alert.get("pools_used")))
     else:
         raise ValueError(f"unknown alert type {alert['type']}")
     return f"{head}\n\n{body}\n\n{link}\n\n{s['disclaimer']}"
@@ -606,9 +635,12 @@ def handle_command(text, lang="en"):
 def snapshot_redemption_rows():
     """One redemption_windows snapshot per pass, shared by evaluation
     and dedup (see SINGLE-SNAPSHOT RULE in the module docstring).
-    Returns {issuer: [rows DESC by observed_at]}. A pass that reads
-    the status twice can split across a poller commit and fire on a
-    window that already ended; a pass that reads once cannot."""
+    Returns {issuer: [rows DESC by observed_at]}. Sharing one snapshot
+    between evaluation and dedup prevents the 2026-10-26 race (eval saw
+    'closed' while dedup saw 'no live window'). Precision: this is one
+    query PER ISSUER in sequence, not one atomic database snapshot — a
+    poller commit between two issuer queries can still split status
+    across issuers, and a window can end after the snapshot is read."""
     snap = {}
     for r in db_query("SELECT DISTINCT issuer FROM universe"):
         iss = r["issuer"]
@@ -623,6 +655,9 @@ def load_live_tickers(red_rows_by_issuer=None):
     uni = db_query(
         "SELECT ticker_id, issuer FROM universe ORDER BY tier, ticker_id")
     latest = {}
+    # LIMIT 500 capacity note (fix ronde 5, N5): 13 tickers x ~38 cycles
+    # (~3.2h at the 5-min cadence) — the newest row per ticker always
+    # survives inside the window. Revisit if the universe grows a lot.
     rows = db_query(
         "SELECT ticker_id, ts, depth_weighted_price, dev_vs_median_pct, "
         "qualifying_depth_usd, pools_used FROM deviations "
@@ -656,20 +691,32 @@ def load_live_tickers(red_rows_by_issuer=None):
     for u in uni:
         tid = u["ticker_id"]
         d = latest.get(tid) or {}
+        # Latest snapshot per pool, QUALIFYING pools only (fix ronde 5,
+        # M2): the same reserve >= LIQ_MIN population the poller uses for
+        # dw/dev. One snapshot timestamp per pool (poller writes all pools
+        # in one batch ts; per-pool MAX(ts) is the pre-existing pattern).
         snaps = db_query(
             "SELECT p.dex, s.price_usd, s.reserve_usd FROM pools p "
             "JOIN snapshots s ON s.pool_id = p.pool_id "
             "WHERE p.ticker_id = ? AND p.is_active = 1 "
+            "AND s.reserve_usd >= ? "
             "AND s.ts = (SELECT MAX(ts) FROM snapshots s2 WHERE s2.pool_id = p.pool_id)",
-            [tid])
+            [tid, LIQ_MIN])
         venues = [{"dex": s["dex"], "price": s["price_usd"], "reserve": s["reserve_usd"]}
                   for s in snaps
-                  if s["price_usd"] is not None and s["reserve_usd"] is not None]
-        prices = sorted(v["price"] for v in venues)
+                  if s["price_usd"] is not None and s["reserve_usd"] is not None
+                  and s["reserve_usd"] >= LIQ_MIN]
+        # Median for the deviation alert (fix ronde 5, S1): the median of
+        # the SAME population the poller used for dev_med — qualifying
+        # pools after the 25% price-sanity guard — not a re-computed
+        # median over raw snapshots. guarded_venues mirrors the poller
+        # guard exactly (>=3 venues, >25% from median dropped, <3 = skip).
+        guarded = guarded_venues(venues)
+        gprices = sorted(v["price"] for v in guarded)
         median = None
-        if len(prices) >= 2:
-            m = len(prices) // 2
-            median = prices[m] if len(prices) % 2 == 1 else (prices[m - 1] + prices[m]) / 2
+        if len(gprices) >= 2:
+            m = len(gprices) // 2
+            median = gprices[m] if len(gprices) % 2 == 1 else (gprices[m - 1] + gprices[m]) / 2
         red = red_by_issuer.get(u["issuer"])
         por = por_by_issuer.get(u["issuer"])
         out.append({
@@ -688,14 +735,35 @@ def load_live_tickers(red_rows_by_issuer=None):
 
 
 def load_health_age_minutes(now_utc):
+    """Minutes since the last SUCCESSFUL poller cycle (cycles_ok = 1).
+
+    Fix ronde 5 (M1): the old code anchored on the newest poller_health
+    row whatever its cycles_ok — and the poller writes a fresh-timestamped
+    cycles_ok = 0 row on every failed DexScreener fetch, so during a
+    repeated failure the age always read ~0-5 min and the 30-min stale
+    gate could never fire. Anchoring on the last success makes the gate
+    fire once no successful cycle has landed for 30 minutes.
+    Returns None when no successful cycle exists in the last 12 rows
+    (callers treat None as stale — no trustworthy data at all).
+    Deliberately NOT tripping on a failed streak alone: the 30-minute
+    threshold is Septian-decided, and a streak >= 2 trip would silently
+    lower it to ~10 min at the 5-min cadence.
+    """
     rows = db_query(
-        "SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 5")
+        "SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 12")
     if not rows:
         return None
-    last = parse_ts(rows[0]["cycle_ts"])
-    if last is None:
-        return None
-    return (now_utc - last).total_seconds() / 60.0
+    for r in rows:
+        try:
+            ok = int(r.get("cycles_ok") or 0)
+        except (TypeError, ValueError):
+            ok = 0
+        if ok == 1:
+            last = parse_ts(r.get("cycle_ts"))
+            if last is None:
+                return None
+            return (now_utc - last).total_seconds() / 60.0
+    return None
 
 
 def recent_alert_exists(ticker, alert_type, hours=DEDUP_HOURS):
@@ -883,7 +951,7 @@ def main():
         now = datetime.now(UTC)
         age = load_health_age_minutes(now)
         print(f"health age minutes: {age}")
-        if age is not None and age > STALE_MINUTES:
+        if age is None or age > STALE_MINUTES:
             print("STALE GATE: data older than 30 min — no alerts would be sent.")
             return 0
         red_snapshot = snapshot_redemption_rows()

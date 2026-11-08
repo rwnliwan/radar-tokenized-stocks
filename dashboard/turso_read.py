@@ -22,8 +22,25 @@ URL = f"https://{HOST}/v2/pipeline"
 
 INSERT_WAITLIST_SQL = (
     "INSERT INTO waitlist (contact, position_size_usd, venues,"
-    " willing_price, created_at, consent) VALUES (?,?,?,?,?,?)"
+    " willing_price, created_at, consent) SELECT ?, ?, ?, ?, ?, ?"
+    " WHERE NOT EXISTS (SELECT 1 FROM waitlist"
+    " WHERE LOWER(TRIM(contact)) = ?)"
 )
+
+WAITLIST_HOURLY_CAP = 500  # same cap as api/worker.js
+
+
+def valid_contact(contact):
+    """Worker-identical contact rule (api/worker.js validContact): an
+    email address, or a Telegram username (5-32 chars, letters/digits/
+    underscore, optional leading @)."""
+    import re
+    c = (contact or "").strip()
+    if c.startswith("@"):
+        return bool(re.match(r"^[A-Za-z0-9_]{5,32}$", c[1:]))
+    if "@" in c:
+        return bool(re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", c))
+    return bool(re.match(r"^[A-Za-z0-9_]{5,32}$", c))
 
 for _p in (
     "/opt/hatch/workflow-skills/custom-connector-setup/bin/",
@@ -136,17 +153,49 @@ def query(sql, args=None):
 
 def insert_waitlist(contact, position_size_usd, venues, willing_price,
                     created_at, consent):
-    """The dashboard's only write. Validates required fields first."""
-    if not (contact or "").strip():
+    """The dashboard's only write.
+
+    Enforces the SAME guarantees as the Worker (/api/waitlist,
+    api/worker.js handleWaitlist) — fix ronde 5, S3. Before this fix
+    the Streamlit path did required-field checks only, so a resubmitted
+    contact created a duplicate row and garbage contacts polluted the
+    waitlist count (a G0 evidence number). Now: contact format, length
+    caps, hourly cap (500), and an atomic INSERT...WHERE NOT EXISTS
+    dedup on the normalized contact, identical to the Worker.
+    Returns the new row id, or None when the contact was already listed
+    (idempotent success — the caller still shows the success message).
+    """
+    contact = (contact or "").strip()
+    position_size_usd = (position_size_usd or "").strip()
+    venues = (venues or "").strip()
+    willing_price = (willing_price or "").strip() or None
+    if not contact:
         raise ValueError("contact is required")
-    if not (position_size_usd or "").strip():
+    if len(contact) > 200 or not valid_contact(contact):
+        raise ValueError("invalid contact")
+    if not position_size_usd:
         raise ValueError("position_size_usd is required")
-    if not (venues or "").strip():
+    if len(position_size_usd) > 100:
+        raise ValueError("position_size_usd too long")
+    if not venues:
         raise ValueError("venues is required")
+    if len(venues) > 300:
+        raise ValueError("venues too long")
+    if willing_price is not None and len(willing_price) > 100:
+        raise ValueError("willing_price too long")
     if int(consent) != 1:
         raise ValueError("consent is required")
+    hourly = query(
+        "SELECT COUNT(*) AS n FROM waitlist WHERE created_at >= "
+        "strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour')")
+    if hourly and int(hourly[0]["n"]) >= WAITLIST_HOURLY_CAP:
+        raise ValueError("rate limited")
     res = _pipeline([(INSERT_WAITLIST_SQL, [
-        contact.strip(), position_size_usd.strip(), venues.strip(),
-        (willing_price or "").strip() or None, created_at, 1,
+        contact, position_size_usd, venues,
+        willing_price, created_at, 1, contact.lower(),
     ])])[0]
-    return res.get("last_insert_rowid")
+    # rows_written == 0 means the atomic WHERE NOT EXISTS lost the race
+    # to an identical contact — still an idempotent success.
+    if isinstance(res, dict) and res.get("rows_written") == 0:
+        return None
+    return res.get("last_insert_rowid") if isinstance(res, dict) else None

@@ -18,8 +18,11 @@ Test-only hook: env RADAR_TEST_HEALTH_JSON, when set to a JSON list of
 stale banner can be tested without touching production data. It is
 off by default.
 """
+import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -1237,6 +1240,7 @@ def home_table_block(lang):
         st.caption(t(lang, "home_table_note") if window_choice >= 24
                    else t(lang, "home_table_note_cycle"))
         st.caption(t(lang, "home_table_hint"))
+        st.caption(t(lang, "status_note"))
         # v3.2 CSV export of the CURRENTLY DISPLAYED table (same
         # filter + sort order as the dataframe above), numeric values
         # for analysts (the on-screen table keeps display strings).
@@ -1287,6 +1291,50 @@ def home_table_block(lang):
             st.session_state["_home_last_sel"] = []
     else:
         st.markdown(t(lang, "no_data"))
+
+
+def post_waitlist_worker(contact, position, venues, price):
+    """POST one waitlist entry to the Worker (/api/waitlist) so the
+    dashboard goes through the Worker's validation + atomic dedup
+    (fix ronde 5, S3) instead of writing Turso directly.
+
+    Returns "ok" (new row) or "already" (contact was already listed).
+    Raises ValueError on a Worker validation rejection (HTTP 400 — the
+    caller must NOT fall back past it, or the rejection is bypassed)
+    and RuntimeError when the Worker cannot be reached at all (then the
+    caller falls back to insert_waitlist, which enforces the identical
+    rules in-process, so the fallback cannot create a duplicate either).
+    Server-side POST sends no Origin header, so the Worker's
+    browser-origin allowlist does not block it. Base URL from env
+    RADAR_API_BASE or Streamlit secrets, default api.omdanny.site (the
+    same base the public Next.js frontend uses).
+    """
+    base = os.environ.get("RADAR_API_BASE") or ""
+    if not base:
+        try:
+            base = st.secrets.get("RADAR_API_BASE") or ""
+        except Exception:
+            base = ""
+    base = (base or "https://api.omdanny.site").rstrip("/")
+    payload = json.dumps({
+        "contact": contact, "position": position, "venues": venues,
+        "price": price or "", "consent": True,
+    }).encode()
+    req = urllib.request.Request(
+        base + "/api/waitlist", data=payload,
+        headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            raise ValueError("waitlist validation failed")
+        raise RuntimeError(f"waitlist worker HTTP {e.code}")
+    except Exception as e:
+        raise RuntimeError(f"waitlist worker unreachable: {type(e).__name__}")
+    if not body.get("ok"):
+        raise RuntimeError("waitlist worker rejected without ok")
+    return "already" if body.get("already") else "ok"
 
 
 if page == "home":
@@ -1755,13 +1803,40 @@ elif page == "waitlist":
         if not contact.strip() or not venues.strip() or not consent:
             st.error(t(lang, "f_error"))
         else:
+            # S3 (fix ronde 5): submit through the Worker first — its
+            # validation + atomic dedup are the single source of truth
+            # for the waitlist count (G0 evidence). A validation
+            # rejection is final (no fallback past it); only a Worker
+            # outage falls back to insert_waitlist, which enforces the
+            # identical rules + the same atomic dedup in-process.
+            saved = None  # "ok" | "already" | None
+            invalid = False
             try:
-                now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                insert_waitlist(contact, position, venues, price or None, now, 1)
+                saved = post_waitlist_worker(contact, position, venues, price or None)
+            except ValueError:
+                invalid = True
+            except RuntimeError:
+                try:
+                    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    rid = insert_waitlist(contact, position, venues, price or None, now, 1)
+                    # insert returns None when the atomic dedup found the
+                    # contact already listed (idempotent success).
+                    saved = "already" if rid is None else "ok"
+                except ValueError as e:
+                    if "rate limited" in str(e):
+                        print("waitlist insert failed: rate limited")
+                    else:
+                        invalid = True
+                except Exception as e:
+                    print(f"waitlist insert failed: {type(e).__name__}")
+            if invalid:
+                st.error(t(lang, "f_error_format"))
+            elif saved == "already":
+                st.success(t(lang, "f_already"))
+            elif saved == "ok":
                 st.success(t(lang, "f_success"))
                 st.markdown(t(lang, "f_success_detail"))
-            except Exception as e:
-                print(f"waitlist insert failed: {type(e).__name__}")
+            else:
                 st.error(t(lang, "f_error_save"))
 
 # ---------------------------------------------------------------- methodology
