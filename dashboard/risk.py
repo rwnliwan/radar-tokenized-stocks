@@ -18,8 +18,23 @@ total / max_possible pair is kept for backward compatibility, and a
 partial score always reports how many of the 4 components are present.
 The score is ALWAYS labeled "experimental" until calibrated on >= 8
 weekends (design §5.5). Method version: weekend_risk_v1.
+
+Calibration counter (gap R8 P2-G1, built 2026-11-09): the "8
+weekends" claim previously had no counter or state anywhere, so the
+label could never transition on repository-visible evidence. The
+counter below is the missing capability — it counts distinct
+weekends (Saturday-anchored) with at least one observed data day,
+from actual data dates. It does NOT change the score or its formula;
+it only reports progress toward 8, and the label stays experimental
+until the count reaches 8. Data starts 2026-10-24 (a Saturday), so
+the first observed weekend is 2026-10-24/25.
 """
+from datetime import date, datetime, timedelta
+
 METHOD_VERSION = "weekend_risk_v1"
+
+DATA_START_DATE = date(2026, 10, 24)
+CALIBRATION_WEEKENDS_REQUIRED = 8
 
 DEPTH_FLOOR = 250_000.0
 DEPTH_FULL = 2_500_000.0
@@ -84,4 +99,89 @@ def weekend_risk_score(dev_pct, depth_usd, redemption_status, por_age_hours):
         "components_total": 4,
         "partial": len(avail) < 4,
         "method_version": METHOD_VERSION,
+    }
+
+
+# --- Calibration counter (gap R8 P2-G1) --------------------------------
+def _as_date(value):
+    """Coerce a date / datetime / 'YYYY-MM-DD' (or ISO datetime) string
+    to a date, or None when unparseable. Pure, never raises."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return datetime.fromisoformat(
+                text.replace("Z", "+00:00")).date()
+        except ValueError:
+            pass
+        try:
+            return datetime.strptime(text[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    return None
+
+
+def weekend_key(d):
+    """The Saturday that starts the weekend containing date `d`
+    (Saturday/Sunday only; returns None for weekdays)."""
+    if d is None or d.weekday() < 5:
+        return None
+    return d - timedelta(days=d.weekday() - 5)
+
+
+def calibration_progress(observed_dates, now=None):
+    """Progress toward the >= 8 weekends calibration of the weekend
+    risk score, counted from ACTUAL observed data dates (e.g. the
+    distinct successful-cycle dates in poller_health).
+
+    `observed_dates`: iterable of date / datetime / ISO-string days
+    with data. A weekend counts when at least one Saturday or Sunday
+    in it is observed; Sat+Sun of one weekend count as ONE weekend
+    (weekend_days_observed reports the day count separately).
+
+    Dates before DATA_START_DATE (no data can exist) and dates after
+    `now` (future-dated rows must not inflate the count) are ignored,
+    as are unparseable values. Never raises.
+
+    Returns {"weekends_observed", "weekend_days_observed", "required",
+    "remaining", "calibrated", "progress_pct", "data_start",
+    "observed_weekends": [ISO Saturdays, sorted]}. The score stays
+    experimental until calibrated is True; this function never changes
+    the score itself.
+    """
+    now_d = _as_date(now) if now is not None else date.today()
+    weekends = set()
+    days = set()
+    for raw in observed_dates or []:
+        d = _as_date(raw)
+        if d is None:
+            continue
+        if d < DATA_START_DATE:
+            continue
+        if now_d is not None and d > now_d:
+            continue
+        if d.weekday() < 5:
+            continue
+        days.add(d)
+        key = d - timedelta(days=d.weekday() - 5)
+        weekends.add(key)
+    observed = sorted(weekends)
+    n = len(observed)
+    return {
+        "weekends_observed": n,
+        "weekend_days_observed": len(days),
+        "required": CALIBRATION_WEEKENDS_REQUIRED,
+        "remaining": max(CALIBRATION_WEEKENDS_REQUIRED - n, 0),
+        "calibrated": n >= CALIBRATION_WEEKENDS_REQUIRED,
+        "progress_pct": round(
+            min(n / CALIBRATION_WEEKENDS_REQUIRED, 1.0) * 100.0, 1),
+        "data_start": DATA_START_DATE.isoformat(),
+        "observed_weekends": [d.isoformat() for d in observed],
     }

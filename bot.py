@@ -21,9 +21,12 @@ notes below):
   demonstrates the intended <=24h message format with synthetic data.
 - PoR: latest feed age > 72h (or last update older than 72h).
 - Stale data gate (design §7.1): when the last successful poller
-  cycle is older than 30 minutes, NO new alerts are sent (an admin
-  "poller troubled" alert needs a configured admin destination,
-  which does not exist yet — the condition is logged, not sent).
+  cycle is older than 30 minutes, NO new alerts are sent. The admin
+  "poller troubled" alert goes to the configured admin destination
+  (RADAR_ADMIN_CHAT_ID; gap R8 P1-G2, built 2026-11-09): at most one
+  message per hour per stale episode, and only a log line when no
+  admin destination is configured — never to the public EN/ID
+  channels.
 
 Dedup: for non-redemption types, same (ticker, alert_type) is not
 re-sent within a true 24h of a logged alert (any outcome).
@@ -1007,6 +1010,10 @@ def alerted_in_current_window(ticker, alert_type, statuses, red_rows=None,
 # JSONL marker file next to bot.py, and suppression_reason consults
 # that file exactly like alert_log. A marker never expires by itself:
 # the 24h / window-start comparisons below bound it, same as the DB.
+# Gap R8 P2-G2: when Turso is reachable again, replay_fallback_alerts
+# (called at the start of every alert pass) inserts the markers into
+# alert_log under WHERE NOT EXISTS, so the deliveries finally appear
+# in the Worker /api/alerts feed — and the file is pruned of them.
 ALERT_FALLBACK_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".alert_sent_fallback.jsonl")
 
@@ -1145,6 +1152,103 @@ def record_alert_safe(alert, message_text, alert_ts, channel=None):
     return False
 
 
+# --- Fallback-file replay (gap R8 P2-G2) -------------------------------
+# Deliveries recorded ONLY in the local fallback file (Turso writes
+# failed) never appear in the Worker /api/alerts feed, which reads
+# alert_log only. When Turso is reachable again, the next alert pass
+# replays the file: each marker is inserted into alert_log with the
+# SAME (ticker, alert_ts, alert_type, channel) it was delivered with,
+# guarded by WHERE NOT EXISTS on that key, so a replay is idempotent
+# — running it twice, or replaying after a partial file rewrite,
+# can never duplicate a row. The original message text is NOT in the
+# marker (only the delivery identity is), so replayed rows carry an
+# explicit placeholder instead of a fabricated message.
+# Replay NEVER blocks the normal alert pass: it runs at pass start,
+# catches everything, and a failed marker simply stays in the file
+# for the next pass. Only markers that landed are removed from the
+# file (atomic tmp+replace rewrite); malformed markers are kept and
+# logged, never silently dropped.
+REPLAYED_FALLBACK_MESSAGE = (
+    "[replayed from local fallback file — original message text "
+    "unavailable; delivery identity (ticker/time/type/channel) "
+    "preserved]")
+
+REPLAY_ALERT_SQL = (
+    "INSERT INTO alert_log (ticker_id, alert_ts, alert_type, "
+    "threshold_pct, dev_at_alert_pct, depth_at_alert_usd, message_text, "
+    "outcome, outcome_ts, closed_below_threshold_ts, channel) "
+    "SELECT ?, ?, ?, NULL, NULL, NULL, ?, 'pending', NULL, NULL, ? "
+    "WHERE NOT EXISTS (SELECT 1 FROM alert_log WHERE ticker_id = ? "
+    "AND alert_ts = ? AND alert_type = ? "
+    "AND (channel = ? OR (channel IS NULL AND ? IS NULL)))")
+
+
+def replay_fallback_alerts(db_execute_fn=None):
+    """Replay fallback-file markers into alert_log. Returns a dict
+    {replayed, failed, kept}: replayed = rows inserted (or already
+    present — NOT EXISTS makes a re-run a no-op), failed = markers
+    that could not be written (kept in the file), kept = markers left
+    in the file afterwards. Never raises.
+    """
+    try:
+        markers = _fallback_markers()
+    except Exception as e:
+        print(f"ALERT REPLAY ABORTED: fallback read failed: "
+              f"{type(e).__name__}: {e}")
+        return {"replayed": 0, "failed": 0, "kept": 0}
+    if markers is None:
+        # Unreadable file = unknown state (GG-16): do not touch it,
+        # do not claim anything was replayed.
+        print("ALERT REPLAY ABORTED: fallback file unreadable — "
+              "suppression state unknown, file left untouched.")
+        return {"replayed": 0, "failed": 0, "kept": 0}
+    if not markers:
+        return {"replayed": 0, "failed": 0, "kept": 0}
+    execute = db_execute_fn or db_execute
+    replayed, failed, kept_markers = 0, 0, []
+    for m in markers:
+        ticker = m.get("ticker")
+        alert_ts = m.get("alert_ts")
+        alert_type = m.get("type")
+        channel = m.get("channel")
+        if (not ticker or not alert_type or parse_ts(alert_ts) is None):
+            print(f"ALERT REPLAY: skipping malformed marker (kept): {m!r}")
+            failed += 1
+            kept_markers.append(m)
+            continue
+        args = [ticker, alert_ts, alert_type, REPLAYED_FALLBACK_MESSAGE,
+                channel, ticker, alert_ts, alert_type, channel, channel]
+        try:
+            execute(REPLAY_ALERT_SQL, args)
+            replayed += 1
+        except Exception as e:
+            print(f"ALERT REPLAY FAILED ({alert_type} {ticker} -> "
+                  f"{channel}): {type(e).__name__}: {e} — marker kept.")
+            failed += 1
+            kept_markers.append(m)
+    if replayed:
+        try:
+            tmp = ALERT_FALLBACK_PATH + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                for m in kept_markers:
+                    f.write(json.dumps(m) + "\n")
+            os.replace(tmp, ALERT_FALLBACK_PATH)
+            print(f"ALERT REPLAY: {replayed} marker(s) replayed into "
+                  f"alert_log, {len(kept_markers)} kept in fallback file.")
+        except OSError as e:
+            # Rows are already in alert_log; the file still holds them,
+            # but the next replay is a NOT EXISTS no-op, so no dup risk.
+            print(f"ALERT REPLAY: {replayed} row(s) landed but fallback "
+                  f"file could not be pruned ({e}) — next replay is a "
+                  f"no-op by dedup key, no duplicates possible.")
+            kept_markers = markers
+    elif failed:
+        print(f"ALERT REPLAY: 0 replayed, {failed} marker(s) kept — "
+              f"fallback file untouched, normal pass continues.")
+    return {"replayed": replayed, "failed": failed,
+            "kept": len(kept_markers)}
+
+
 def suppression_reason(alert, red_rows_by_issuer=None, channel=None):
     """None when the alert may fire, else a short reason string.
     Redemption types use the once-per-window rule; all other types use
@@ -1233,6 +1337,100 @@ def alert_channels():
     if idn:
         channels.append(("id", idn))
     return channels
+
+
+# --- Admin destination for a troubled poller (gap R8 P1-G2) -----------
+# The stale gate (no successful poller cycle for > 30 min) used to be
+# logged only: there was no configured destination for an ops alert,
+# and the public EN/ID channels must never receive ops noise. One new
+# env var, RADAR_ADMIN_CHAT_ID (a Telegram chat id, e.g. Septian's own
+# chat with the bot, or a private ops group): when set, the bot sends
+# at most ONE "poller troubled" message per hour while the gate is
+# tripped; when unset, the condition is logged only, exactly as before.
+# The cooldown state lives in a small JSON file next to bot.py (same
+# pattern as .bot_updates.json); a missing/corrupt state file means
+# "never notified", never a crash. Sending to the admin never blocks
+# or changes the market-alert pass: a send failure is logged and the
+# state is left untouched, so the next pass retries.
+ADMIN_CHAT_ID_ENV = "RADAR_ADMIN_CHAT_ID"
+ADMIN_POLLER_ALERT_COOLDOWN_MINUTES = 60
+
+ADMIN_ALERT_STATE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".admin_poller_alert.json")
+
+
+def admin_chat_id():
+    """Configured admin destination, or None when not configured."""
+    v = os.environ.get(ADMIN_CHAT_ID_ENV)
+    return v.strip() if v and v.strip() else None
+
+
+def _load_admin_alert_state(state_path=None):
+    path = state_path or ADMIN_ALERT_STATE_PATH
+    try:
+        with open(path, encoding="utf-8") as f:
+            state = json.load(f)
+        if isinstance(state, dict):
+            return state
+    except (OSError, ValueError):
+        pass
+    return {}
+
+
+def _save_admin_alert_state(state, state_path=None):
+    path = state_path or ADMIN_ALERT_STATE_PATH
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+        os.replace(tmp, path)
+        return True
+    except OSError as e:
+        print(f"ADMIN ALERT STATE WRITE FAILED ({path}): {e}")
+        return False
+
+
+def notify_admin_poller_troubled(age_minutes, now=None, state_path=None,
+                                 sender=None):
+    """Send the ops alert for a tripped stale gate, at most once per
+    ADMIN_POLLER_ALERT_COOLDOWN_MINUTES. Returns True only when a
+    message was actually sent. `age_minutes` may be None (no successful
+    cycle ever). `sender` defaults to send_message; tests inject a fake.
+    Never raises: every failure mode logs and returns False.
+    """
+    now = now or datetime.now(UTC)
+    chat_id = admin_chat_id()
+    if not chat_id:
+        print("POLLER TROUBLED (no admin destination configured — "
+              "logged only; set RADAR_ADMIN_CHAT_ID to receive ops alerts).")
+        return False
+    try:
+        state = _load_admin_alert_state(state_path)
+        last = parse_ts(state.get("last_poller_troubled_at"))
+        if last is not None:
+            since_min = (now - last).total_seconds() / 60.0
+            if since_min < ADMIN_POLLER_ALERT_COOLDOWN_MINUTES:
+                print(f"POLLER TROUBLED (admin already notified "
+                      f"{since_min:.0f} min ago — throttled).")
+                return False
+        age_txt = (f"{age_minutes:.0f} min" if age_minutes is not None
+                   else "never")
+        text = (
+            "⚠️ RADAR POLLER TROUBLED — last successful cycle "
+            f"{age_txt} ago (stale gate > 30 min). No market alerts are "
+            "being sent until fresh data returns. Check the poller/cron."
+        )
+        send = sender or send_message
+        send(chat_id, text)
+        _save_admin_alert_state(
+            {"last_poller_troubled_at":
+             now.strftime("%Y-%m-%dT%H:%M:%SZ")}, state_path)
+        print(f"POLLER TROUBLED alert sent to admin ({chat_id}).")
+        return True
+    except Exception as e:
+        print(f"POLLER TROUBLED admin alert failed: "
+              f"{type(e).__name__}: {e}")
+        return False
 
 
 # --- Dry-run scenarios (synthetic inputs, clearly labeled) ---
@@ -1503,8 +1701,15 @@ def main():
             return 0
         now = datetime.now(UTC)
         try:
+            # Gap R8 P2-G2: replay fallback-file deliveries into
+            # alert_log now that Turso may be reachable again. Best
+            # effort — it never raises and never blocks the pass.
+            replay_fallback_alerts()
             age = load_health_age_minutes(now)
             if age is None or age > STALE_MINUTES:
+                # Gap R8 P1-G2: the stale gate trips — tell the admin
+                # (once/hour max) instead of only logging it.
+                notify_admin_poller_troubled(age, now=now)
                 print("STALE GATE: skipping alert evaluation (no fresh data).")
                 return 0
             red_snapshot = snapshot_redemption_rows()
@@ -1561,10 +1766,20 @@ def main():
                 if lock is None and not lock_error:
                     print("ALERT LOCK: another alert pass is running — "
                           "skipping this evaluation.")
+                if lock is not None:
+                    # Gap R8 P2-G2: best-effort fallback replay at the
+                    # start of every evaluation round that holds the
+                    # lock (fresh or stale — surfacing past deliveries
+                    # does not depend on current freshness). Never
+                    # raises, never blocks the round.
+                    replay_fallback_alerts()
                 try:
                     if lock is None:
                         pass
                     elif (age := load_health_age_minutes(now)) is None or age > STALE_MINUTES:
+                        # Gap R8 P1-G2: the stale gate trips — tell the
+                        # admin (once/hour max) instead of only logging.
+                        notify_admin_poller_troubled(age, now=now)
                         print("STALE GATE: skipping alert evaluation (no fresh data).")
                     else:
                         red_snapshot = snapshot_redemption_rows()

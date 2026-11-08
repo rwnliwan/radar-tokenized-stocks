@@ -156,3 +156,39 @@ SATU kontrak bersama — ambang TIDAK berubah (alert spread ≥1,0%,
   aturan IDENTIK di dalam proses — jadi tidak ada lagi jalur tulis
   yang bisa menduplikasi kontak dan mencemari angka bukti G0.
   Penolakan validasi (400) bersifat final, tidak di-fallback.
+
+### Gap ronde 8 (9 Nov 2026): admin destination, calibration counter, fallback replay
+- **Admin destination (P1-G2, gap sejak R7 — kini dibangun).** Satu
+  env baru `RADAR_ADMIN_CHAT_ID` (chat Telegram admin/ops, BUKAN
+  kanal publik EN/ID): bila terkonfigurasi, bot mengirim alert
+  "poller troubled" saat stale gate (> 30 menit tanpa siklus sukses)
+  tersandung, maks. 1 pesan/jam (state di `.admin_poller_alert.json`,
+  di samping bot.py). Bila tidak terkonfigurasi, kondisi itu tetap
+  hanya di-log seperti sebelumnya — dan tidak ada alert ops yang
+  pernah dikirim ke kanal publik. Kegagalan kirim tidak memblokir
+  pass alert pasar. Tanpa nilai env ini di cron, tidak ada yang
+  berubah secara perilaku.
+- **Calibration counter (P2-G1 — kini dibangun).** Skor risiko akhir
+  pekan tetap "experimental" sampai terkalibrasi pada >= 8 akhir
+  pekan; kini ada counter-nya (`dashboard/risk.py:
+  calibration_progress`, dihitung dari tanggal siklus sukses di
+  `poller_health`, satu akhir pekan = pasangan Sab–Min yang teramati
+  ≥ 1 hari). Progres tampil di dashboard (strip home + breakdown
+  ticker). Rumus/skor TIDAK berubah. Per 9 Nov 2026: 3/8 akhir pekan
+  teramati (24–25 Okt, 31 Okt–1 Nov, 7–8 Nov) — klaim belum jatuh
+  tempo, bukan kesalahan.
+- **Fallback replay (P2-G2 — kini dibangun).** Setiap pass alert
+  (yang memegang lock) menjalankan `replay_fallback_alerts()`:
+  marker di `.alert_sent_fallback.jsonl` dimasukkan kembali ke
+  `alert_log` dengan kunci dedup yang sama (ticker, alert_ts, type,
+  channel) via `WHERE NOT EXISTS`, sehingga delivery fallback
+  akhirnya muncul di feed `/api/alerts`. Idempotent (replay dua kali
+  = tanpa duplikat); gagal replay = marker tetap di file + pass
+  lanjut normal; file hanya dipangkas untuk marker yang sudah
+  mendarat. Pesan asli tidak tersimpan di marker, jadi baris replay
+  memakai placeholder eksplisit, bukan teks yang dikarang.
+- **Vs-close (P1-G1 — TIDAK dibangun, sudah tertutup).** Label
+  roadmap vs-close sudah ada dan jujur di web + dashboard (EN+ID:
+  methodology_thresholds, close_note, coverage_short) — tidak ada
+  yang bisa dibangun tanpa lisensi feed; tidak ada feed yang
+  dikarang.

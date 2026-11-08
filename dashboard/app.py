@@ -37,7 +37,7 @@ from i18n import (DONATE_ADDRESS, DONATE_PAY_URL, LINKEDIN_URL,
 from logic import (best_exit_venues, cross_venue_spread, fmt_abbr,
                    fmt_wita, freshness_status, market_is_open, parse_ts,
                    por_effective_age_hours)
-from risk import weekend_risk_score
+from risk import calibration_progress, weekend_risk_score
 from trial_components import build_bars_options, build_home_grid_options
 from turso_read import insert_waitlist, query
 
@@ -159,6 +159,48 @@ def get_health(override_json=""):
         "SELECT cycle_ts, cycles_ok, gap_note FROM poller_health "
         "ORDER BY id DESC LIMIT 5"
     )
+
+
+@st.cache_data(ttl=300)
+def get_observed_dates():
+    """Distinct dates with at least one successful poller cycle —
+    the raw input of the risk-score calibration counter (gap R8
+    P2-G1). One row per cycle, indexed on cycle_ts, so the DISTINCT
+    scan stays small (unlike deviations, one row per ticker/cycle)."""
+    rows = query(
+        "SELECT DISTINCT substr(cycle_ts, 1, 10) AS d FROM poller_health "
+        "WHERE cycles_ok = 1 AND cycle_ts >= '2026-10-24'"
+    )
+    return [r["d"] for r in rows if r.get("d")]
+
+
+def get_calibration():
+    """Calibration progress dict, or None when it cannot be computed
+    (query failure, test hook off and DB unreachable). Callers must
+    tolerate None — the dashboard never crashes over a counter.
+    Test hook: env RADAR_TEST_CALIBRATION_JSON, a JSON object as
+    returned by calibration_progress (mirrors RADAR_TEST_LATEST_JSON)."""
+    try:
+        override = os.environ.get("RADAR_TEST_CALIBRATION_JSON", "")
+        if override:
+            return json.loads(override)
+        return calibration_progress(get_observed_dates())
+    except Exception:
+        return None
+
+
+def render_calibration_caption(lang):
+    """One-line calibration progress under the risk method text, or
+    nothing when the counter cannot be computed."""
+    cal = get_calibration()
+    if not cal:
+        return
+    if cal.get("calibrated"):
+        st.caption(t(lang, "risk_calibrated", n=cal["weekends_observed"],
+                     start=cal["data_start"]))
+    else:
+        st.caption(t(lang, "risk_calibration_progress",
+                     n=cal["weekends_observed"], start=cal["data_start"]))
 
 
 @st.cache_data(ttl=300)
@@ -609,6 +651,9 @@ def render_risk_breakdown(lang, score):
     if score["partial"]:
         st.info(t(lang, "risk_partial_n", n=score["components_present"]))
     st.caption(t(lang, "risk_method"))
+    # Gap R8 P2-G1: calibration progress — how many of the 8 weekends
+    # the experimental label still waits for (counted from live data).
+    render_calibration_caption(lang)
 
 
 def render_kpi_strip(lang, latest):
@@ -1453,6 +1498,9 @@ if page == "home":
                    for v in s["components"].values()):
                 st.caption(t(lang, "risk_footnote"))
             st.caption(t(lang, "risk_method"))
+            # Gap R8 P2-G1: calibration progress (same counter as the
+            # ticker-page breakdown above).
+            render_calibration_caption(lang)
         if unranked:
             st.caption(t(lang, "risk_unranked",
                            items=", ".join(f"{tid} ({n}/4)"
