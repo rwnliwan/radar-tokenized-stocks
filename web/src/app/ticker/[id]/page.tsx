@@ -5,8 +5,10 @@ import { use, useCallback, useEffect, useState } from "react";
 import Header from "../../Header";
 import HistoryChart from "../Chart";
 import {
+  fetchHealth,
   fetchHistory,
   fetchTicker,
+  type HealthResponse,
   type HistoryPoint,
   type TickerDetail,
 } from "../../../lib/api";
@@ -52,6 +54,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
   const ticker = id.toUpperCase();
   const [lang, setLang] = useState<Lang>("en");
   const [detail, setDetail] = useState<TickerDetail | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [window, setWindow] = useState<Window>("24h");
   const [notFound, setNotFound] = useState(false);
@@ -79,6 +82,17 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
       else setError(true);
     } finally {
       setLoading(false);
+    }
+    // Gap G1 (round 6): the detail page uses the same /api/health
+    // freshness verdict as the homepage (fix ronde 5, M4 contract:
+    // age since last SUCCESSFUL cycle + failed streak), not just the
+    // snapshot age from detail.latest_ts. A failed health fetch must
+    // NOT keep a previous verdict (S-new-6 pattern from HomeClient):
+    // clearing lets the snapshot-age fallback below speak.
+    try {
+      setHealth(await fetchHealth());
+    } catch {
+      setHealth(null);
     }
   }, [ticker]);
 
@@ -126,6 +140,19 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
       : null;
   const marketOpen = marketIsOpen();
 
+  // Gap G1: same stale verdict as the homepage — prefer the Worker's
+  // /api/health verdict; snapshot age (detail.latest_ts) is only the
+  // last resort when health is unreachable. STALE_MIN = 15 matches
+  // the Worker's healthSummary threshold and HomeClient.
+  const detailAgeMin =
+    detail?.latest_ts != null
+      ? Math.max(0, Math.round((Date.now() - Date.parse(detail.latest_ts)) / 60000))
+      : null;
+  const healthStale = health?.stale ?? null;
+  const stale =
+    healthStale != null ? healthStale : detailAgeMin != null && detailAgeMin > 15;
+  const staleTime = health?.last_success_ts ?? detail?.latest_ts ?? null;
+
   return (
     <div className="wrap">
       <Header
@@ -143,6 +170,19 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
           ) : undefined
         }
       />
+
+      {stale && staleTime && (
+        <div className="banner" role="status">
+          {t(lang, "stale_banner", { time: fmtWITA(staleTime, lang) })}
+        </div>
+      )}
+      {/* Gap G1 (S-new-7 pattern): stale with NO timestamp at all still
+          gets a banner — a generic one without a time, instead of silence. */}
+      {stale && !staleTime && (
+        <div className="banner" role="status">
+          {t(lang, "stale_banner_notime")}
+        </div>
+      )}
 
       {loading && !detail && !notFound && <p className="hint">{t(lang, "loading_ticker")}</p>}
       {notFound && (

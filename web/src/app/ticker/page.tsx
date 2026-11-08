@@ -4,13 +4,14 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import Header from "../Header";
 import { DevBar, StatusBlip } from "../BlipBar";
-import { fetchLatest, type LatestResponse } from "../../lib/api";
-import { fmtSigned1, fmtUsd, statusLabel } from "../../lib/format";
+import { fetchHealth, fetchLatest, type HealthResponse, type LatestResponse } from "../../lib/api";
+import { fmtSigned1, fmtUsd, fmtWITA, statusLabel } from "../../lib/format";
 import { t, u, type Lang } from "../../lib/i18n";
 
 export default function TickerIndex() {
   const [lang, setLang] = useState<Lang>("en");
   const [data, setData] = useState<LatestResponse | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -33,6 +34,15 @@ export default function TickerIndex() {
     } finally {
       setLoading(false);
     }
+    // Gap G5 (round 6): same /api/health freshness verdict as the
+    // homepage (M4 contract). A failed health fetch must NOT keep a
+    // previous verdict (S-new-6 pattern): clearing lets the meta /
+    // snapshot-age fallback below speak.
+    try {
+      setHealth(await fetchHealth());
+    } catch {
+      setHealth(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -50,9 +60,32 @@ export default function TickerIndex() {
 
   const rows = [...(data?.tickers ?? [])].sort((a, b) => a.ticker.localeCompare(b.ticker));
 
+  // Gap G5: same stale verdict as the homepage — prefer the Worker's
+  // /api/health verdict, then /api/latest meta, then snapshot age
+  // (STALE_MIN = 15, same threshold as healthSummary / HomeClient).
+  const latestTs = data?.meta.latest_ts ?? null;
+  const ageMin =
+    latestTs != null
+      ? Math.max(0, Math.round((Date.now() - Date.parse(latestTs)) / 60000))
+      : null;
+  const healthStale = health?.stale ?? data?.meta.stale ?? null;
+  const stale =
+    healthStale != null ? healthStale : ageMin != null && ageMin > 15;
+  const staleTime = health?.last_success_ts ?? latestTs;
+
   return (
     <div className="wrap">
       <Header lang={lang} onLangChange={toggleLang} active="tickers" />
+      {stale && staleTime && (
+        <div className="banner" role="status">
+          {t(lang, "stale_banner", { time: fmtWITA(staleTime, lang) })}
+        </div>
+      )}
+      {stale && !staleTime && (
+        <div className="banner" role="status">
+          {t(lang, "stale_banner_notime")}
+        </div>
+      )}
       <h2>{t(lang, "ticker_select")}</h2>
       {loading && !data && <p className="hint">{t(lang, "loading")}</p>}
       {error && (
