@@ -545,3 +545,19 @@ begitu token asli terpasang.
   stale gate, format alert TIDAK berubah. Evaluasi testing-week yang
   melandasi: `EVALUASI-TESTING-WEEK-2026-11-08.md` (vonis: TEKNIS
   LULUS, KOMERSIAL NOL; QA 7/7, burn 43,6 jt reads = 8,7%).
+- Guard spread TAMPILAN WEB (SELESAI 8 Nov 2026, ACC Septian 10:40):
+  `api/worker.js` `crossVenueSpread()` kini memakai guard yang sama
+  (≥3 venue, buang harga >25% dari median lintas-venue; <3 venue =
+  guard dilewati; kosong-setelah-exclusion = fallback semua venue).
+  Sebelumnya spread tampil memakai tick mentah: SPYx $0,1044 (6 Nov)
+  tampil 100,041% di web + menggerakkan verdict "caution", padahal
+  poller sudah mengecualikannya dari dw. Verifikasi: unit test 5 kasus
+  dari kode live (SPYx 100,067% → 0,168%; spread asli tetap lolos;
+  fallback + null OK); live `/api/latest` SPYx 0,107%; `qa_harness.py`
+  0 FAIL 1 WARN (check spread dihitung ulang dari harga ter-guard).
+  Frontend TIDAK diubah (hanya menampilkan `spread_pct` dari API).
+  Temuan samping saat harness: check history GOOGLx gagal karena
+  GOOGLx hanya punya 1 pool ≥$100k sejak 28 Okt (pool ke-2 $72k) —
+  dev selalu NULL; COINx/HOODx/METAx single-pool by design. Check
+  history harness dipindah ke TSLAx (3 pool, dev live); check detail
+  tetap di GOOGLx (mencakup jalur null-dev).

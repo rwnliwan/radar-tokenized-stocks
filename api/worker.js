@@ -75,12 +75,36 @@ function firstPerTicker(devRows) {
   return latest;
 }
 
+// Price-sanity guard — the SAME rule as the poller guard, bot.py
+// guarded_venues and qa_harness.py: with >=3 venues, drop prices
+// deviating >25% from the cross-venue median; <3 venues = no consensus,
+// guard skipped; if the exclusion would empty the set, fall back to all.
+// Added 2026-11-08 (Q6 vote A, 3-0; ACC Septian 10:40): before this,
+// crossVenueSpread used raw ticks, so one bad tick (SPYx $0.1044 on
+// 2026-11-06, reserve $1.24M) showed a 100.041% spread on the web and
+// fed the "caution" verdict, while the poller had already excluded that
+// pool from dw. The Telegram alert side was fixed the same day in bot.py.
+function median(values) {
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+function guardedPrices(prices) {
+  if (prices.length < 3) return prices;
+  const med = median(prices);
+  if (!med) return prices;
+  const kept = prices.filter((p) => Math.abs(p - med) / med <= 0.25);
+  return kept.length ? kept : prices;
+}
+
 function crossVenueSpread(venues, dw) {
   const prices = venues
     .filter((v) => v.price_usd != null && (v.reserve_usd || 0) >= LIQ_MIN)
     .map((v) => v.price_usd);
   if (prices.length < 2 || !dw) return null;
-  return ((Math.max(...prices) - Math.min(...prices)) / dw) * 100;
+  const guarded = guardedPrices(prices);
+  return ((Math.max(...guarded) - Math.min(...guarded)) / dw) * 100;
 }
 
 async function loadLatest(env) {

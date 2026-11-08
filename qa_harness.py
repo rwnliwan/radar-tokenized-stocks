@@ -14,7 +14,9 @@ between this file and poller.py / worker.js / lib/risk.ts IS the finding):
 - median = statistics.median(kept prices), None when <2 kept pools
 - dev_pct = (dw - median)/median*100 ; dev_bps = dev_pct*100
 - depth = sum(kept reserves); pools_used = len(kept)
-- Worker spread_pct = (max-min)/dw*100 over qualifying pools (NO guard)
+- Worker spread_pct = (max-min)/dw*100 over GUARDED qualifying pools
+  (same >=3-venue 25%-from-median rule as dw; guard added 2026-11-08,
+  Q6 vote A — before that it used raw ticks, NO guard)
 - Worker status: |bps|>100 alert, >50 watch, else ok, null -> na
 - verdict (option A, ACC 25 Okt): danger iff worst |bps|>=100; caution
   iff worst |bps|>=50 or worst spread>=1% or min depth<$250k; else safe
@@ -204,7 +206,7 @@ def main():
                       else "watch" if abs(bps) > 50 else "ok")
         check(f"Worker status {tk}", w["status"] == exp_status,
               f"worker={w['status']} expected={exp_status} bps={bps}")
-        qprices = [p for p, _ in q]
+        qprices = [p for p, _ in kept]
         exp_spread = ((max(qprices) - min(qprices)) / dw * 100
                       if len(qprices) >= 2 and dw else None)
         check(f"Worker spread {tk}", close(w["spread_pct"], exp_spread),
@@ -263,15 +265,20 @@ def main():
                     for tk, _, _, _, ws in verdict_inputs))
 
     # History: 24h/7d return HOURLY AVG buckets, 1h returns raw points.
-    hist = wcurl("/api/history?ticker=GOOGLx&window=7d")
+    # History checks use TSLAx (3 qualifying pools, live dev). GOOGLx
+    # CANNOT be used here: it has only 1 qualifying pool since 2026-10-28
+    # (2nd pool reserve $72k < $100k LIQ_MIN), so dev is always NULL and
+    # history is always empty; COINx/HOODx/METAx are single-pool by design.
+    # The ticker-detail check below stays on GOOGLx to cover the null-dev path.
+    hist = wcurl("/api/history?ticker=TSLAx&window=7d")
     pts = hist["points"]
-    check("history GOOGLx non-empty + ordered + hourly buckets", len(pts) > 0
+    check("history TSLAx non-empty + ordered + hourly buckets", len(pts) > 0
           and all(pts[i]["ts"] <= pts[i + 1]["ts"] for i in range(len(pts) - 1))
           and all(p["ts"].endswith(":00:00Z") for p in pts),
           f"{len(pts)} points")
     if pts:
         last_bucket = pts[-1]["ts"][:13]
-        rows = query("SELECT dev_vs_median_pct FROM deviations WHERE ticker_id='GOOGLx' "
+        rows = query("SELECT dev_vs_median_pct FROM deviations WHERE ticker_id='TSLAx' "
                      f"AND substr(ts, 1, 13) = '{last_bucket}' "
                      "AND dev_vs_median_pct IS NOT NULL")
         avg = sum(r["dev_vs_median_pct"] for r in rows) / len(rows) if rows else None
@@ -279,13 +286,13 @@ def main():
               avg is not None and close(pts[-1]["dev_bps"], avg * 100),
               f"hist={pts[-1]['dev_bps']} recomputed avg={avg * 100 if avg else None} "
               f"from {len(rows)} rows")
-    hist1 = wcurl("/api/history?ticker=GOOGLx&window=1h")
+    hist1 = wcurl("/api/history?ticker=TSLAx&window=1h")
     pts1 = hist1["points"]
     if pts1:
-        last_nonnull = query("SELECT dev_vs_median_pct FROM deviations WHERE ticker_id='GOOGLx' "
+        last_nonnull = query("SELECT dev_vs_median_pct FROM deviations WHERE ticker_id='TSLAx' "
                              "AND dev_vs_median_pct IS NOT NULL "
                              "ORDER BY ts DESC, id DESC LIMIT 1")[0]["dev_vs_median_pct"]
-        check("history 1h last point == latest non-null dev GOOGLx",
+        check("history 1h last point == latest non-null dev TSLAx",
               close(pts1[-1]["dev_bps"], last_nonnull * 100),
               f"hist={pts1[-1]['dev_bps']} db={last_nonnull * 100}")
 

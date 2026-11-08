@@ -101,7 +101,7 @@ def main():
     assert "Next opening: Mon 26 Oct 2026, 12:00 WITA" in msg_en
     assert "not confirmed live by the issuer" in msg_en
     assert "Not financial advice" in msg_en
-    assert "https://radar.omdanny.site/TSLAx" in msg_en
+    assert "https://radar.omdanny.site/ticker/TSLAx" in msg_en
     assert "Status dihitung dari jadwal" not in msg_en, "ID note leaked into EN"
     assert "Bukan nasihat keuangan" not in msg_en, "ID disclaimer leaked into EN"
     assert "Dari jadwal" not in msg_en, "DB window_note leaked into EN"
