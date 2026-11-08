@@ -1,0 +1,11 @@
+-- Migration 2026-11-08 (fix ronde 6, S-new-10): per-channel alert dedup.
+-- alert_log gains a `channel` column ('en'/'id'); bot.py record_alert
+-- writes one row per (alert, channel) delivery, and the dedup checks
+-- count only rows for that channel (plus legacy NULL rows, which
+-- suppress every channel — see bot.py recent_alert_exists).
+-- Safe to apply while the old bot code is still running: the old code
+-- never references the column. Apply BEFORE deploying the new bot code
+-- (the new INSERT lists the column and fails without it).
+-- Live Turso: run via turso_client.execute; idempotent (ADD COLUMN
+-- fails if the column already exists — check PRAGMA table_info first).
+ALTER TABLE alert_log ADD COLUMN channel TEXT;

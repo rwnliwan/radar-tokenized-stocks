@@ -60,10 +60,15 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
     // freshness verdict (age since last successful cycle + failed
     // streak). A health fetch failure never blocks the table — the
     // snapshot-age fallback below still applies.
+    // S-new-6 (fix ronde 6): a FAILED health fetch must NOT keep the
+    // previous verdict. The old catch kept a stale `health.stale ===
+    // false` that then outranked a fresh /api/latest meta saying
+    // stale — the page kept calling the data fresh. Clearing health
+    // lets the meta fallback (health?.stale ?? meta.stale) speak.
     try {
       setHealth(await fetchHealth());
     } catch {
-      /* keep previous health (or none) */
+      setHealth(null);
     } finally {
       setLoading(false);
     }
@@ -313,6 +318,14 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
       {stale && staleTime && (
         <div className="banner" role="status">
           {t(lang, "stale_banner", { time: fmtWITA(staleTime, lang) })}
+        </div>
+      )}
+      {/* S-new-7 (fix ronde 6): stale with NO timestamp at all (no
+          successful cycle ever, no deviation rows yet) still gets a
+          banner — a generic one without a time, instead of silence. */}
+      {stale && !staleTime && (
+        <div className="banner" role="status">
+          {t(lang, "stale_banner_notime")}
         </div>
       )}
       {error && data && (

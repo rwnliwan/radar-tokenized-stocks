@@ -691,17 +691,32 @@ def load_live_tickers(red_rows_by_issuer=None):
     for u in uni:
         tid = u["ticker_id"]
         d = latest.get(tid) or {}
-        # Latest snapshot per pool, QUALIFYING pools only (fix ronde 5,
-        # M2): the same reserve >= LIQ_MIN population the poller uses for
-        # dw/dev. One snapshot timestamp per pool (poller writes all pools
-        # in one batch ts; per-pool MAX(ts) is the pre-existing pattern).
-        snaps = db_query(
-            "SELECT p.dex, s.price_usd, s.reserve_usd FROM pools p "
-            "JOIN snapshots s ON s.pool_id = p.pool_id "
-            "WHERE p.ticker_id = ? AND p.is_active = 1 "
-            "AND s.reserve_usd >= ? "
-            "AND s.ts = (SELECT MAX(ts) FROM snapshots s2 WHERE s2.pool_id = p.pool_id)",
-            [tid, LIQ_MIN])
+        # S-new-9 (fix ronde 6): anchor the per-pool snapshots to the
+        # SAME cycle ts as the deviations row they are combined with.
+        # The old per-pool MAX(ts) let a poller commit landing between
+        # the deviations read and the snapshot read mix two cycles
+        # (prices from cycle N+1 against dw/dev from cycle N). The
+        # poller writes every pool of a cycle under one batch ts, so
+        # s.ts = <deviations ts> reads exactly that cycle's pools. When
+        # there is no deviations row (no ts to anchor on), fall back to
+        # the old per-pool MAX(ts) pattern.
+        cycle_ts = d.get("ts")
+        if cycle_ts:
+            snaps = db_query(
+                "SELECT p.dex, s.price_usd, s.reserve_usd FROM pools p "
+                "JOIN snapshots s ON s.pool_id = p.pool_id "
+                "WHERE p.ticker_id = ? AND p.is_active = 1 "
+                "AND s.reserve_usd >= ? "
+                "AND s.ts = ?",
+                [tid, LIQ_MIN, cycle_ts])
+        else:
+            snaps = db_query(
+                "SELECT p.dex, s.price_usd, s.reserve_usd FROM pools p "
+                "JOIN snapshots s ON s.pool_id = p.pool_id "
+                "WHERE p.ticker_id = ? AND p.is_active = 1 "
+                "AND s.reserve_usd >= ? "
+                "AND s.ts = (SELECT MAX(ts) FROM snapshots s2 WHERE s2.pool_id = p.pool_id)",
+                [tid, LIQ_MIN])
         venues = [{"dex": s["dex"], "price": s["price_usd"], "reserve": s["reserve_usd"]}
                   for s in snaps
                   if s["price_usd"] is not None and s["reserve_usd"] is not None
@@ -719,6 +734,28 @@ def load_live_tickers(red_rows_by_issuer=None):
             median = gprices[m] if len(gprices) % 2 == 1 else (gprices[m - 1] + gprices[m]) / 2
         red = red_by_issuer.get(u["issuer"])
         por = por_by_issuer.get(u["issuer"])
+        # S-new-8 (fix ronde 6): PoR age backstop. age_hours is written
+        # by the hourly poller job, so if that job fails repeatedly the
+        # stored value freezes — possibly below the 72h threshold while
+        # last_update_ts is already older than 72h. The effective age
+        # is the max of the stored age and the age recomputed live from
+        # last_update_ts (which is already loaded, but was unused).
+        # This makes the module docstring's "(or last update older than
+        # 72h)" true in evaluate_alerts. Same rule as api/worker.js
+        # porEffectiveAge and dashboard/logic.py por_effective_age_hours.
+        por_age = por["age_hours"] if por else None
+        por_last = por["last_update_ts"] if por else None
+        if por_last:
+            lu = parse_ts(por_last)
+            if lu is not None:
+                live_age = (datetime.now(UTC) - lu).total_seconds() / 3600.0
+                if por_age is None:
+                    por_age = max(0.0, live_age)
+                else:
+                    try:
+                        por_age = max(float(por_age), live_age)
+                    except (TypeError, ValueError):
+                        por_age = max(0.0, live_age)
         out.append({
             "ticker": tid, "issuer": u["issuer"], "venues": venues,
             "dw": d.get("depth_weighted_price"),
@@ -728,8 +765,8 @@ def load_live_tickers(red_rows_by_issuer=None):
             "redemption_status": red["status"] if red else None,
             "redemption_note": red["window_note"] if red else None,
             "next_open_at": red["next_open_at"] if red else None,
-            "por_age_hours": por["age_hours"] if por else None,
-            "por_last_update": por["last_update_ts"] if por else None,
+            "por_age_hours": por_age,
+            "por_last_update": por_last,
         })
     return out
 
@@ -766,17 +803,30 @@ def load_health_age_minutes(now_utc):
     return None
 
 
-def recent_alert_exists(ticker, alert_type, hours=DEDUP_HOURS):
-    # NOTE 2026-10-25: the comparison MUST normalize alert_ts through
-    # datetime(). A raw string comparison against datetime('now', ...)
-    # ('YYYY-MM-DD HH:MM:SS', space separator) is broken for ISO
-    # alert_ts ('...T...Z'): 'T' > ' ' makes any alert on the cutoff's
-    # calendar date count as recent, stretching dedup to ~41h instead
-    # of 24h. datetime() parses both formats, giving a true window.
-    rows = db_query(
+def recent_alert_exists(ticker, alert_type, hours=DEDUP_HOURS, channel=None):
+    """True iff an alert for (ticker, alert_type) was logged within the
+    last `hours` hours. With channel given (fix ronde 6, S-new-10),
+    the check is per-channel: a row counts only if it was recorded
+    for THAT channel — or for no channel (channel IS NULL, i.e. rows
+    written before the channel column existed, which suppressed every
+    channel under the old rule; counting them preserves the old
+    behaviour for pre-fix rows instead of re-firing them once per
+    channel after the migration).
+
+    NOTE 2026-10-25: the comparison MUST normalize alert_ts through
+    datetime(). A raw string comparison against datetime('now', ...)
+    ('YYYY-MM-DD HH:MM:SS', space separator) is broken for ISO
+    alert_ts ('...T...Z'): 'T' > ' ' makes any alert on the cutoff's
+    calendar date count as recent, stretching dedup to ~41h instead
+    of 24h. datetime() parses both formats, giving a true window."""
+    sql = (
         "SELECT COUNT(*) AS n FROM alert_log WHERE ticker_id = ? "
-        "AND alert_type = ? AND datetime(alert_ts) >= datetime('now', ?)",
-        [ticker, alert_type, f"-{int(hours)} hours"])
+        "AND alert_type = ? AND datetime(alert_ts) >= datetime('now', ?)")
+    args = [ticker, alert_type, f"-{int(hours)} hours"]
+    if channel is not None:
+        sql += " AND (channel = ? OR channel IS NULL)"
+        args.append(channel)
+    rows = db_query(sql, args)
     return bool(rows and int(rows[0]["n"]) > 0)
 
 
@@ -807,13 +857,17 @@ def window_start_from_rows(rows, statuses):
     return start
 
 
-def alerted_in_current_window(ticker, alert_type, statuses, red_rows=None):
+def alerted_in_current_window(ticker, alert_type, statuses, red_rows=None,
+                              channel=None):
     """True iff an alert for (ticker, alert_type) was already logged since
     the current window (of `statuses`) began. False when no such window
     is live — so the first alert of a new window always fires.
     When red_rows (the pass snapshot) is given, the window is computed
     from it, never re-queried: re-querying here is what let the
-    2026-10-26 pass fire on a window that had already opened."""
+    2026-10-26 pass fire on a window that had already opened.
+    With channel given (fix ronde 6, S-new-10), the check is
+    per-channel (same transition rule as recent_alert_exists: rows
+    with channel IS NULL count for every channel)."""
     if red_rows is None:
         issuer_rows = db_query(
             "SELECT issuer FROM universe WHERE ticker_id = ? COLLATE NOCASE",
@@ -829,42 +883,57 @@ def alerted_in_current_window(ticker, alert_type, statuses, red_rows=None):
     start = window_start_from_rows(rows, statuses)
     if start is None:
         return False
-    hits = db_query(
+    sql = (
         "SELECT COUNT(*) AS n FROM alert_log WHERE ticker_id = ? "
-        "AND alert_type = ? AND datetime(alert_ts) >= datetime(?)",
-        [ticker, alert_type, start])
+        "AND alert_type = ? AND datetime(alert_ts) >= datetime(?)")
+    args = [ticker, alert_type, start]
+    if channel is not None:
+        sql += " AND (channel = ? OR channel IS NULL)"
+        args.append(channel)
+    hits = db_query(sql, args)
     return bool(hits and int(hits[0]["n"]) > 0)
 
 
-def suppression_reason(alert, red_rows_by_issuer=None):
+def suppression_reason(alert, red_rows_by_issuer=None, channel=None):
     """None when the alert may fire, else a short reason string.
     Redemption types use the once-per-window rule; all other types use
     the true 24h dedup. When the pass snapshot is given, dedup uses it
-    (the same rows evaluation used) instead of re-querying."""
+    (the same rows evaluation used) instead of re-querying.
+    With channel given (fix ronde 6, S-new-10), the check is
+    per-channel: an alert already sent to the EN channel does not
+    suppress the ID channel (and vice versa)."""
     statuses = REDEMPTION_WINDOW_STATUSES.get(alert["type"])
     if statuses is not None:
         rows = None
         if red_rows_by_issuer is not None:
             rows = red_rows_by_issuer.get(alert.get("issuer"))
-        if alerted_in_current_window(alert["ticker"], alert["type"], statuses, rows):
+        if alerted_in_current_window(alert["ticker"], alert["type"], statuses, rows,
+                                     channel=channel):
             return "same window"
         return None
-    if recent_alert_exists(alert["ticker"], alert["type"]):
+    if recent_alert_exists(alert["ticker"], alert["type"], channel=channel):
         return "dedup 24h"
     return None
 
 
-def record_alert(alert, message_text, alert_ts):
+def record_alert(alert, message_text, alert_ts, channel=None):
+    """One alert_log row per (alert, channel) delivery (fix ronde 6,
+    S-new-10): the channel that received the alert is recorded, so a
+    failed channel is not suppressed by another channel's success.
+    channel=None keeps the old call shape (tests / callers that do not
+    pass a channel); such rows count as suppressing every channel
+    (see recent_alert_exists) until the migration backfills nothing —
+    new live sends always pass their channel."""
     db_execute(
         "INSERT INTO alert_log (ticker_id, alert_ts, alert_type, threshold_pct, "
         "dev_at_alert_pct, depth_at_alert_usd, message_text, outcome, "
-        "outcome_ts, closed_below_threshold_ts) VALUES (?,?,?,?,?,?,?,'pending',NULL,NULL)",
+        "outcome_ts, closed_below_threshold_ts, channel) VALUES (?,?,?,?,?,?,?,'pending',NULL,NULL,?)",
         [alert["ticker"], alert_ts, alert["type"],
          alert.get("spread_pct") if alert["type"] == "spread"
          else alert.get("dev_pct") if alert["type"] == "deviation_high" else None,
          alert.get("spread_pct") if alert["type"] == "spread"
          else alert.get("dev_pct") if alert["type"] == "deviation_high" else None,
-         alert.get("depth"), message_text],
+         alert.get("depth"), message_text, channel],
     )
 
 
@@ -930,6 +999,50 @@ def dry_run_scenarios():
         if not alerts:
             print("(no alert fired — check scenario inputs)")
         print()
+
+
+# --- Alert delivery (live paths share this) ---
+def data_still_fresh():
+    """Re-check the 30-min stale gate at send time (fix ronde 6,
+    S-new-5): the gate used to be checked only once at pass start,
+    so a pass that began fresh could keep sending for up to ~52s
+    past the boundary (13 alerts x 2 channels x 2s). Callers re-check
+    before each alert; the residual drift is then at most one alert's
+    own sends (~4s on the --once path, ~0s on --live, which has no
+    inter-send delay). One extra poller_health read per alert."""
+    age = load_health_age_minutes(datetime.now(UTC))
+    return age is not None and age <= STALE_MINUTES
+
+
+def send_alert_channels(alert, channels, red_snapshot, now, delay_s=0):
+    """Send one alert to every channel that has not already received
+    it, and record one alert_log row PER CHANNEL that was sent to
+    (fix ronde 6, S-new-10). Returns the number of channels sent to.
+
+    The old code recorded a single row when ANY channel succeeded, so
+    a channel whose send failed was still dedup-suppressed for 24h
+    (or the whole redemption window) and never got the alert. Now a
+    failed channel is simply not recorded, so the next pass retries
+    that channel only; a channel that already has a row is skipped
+    (per-channel suppression_reason), never re-sent."""
+    ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    sent = 0
+    for lang, cid in channels:
+        if suppression_reason(alert, red_snapshot, channel=lang):
+            print(f"ALERT already sent to {lang} channel, skipping: "
+                  f"{alert['type']} {alert['ticker']}")
+            continue
+        try:
+            send_message(cid, format_alert(alert, lang))
+            record_alert(alert, format_alert(alert, "en"), ts, channel=lang)
+            sent += 1
+            print(f"ALERT sent ({lang}): {alert['type']} {alert['ticker']}")
+        except Exception as e:
+            print(f"ALERT send failed ({lang}): "
+                  f"{alert['type']} {alert['ticker']}: {e}")
+        if delay_s:
+            time.sleep(delay_s)
+    return sent
 
 
 def main():
@@ -1008,29 +1121,19 @@ def main():
             channels = alert_channels()
             sent = 0
             for a in evaluate_alerts(tickers, is_market_open(now)):
-                reason = suppression_reason(a, red_snapshot)
-                if reason:
-                    print(f"ALERT suppressed ({reason}): "
-                          f"{a['type']} {a['ticker']}")
-                    continue
                 if not channels:
                     print(f"ALERT (no channel configured, not sent): "
                           f"{a['type']} {a['ticker']}")
                     continue
-                sent_any = False
-                for lang, cid in channels:
-                    try:
-                        send_message(cid, format_alert(a, lang))
-                        sent_any = True
-                        print(f"ALERT sent ({lang}): "
-                              f"{a['type']} {a['ticker']}")
-                        time.sleep(SEND_DELAY_S)
-                    except Exception as e:
-                        print(f"ALERT send failed ({lang}): "
-                              f"{a['type']} {a['ticker']}: {e}")
-                if sent_any:
-                    record_alert(a, format_alert(a, "en"),
-                                 now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                # S-new-5 (fix ronde 6): re-check the stale gate before
+                # each alert — the pass-start check alone lets sends
+                # continue up to ~52s past the 30-min boundary.
+                if not data_still_fresh():
+                    print("STALE GATE (re-check): data went stale "
+                          "mid-pass — stopping sends.")
+                    break
+                if send_alert_channels(a, channels, red_snapshot, now,
+                                       delay_s=SEND_DELAY_S):
                     sent += 1
             print(f"once done: alerts sent: {sent}")
         except Exception as e:
@@ -1060,11 +1163,6 @@ def main():
                         tickers = load_live_tickers(red_snapshot)
                         channels = alert_channels()
                         for a in evaluate_alerts(tickers, is_market_open(now)):
-                            reason = suppression_reason(a, red_snapshot)
-                            if reason:
-                                print(f"ALERT suppressed ({reason}): "
-                                      f"{a['type']} {a['ticker']}")
-                                continue
                             if not channels:
                                 # No alert channel configured yet: log only.
                                 # Nothing is recorded in alert_log for an
@@ -1072,23 +1170,14 @@ def main():
                                 print(f"ALERT (no channel configured, not sent): "
                                       f"{a['type']} {a['ticker']}")
                                 continue
-                            sent_any = False
-                            for lang, cid in channels:
-                                text = format_alert(a, lang)
-                                try:
-                                    send_message(cid, text)
-                                    sent_any = True
-                                    print(f"ALERT sent ({lang}): "
-                                          f"{a['type']} {a['ticker']}")
-                                except Exception as e:
-                                    print(f"ALERT send failed ({lang}): "
-                                          f"{a['type']} {a['ticker']}: {e}")
-                            if sent_any:
-                                # One alert_log row per alert (not per
-                                # channel); the stored text is the EN one.
-                                record_alert(
-                                    a, format_alert(a, "en"),
-                                    now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                            # S-new-5 (fix ronde 6): re-check the stale
+                            # gate before each alert (see --once).
+                            if not data_still_fresh():
+                                print("STALE GATE (re-check): data went "
+                                      "stale mid-pass — stopping sends.")
+                                break
+                            send_alert_channels(a, channels, red_snapshot,
+                                                now)
                 except Exception as e:
                     print(f"evaluation error: {type(e).__name__}: {e}")
             # Long-poll updates (30s) for commands.

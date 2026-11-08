@@ -121,6 +121,74 @@ def fmt_abbr(v):
     return f"${x:,.0f}"
 
 
+PRICE_GUARD_MAX_DEV = 0.25  # price-sanity guard: drop prices >25%
+# from the cross-venue median (same rule as the poller guard,
+# bot.py guarded_venues, api/worker.js guardedPrices).
+
+
+def guarded_prices(prices):
+    """Prices after the 25%-from-median guard — the SAME rule as the
+    poller guard (poller.py run_cycle), bot.py guarded_venues and
+    api/worker.js guardedPrices: with >=3 prices, drop any price
+    deviating >25% from the cross-venue median; with <3 prices no
+    consensus exists, so the guard is skipped. If exclusion would
+    empty the list, fall back to all prices. Pure: no I/O."""
+    if len(prices) < 3:
+        return list(prices)
+    import statistics
+    med = statistics.median(prices)
+    if not med:
+        return list(prices)
+    kept = [p for p in prices
+            if abs(p - med) / med <= PRICE_GUARD_MAX_DEV]
+    return kept if kept else list(prices)
+
+
+def cross_venue_spread(venues, dw_price):
+    """(max - min qualifying venue price) / depth-weighted price, in %.
+
+    Fix ronde 6 (M-new-1): the dashboard Streamlit app computed this
+    WITHOUT the 25%-from-median guard the bot and Worker already use,
+    so one bad tick on a qualifying pool (SPYx $0.1044, reserve
+    $1.24M, 6 Nov 2026) showed ~100% here while bot/Worker showed
+    0.168%. The spread is now computed on guarded_prices, mirroring
+    api/worker.js crossVenueSpread exactly: qualifying filter
+    (reserve >= LIQ_MIN) first, then the guard. Used by the master
+    table and the ticker detail page (both go through this function).
+    """
+    prices = [float(v["price_usd"]) for v in venues
+              if v.get("price_usd") is not None
+              and (v.get("reserve_usd") or 0) >= LIQ_MIN]
+    if len(prices) < 2 or not dw_price:
+        return None
+    guarded = guarded_prices(prices)
+    return (max(guarded) - min(guarded)) / float(dw_price) * 100.0
+
+
+def por_effective_age_hours(age_hours, last_update_ts, now_utc):
+    """PoR age that cannot freeze below the truth (fix ronde 6,
+    S-new-8): the stored age_hours is written by the hourly poller
+    job, so if that job fails repeatedly the stored value freezes —
+    possibly below the 72h alert threshold while last_update_ts is
+    already older than 72h. The effective age is the max of the
+    stored age and the age recomputed live from last_update_ts.
+    Returns None when neither source yields an age."""
+    eff = None
+    try:
+        eff = float(age_hours) if age_hours is not None else None
+    except (TypeError, ValueError):
+        eff = None
+    if last_update_ts:
+        lu = parse_ts(last_update_ts)
+        if lu is not None:
+            live = (now_utc - lu).total_seconds() / 3600.0
+            if eff is None:
+                eff = max(0.0, live)
+            else:
+                eff = max(eff, live)
+    return eff
+
+
 def best_exit_venues(venue_rows, sizes=(1000, 5000, 10000)):
     """venue_rows: latest snapshot per pool with reserve_usd + dex + price.
 

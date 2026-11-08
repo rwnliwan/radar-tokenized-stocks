@@ -34,8 +34,9 @@ import streamlit as st
 
 from i18n import (DONATE_ADDRESS, DONATE_PAY_URL, LINKEDIN_URL,
                   SIZE_BUCKETS, t)
-from logic import (best_exit_venues, fmt_abbr, fmt_wita, freshness_status,
-                   parse_ts)
+from logic import (best_exit_venues, cross_venue_spread, fmt_abbr,
+                   fmt_wita, freshness_status, parse_ts,
+                   por_effective_age_hours)
 from risk import weekend_risk_score
 from trial_components import build_bars_options, build_home_grid_options
 from turso_read import insert_waitlist, query
@@ -462,14 +463,10 @@ def market_is_open(now_utc):
     return 9 * 60 + 30 <= mins < 16 * 60
 
 
-def cross_venue_spread(venues, dw_price):
-    """(max - min qualifying venue price) / depth-weighted price, in %."""
-    prices = [float(v["price_usd"]) for v in venues
-              if v.get("price_usd") is not None
-              and (v.get("reserve_usd") or 0) >= LIQ_MIN]
-    if len(prices) < 2 or not dw_price:
-        return None
-    return (max(prices) - min(prices)) / float(dw_price) * 100.0
+# cross_venue_spread lives in logic.py (pure, unit-tested): it applies
+# the 25%-from-median price-sanity guard, mirroring bot.py and
+# api/worker.js (fix ronde 6, M-new-1). Do NOT re-define it here —
+# a local copy without the guard is exactly the bug M-new-1 fixed.
 
 
 def fmt_usd(v, decimals=2):
@@ -1636,7 +1633,12 @@ elif page == "ticker":
             dev_med = latest.get("dev_vs_median_pct") if latest else None
             depth = latest.get("qualifying_depth_usd") if latest else None
             red_status = red.get("status") if red else None
-            por_age = por.get("age_hours") if por else None
+            # S-new-8 (fix ronde 6): PoR age from the stored value alone
+            # freezes if the hourly PoR job fails — use the effective
+            # age (max of stored age and live age from last_update_ts).
+            por_age = (por_effective_age_hours(
+                por.get("age_hours"), por.get("last_update_ts"),
+                datetime.now(timezone.utc)) if por else None)
             if dev_med is None and depth is None:
                 st.markdown(t(lang, "risk_unavailable"))
             else:
@@ -1717,8 +1719,13 @@ elif page == "ticker":
         # 9. PoR card
         st.subheader(t(lang, "por_title"))
         if por:
-            if por.get("age_hours") is not None:
-                st.markdown(f"{t(lang, 'por_age_label')}: {por['age_hours']} h")
+            # S-new-8 (fix ronde 6): show the effective PoR age, not the
+            # stored value alone (it freezes when the hourly job fails).
+            _por_age = por_effective_age_hours(
+                por.get("age_hours"), por.get("last_update_ts"),
+                datetime.now(timezone.utc))
+            if _por_age is not None:
+                st.markdown(f"{t(lang, 'por_age_label')}: {_por_age:.1f} h")
             else:
                 st.markdown(t(lang, "por_none"))
             if por.get("last_update_ts"):
@@ -1806,9 +1813,15 @@ elif page == "waitlist":
             # S3 (fix ronde 5): submit through the Worker first — its
             # validation + atomic dedup are the single source of truth
             # for the waitlist count (G0 evidence). A validation
-            # rejection is final (no fallback past it); only a Worker
-            # outage falls back to insert_waitlist, which enforces the
-            # identical rules + the same atomic dedup in-process.
+            # rejection is final (no fallback past it); any OTHER
+            # Worker failure falls back to insert_waitlist — that
+            # includes HTTP 429 (hourly cap) and 500, not only a
+            # Worker outage (nit N-new-1, fix ronde 6: the old comment
+            # said "only a Worker outage falls back"). The fallback
+            # cannot bypass the rejection: insert_waitlist enforces
+            # the identical rules in-process, including the 500/hour
+            # cap (a capped submit is rejected again locally) and the
+            # same atomic dedup.
             saved = None  # "ok" | "already" | None
             invalid = False
             try:

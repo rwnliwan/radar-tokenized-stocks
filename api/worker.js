@@ -107,6 +107,28 @@ function crossVenueSpread(venues, dw) {
   return ((Math.max(...guarded) - Math.min(...guarded)) / dw) * 100;
 }
 
+// PoR effective age (fix ronde 6, S-new-8): the stored age_hours is
+// written by the hourly poller job, so if that job fails repeatedly
+// the stored value freezes — possibly below the 72h alert threshold
+// while last_update_ts is already older than 72h. The effective age
+// is the max of the stored age and the age recomputed live from
+// last_update_ts. Same rule as bot.py load_live_tickers and
+// dashboard/logic.py por_effective_age_hours. Returns null when
+// neither source yields an age.
+function porEffectiveAge(por) {
+  if (!por) return null;
+  let eff = por.age_hours != null ? Number(por.age_hours) : null;
+  if (eff != null && !Number.isFinite(eff)) eff = null;
+  if (por.last_update_ts) {
+    const parsed = Date.parse(por.last_update_ts);
+    if (Number.isFinite(parsed)) {
+      const live = Math.max(0, (Date.now() - parsed) / 3600000);
+      eff = eff == null ? live : Math.max(eff, live);
+    }
+  }
+  return eff;
+}
+
 // Shared freshness contract (fix ronde 5, M4): ONE definition used by
 // /api/health, /api/latest meta, dashboard/logic.py freshness_status,
 // and (with its own 30-min gate) the Telegram bot's stale gate.
@@ -130,8 +152,18 @@ function healthSummary(health) {
       failedStreak += 1;
     }
   }
-  const ageMin =
-    lastSuccessTs != null ? (Date.now() - Date.parse(lastSuccessTs)) / 60000 : null;
+  // S-new-3 (fix ronde 6): a malformed last_success_ts must read as
+  // stale, never as fresh. Date.parse returns NaN on garbage, and
+  // NaN is neither null nor > 15, so the old code returned
+  // stale: false + age_minutes: null — self-contradictory, and the
+  // opposite of dashboard/logic.py freshness_status (parse failure
+  // -> None -> stale) and bot.py load_health_age_minutes. A
+  // non-finite parse is now treated exactly like "no success ever".
+  const parsed =
+    lastSuccessTs != null ? Date.parse(lastSuccessTs) : NaN;
+  const ageMin = Number.isFinite(parsed)
+    ? (Date.now() - parsed) / 60000
+    : null;
   const stale = ageMin == null || ageMin > 15 || failedStreak >= 2;
   return {
     cycles_ok: cyclesOk,
@@ -253,7 +285,7 @@ async function loadLatest(env) {
       redemption_status: red ? String(red.status).toLowerCase() : null,
       redemption_next_open: red ? red.next_open_at : null,
       redemption_note_en: red ? red.window_note_en : null,
-      por_age_hours: por ? por.age_hours : null,
+      por_age_hours: porEffectiveAge(por),
       por_last_update: por ? por.last_update_ts : null,
       spark_bps: spark.map((v) => v * 100),
       change_1h_bps: change,
@@ -462,7 +494,7 @@ async function loadTicker(env, ticker) {
     redemption_note: red ? red.window_note : null,
     redemption_observed_at: red ? red.observed_at : null,
     redemption_source: red ? red.source : null,
-    por_age_hours: por ? por.age_hours : null,
+    por_age_hours: porEffectiveAge(por),
     por_last_update: por ? por.last_update_ts : null,
     por_feed_address: por ? por.feed_address : null,
     por_note: por ? por.reserves_vs_supply_note : null,
@@ -545,31 +577,42 @@ async function handleWaitlist(request, env) {
   // Hourly cap uses the strftime T-format window: created_at is stored
   // T-format, and datetime('now') returns space-format, which would
   // compare wrong (same class of bug as the Stage 1 series filter).
-  const [countRes, existRes] = await pipeline(env, [
-    [
-      "SELECT COUNT(*) AS n FROM waitlist WHERE created_at >= " +
-        "strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour')",
-    ],
-    ["SELECT id FROM waitlist WHERE LOWER(TRIM(contact)) = ? LIMIT 1", [norm]],
-  ]);
-  const hourly = rowsOf(countRes)[0]?.n ?? 0;
-  if (Number(hourly) >= WAITLIST_HOURLY_CAP) {
-    return json({ error: "rate limited" }, 429);
-  }
-  if (rowsOf(existRes).length) return json({ ok: true, already: true });
+  //
+  // S-new-2 (fix ronde 6): the cap used to be checked in a SEPARATE
+  // pipeline before the INSERT, so two simultaneous submits for
+  // DIFFERENT contacts could both read a count < 500 and both get
+  // in — the cap was not atomic. The cap is now enforced INSIDE the
+  // single INSERT statement itself (a D1 statement executes
+  // atomically): the row is written only if the hourly count is
+  // still below the cap AND the contact is not already listed.
+  // rows_written === 0 is then disambiguated below: an existing
+  // contact means an idempotent duplicate success, anything else
+  // means the cap was hit (429). The dedup stays atomic exactly as
+  // before (WHERE NOT EXISTS on the same statement).
   const [insRes] = await pipeline(env, [
     [
       "INSERT INTO waitlist (contact, position_size_usd, venues, willing_price, " +
-        "created_at, consent) SELECT ?, ?, ?, ?, ?, ? WHERE NOT EXISTS " +
+        "created_at, consent) SELECT ?, ?, ?, ?, ?, ? WHERE " +
+        "(SELECT COUNT(*) FROM waitlist WHERE created_at >= " +
+        "strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour')) < ? " +
+        "AND NOT EXISTS " +
         "(SELECT 1 FROM waitlist WHERE LOWER(TRIM(contact)) = ?)",
-      [contact, position, venues, price || null, nowIso, 1, norm],
+      [contact, position, venues, price || null, nowIso, 1,
+       WAITLIST_HOURLY_CAP, norm],
     ],
   ]);
-  // The INSERT...WHERE NOT EXISTS is atomic: even a simultaneous duplicate
-  // submit cannot create a second row. rows_written === 0 means the race
-  // was lost to an identical contact — still an idempotent success.
-  const already = insRes && insRes.rows_written === 0;
-  return json({ ok: true, already: !!already });
+  if (insRes && insRes.rows_written === 0) {
+    // The INSERT wrote nothing: either the contact already exists
+    // (idempotent success) or the hourly cap was hit (rate limited).
+    // One follow-up read decides which — the cap itself was already
+    // enforced atomically above, so this read cannot admit a 501st row.
+    const [existRes] = await pipeline(env, [
+      ["SELECT id FROM waitlist WHERE LOWER(TRIM(contact)) = ? LIMIT 1", [norm]],
+    ]);
+    if (rowsOf(existRes).length) return json({ ok: true, already: true });
+    return json({ error: "rate limited" }, 429);
+  }
+  return json({ ok: true, already: false });
 }
 
 async function loadAlerts(env) {

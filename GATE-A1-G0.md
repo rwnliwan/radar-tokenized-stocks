@@ -92,7 +92,10 @@ bersamaan dengan G0 (vote Q6 A, 3–0 bulat).
   verbatim Turso 6 Nov: tick buruk SPYx $0,1044 (spread mentah
   100,047% ≈ 100,041% yang tercatat di `alert_log`) TIDAK lagi
   memicu alert (spread pasca-guard 0,168%); alert spread asli NVDAx
-  4,426% (6 Nov 19:11 UTC) TETAP terpicu (4,424% dari fixture).
+  4,426% (6 Nov 19:11 UTC) TETAP terpicu pada saat itu (4,424% dari
+  fixture) — SEBELUM M2 (ronde 5). Pasca-M2 alert historis itu TIDAK
+  lagi menyala (spread khusus-pool-lolos 0,325%); yang tetap menyala
+  adalah fixture `NVDAX_QUAL` (4,424%) — lihat §4.
 - **Masih belum terverifikasi live:** jalur `redemption_paused`
   (0 baris di `alert_log` sepanjang sejarah) — hanya akan teruji bila
   suatu hari ada jeda on-chain sungguhan, atau diuji dengan simulasi

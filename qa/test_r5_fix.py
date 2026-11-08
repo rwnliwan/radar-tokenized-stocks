@@ -138,6 +138,137 @@ def main():
     check("S2 present values still render ($500.10 / 3,000,000 / 1 pool)",
           "$500.10" in msg2 and "$3,000,000" in msg2 and "1 pools" in msg2)
 
+    # --- R6: S-new-8 PoR backstop, S-new-9 cycle anchor, S-new-10
+    # per-channel dedup, S-new-5 stale re-check ----------------------
+    def _ts_hours(hours_ago, now):
+        return (now - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    orig_query2, orig_execute, orig_send = bot.db_query, bot.db_execute, bot.send_message
+    try:
+        # S-new-8a: stored age frozen at 6h, but last_update 100h ago
+        # -> effective age ~100h, PoR alert fires.
+        snap_args = {}
+        def fake_query_por(sql, args=None):
+            if "FROM universe ORDER BY" in sql:
+                return [{"ticker_id": "TSLAx", "issuer": "xStocks"}]
+            if "FROM deviations" in sql:
+                return [{"ticker_id": "TSLAx", "ts": _ts(5, now),
+                         "depth_weighted_price": 100.5,
+                         "dev_vs_median_pct": 0.1,
+                         "qualifying_depth_usd": 600000.0, "pools_used": 3}]
+            if "FROM redemption_windows" in sql:
+                return []
+            if "FROM por_feeds" in sql:
+                return [{"age_hours": 6.0,
+                         "last_update_ts": _ts_hours(100, now)}]
+            if "FROM pools p JOIN snapshots" in sql:
+                snap_args["args"] = args
+                snap_args["sql"] = sql
+                return [{"dex": "raydium", "price_usd": 100.0, "reserve_usd": 200000.0}]
+            raise AssertionError(f"unexpected SQL: {sql[:80]}")
+        bot.db_query = fake_query_por
+        tickers = bot.load_live_tickers()
+        check("S-new-8 frozen stored age (6h) is overridden by last_update (100h)",
+              tickers and tickers[0]["por_age_hours"] is not None
+              and abs(tickers[0]["por_age_hours"] - 100.0) < 0.1,
+              f"por_age={tickers[0]['por_age_hours'] if tickers else None}")
+        pors = [a for a in bot.evaluate_alerts(tickers, False) if a["type"] == "por"]
+        check("S-new-8 backstop fires the PoR alert (age ~100h > 72h)",
+              len(pors) == 1, f"alerts={pors}")
+        # S-new-9: the snapshot query is anchored to the deviations ts.
+        check("S-new-9 snapshot query binds the deviations cycle ts",
+              _ts(5, now) in (snap_args.get("args") or []),
+              f"snapshot args={snap_args.get('args')}")
+
+        # S-new-8b: stored age 96h with a 1h-old last_update stays 96h.
+        def fake_query_por2(sql, args=None):
+            if "FROM por_feeds" in sql:
+                return [{"age_hours": 96.0,
+                         "last_update_ts": _ts_hours(1, now)}]
+            return fake_query_por(sql, args)
+        bot.db_query = fake_query_por2
+        tickers = bot.load_live_tickers()
+        check("S-new-8 stored age wins when it is the larger (96h vs 1h)",
+              tickers and abs(tickers[0]["por_age_hours"] - 96.0) < 0.1,
+              f"por_age={tickers[0]['por_age_hours'] if tickers else None}")
+
+        # S-new-5: the send-time re-check reads the gate live.
+        bot.db_query = lambda sql, args=None: [
+            {"cycle_ts": _ts(4, now), "cycles_ok": 1}]
+        check("S-new-5 fresh success (4 min) -> still fresh",
+              bot.data_still_fresh() is True)
+        bot.db_query = lambda sql, args=None: [
+            {"cycle_ts": _ts(35, now), "cycles_ok": 1}]
+        check("S-new-5 last success 35 min ago -> NOT fresh",
+              bot.data_still_fresh() is False)
+        bot.db_query = lambda sql, args=None: []
+        check("S-new-5 no health rows -> NOT fresh",
+              bot.data_still_fresh() is False)
+
+        # S-new-10: per-channel dedup + per-channel record.
+        recorded = []
+        def fake_query_log(sql, args=None):
+            if "FROM alert_log" in sql:
+                if "channel" in sql:
+                    ch = args[-1]
+                    n = sum(1 for r in recorded
+                            if r["channel"] == ch or r["channel"] is None)
+                else:
+                    n = len(recorded)
+                return [{"n": n}]
+            return [{"n": 0}]
+        def fake_execute_log(sql, args=None):
+            recorded.append({"channel": args[7] if len(args) > 7 else None,
+                             "ticker": args[0], "type": args[2]})
+        bot.db_query = fake_query_log
+        bot.db_execute = fake_execute_log
+        alert = {"type": "deviation_high", "ticker": "TSLAx",
+                 "issuer": "xStocks", "dev_pct": 3.5, "dw": 100.0,
+                 "median": 100.0, "depth": 3000000.0, "pools_used": 2}
+        check("S-new-10 no rows yet -> not suppressed for either channel",
+              bot.suppression_reason(alert, {}, channel="en") is None
+              and bot.suppression_reason(alert, {}, channel="id") is None)
+        # Legacy NULL row suppresses every channel (transition rule).
+        recorded.append({"channel": None, "ticker": "TSLAx", "type": "deviation_high"})
+        check("S-new-10 legacy NULL row still suppresses both channels",
+              bot.suppression_reason(alert, {}, channel="en") == "dedup 24h"
+              and bot.suppression_reason(alert, {}, channel="id") == "dedup 24h")
+        recorded.clear()
+        # record_alert stores the channel as the 8th arg.
+        captured = {}
+        bot.db_execute = lambda sql, args=None: captured.update(sql=sql, args=args)
+        bot.record_alert(alert, "TEXT", "2026-11-08T12:00:00Z", channel="en")
+        check("S-new-10 record_alert stores channel='en'",
+              "channel" in captured["sql"] and captured["args"][7] == "en",
+              f"args={captured['args']}")
+        # send_alert_channels: ID fails -> only EN recorded; next pass
+        # retries ID only; third pass sends nothing.
+        bot.db_execute = fake_execute_log
+        sent_log = []
+        def fake_send(chat_id, text, dry_run=False):
+            lang = "en" if chat_id == "1" else "id"
+            sent_log.append(lang)
+            if lang == "id" and not getattr(fake_send, "id_ok", False):
+                raise RuntimeError("simulated ID send failure")
+            return {"ok": True}
+        bot.send_message = fake_send
+        channels = [("en", "1"), ("id", "2")]
+        n1 = bot.send_alert_channels(alert, channels, {}, now, delay_s=0)
+        check("S-new-10 failed ID channel is NOT recorded (EN only)",
+              n1 == 1 and [r["channel"] for r in recorded] == ["en"],
+              f"sent={n1} recorded={recorded}")
+        fake_send.id_ok = True
+        n2 = bot.send_alert_channels(alert, channels, {}, now, delay_s=0)
+        check("S-new-10 next pass retries ID only (EN skipped, not re-sent)",
+              n2 == 1 and [r["channel"] for r in recorded] == ["en", "id"]
+              and sent_log.count("en") == 1,
+              f"sent={n2} recorded={recorded} sends={sent_log}")
+        n3 = bot.send_alert_channels(alert, channels, {}, now, delay_s=0)
+        check("S-new-10 third pass sends nothing (both channels recorded)",
+              n3 == 0, f"sent={n3}")
+    finally:
+        bot.db_query, bot.db_execute, bot.send_message = orig_query2, orig_execute, orig_send
+
     print(f"\nSUMMARY: {len(FAILURES)} FAIL — "
           + ("R5 FIX TEST: PASS" if not FAILURES else f"FAILED: {FAILURES}"))
     return 1 if FAILURES else 0

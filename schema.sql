@@ -119,7 +119,12 @@ CREATE TABLE IF NOT EXISTS alert_log (
   message_text TEXT,
   outcome TEXT,
   outcome_ts TEXT,
-  closed_below_threshold_ts TEXT
+  closed_below_threshold_ts TEXT,
+  -- channel ('en'/'id', fix ronde 6 S-new-10, 2026-11-08): one row per
+  -- (alert, channel) delivery, so a failed channel is not suppressed
+  -- by another channel's success. NULL = recorded before the column
+  -- existed; dedup counts NULL rows as suppressing every channel.
+  channel TEXT
 );
 
 CREATE TABLE IF NOT EXISTS poller_health (

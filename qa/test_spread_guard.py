@@ -219,6 +219,39 @@ def main():
     check("no spread alert when market closed",
           bot.evaluate_alerts([NVDAX_1911], False) == [])
 
+    # 9) Ronde 6, M-new-1: the DASHBOARD spread (dashboard/logic.py
+    # cross_venue_spread, imported by dashboard/app.py — the master
+    # table and the ticker detail page both go through it) must apply
+    # the SAME 25%-from-median guard as bot/Worker. The dashboard
+    # used to compute the raw spread here: SPYx showed ~100% while
+    # bot/Worker showed 0.168%.
+    sys.path.insert(0, "/home/hatch/workspace/radar-tokenized-stocks/dashboard")
+    import logic  # noqa: E402
+    def dash_venues(data):
+        return [{"price_usd": v["price"], "reserve_usd": v["reserve"]}
+                for v in data["venues"]]
+    spy_dash = logic.cross_venue_spread(dash_venues(SPYX_1906), SPYX_1906["dw"])
+    check("dashboard SPYx spread is 0.168% (guarded, not ~100%)",
+          spy_dash is not None and abs(spy_dash - 0.168) < 0.001,
+          f"dashboard={spy_dash}")
+    nv_dash = logic.cross_venue_spread(dash_venues(NVDAX_1911), NVDAX_1911["dw"])
+    check("dashboard NVDAx qualifying-only spread is 0.325%",
+          nv_dash is not None and abs(nv_dash - 0.325) < 0.001,
+          f"dashboard={nv_dash}")
+    check("dashboard spread matches bot guarded spread (SPYx)",
+          spy_dash is not None
+          and abs(spy_dash - raw_spread(kept, SPYX_1906["dw"])) < 0.001,
+          f"dashboard={spy_dash} bot-guarded={raw_spread(kept, SPYX_1906['dw']):.3f}%")
+    two_dash = logic.cross_venue_spread(dash_venues(two), two["dw"])
+    check("dashboard 2-venue spread still fires (guard skipped, <3)",
+          two_dash is not None and abs(two_dash - 1.006) < 0.001,
+          f"dashboard={two_dash}")
+    check("dashboard spread None with <2 qualifying venues",
+          logic.cross_venue_spread(
+              [{"price_usd": 100.0, "reserve_usd": 200000.0}], 100.0) is None)
+    check("dashboard spread None with no dw",
+          logic.cross_venue_spread(dash_venues(SPYX_1906), None) is None)
+
     print(f"\nSUMMARY: {len(FAILURES)} FAIL — "
           + ("SPREAD GUARD TEST: PASS" if not FAILURES else f"FAILED: {FAILURES}"))
     return 1 if FAILURES else 0
