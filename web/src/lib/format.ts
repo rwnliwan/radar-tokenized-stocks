@@ -96,13 +96,31 @@ export function fmtWITA(iso: string | null | undefined, lang: Lang): string {
   );
 }
 
+// NYSE holidays (full closes). Same set as poller.py / bot.py /
+// dashboard/logic.py — qa/test_r8_fix.py S11 asserts all four
+// identical. 2028 is the official NYSE Group calendar (announced
+// 2025-12-23): 9 closures; New Year's Day 2028 falls on a Saturday
+// and is NOT observed. Review annually.
+export const NYSE_HOLIDAYS = new Set([
+  "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
+  "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
+  "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
+  "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+  "2028-01-17", "2028-02-21", "2028-04-14", "2028-05-29", "2028-06-19",
+  "2028-07-04", "2028-09-04", "2028-11-23", "2028-12-25",
+]);
+
 /** NYSE regular schedule, Mon–Fri 09:30–16:00 America/New_York.
- *  Exchange holidays are NOT tracked — the same documented limitation
- *  as the Streamlit dashboard's market_is_open. */
+ *  S12 (fix ronde 8): exchange holidays ARE tracked now — on a NYSE
+ *  holiday the market reads closed, agreeing with the bot's
+ *  holiday-aware gate and the dashboard. */
 export function marketIsOpen(now: Date = new Date()): boolean {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "numeric",
     minute: "numeric",
     hour12: false,
@@ -110,6 +128,8 @@ export function marketIsOpen(now: Date = new Date()): boolean {
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   const wd = get("weekday");
   if (wd === "Sat" || wd === "Sun") return false;
+  const ymd = `${get("year")}-${get("month")}-${get("day")}`;
+  if (NYSE_HOLIDAYS.has(ymd)) return false;
   const mins = Number(get("hour")) * 60 + Number(get("minute"));
   return mins >= 9 * 60 + 30 && mins < 16 * 60;
 }

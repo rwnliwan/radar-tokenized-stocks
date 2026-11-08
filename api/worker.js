@@ -29,9 +29,13 @@ const TICKER_STALE_MIN = 15;
 function tickerFreshness(devTs) {
   const parsed = devTs != null ? Date.parse(devTs) : NaN;
   const ageMin = Number.isFinite(parsed)
-    ? Math.max(0, (Date.now() - parsed) / 60000)
+    ? (Date.now() - parsed) / 60000
     : null;
-  const stale = ageMin == null || ageMin > TICKER_STALE_MIN;
+  // GG-15 (fix ronde 8, P2-M1): a future timestamp is stale, never
+  // fresh. The old code clamped the age to 0 (Math.max(0, ...)), so a
+  // future dev_ts read as fresh until wall-clock time passed it. A
+  // negative age is reported as-is, so the anomaly stays visible.
+  const stale = ageMin == null || ageMin < 0 || ageMin > TICKER_STALE_MIN;
   return {
     dev_ts: devTs ?? null,
     dev_age_min: ageMin != null ? Math.round(ageMin * 10) / 10 : null,
@@ -51,7 +55,8 @@ function reevaluateFreshness(payload) {
   const parsed =
     meta.last_success_ts != null ? Date.parse(meta.last_success_ts) : NaN;
   const ageMin = Number.isFinite(parsed) ? (Date.now() - parsed) / 60000 : null;
-  const stale = ageMin == null || ageMin > 15 || (meta.failed_streak ?? 0) >= 2;
+  // GG-15 (fix ronde 8, P2-M1): a future last_success_ts is stale.
+  const stale = ageMin == null || ageMin < 0 || ageMin > 15 || (meta.failed_streak ?? 0) >= 2;
   const tickers = (payload.tickers || []).map((t) => {
     const tf = tickerFreshness(t.dev_ts ?? null);
     return { ...t, dev_age_min: tf.dev_age_min, stale: tf.stale };
@@ -172,8 +177,14 @@ function porEffectiveAge(por) {
   if (por.last_update_ts) {
     const parsed = Date.parse(por.last_update_ts);
     if (Number.isFinite(parsed)) {
-      const live = Math.max(0, (Date.now() - parsed) / 3600000);
-      eff = eff == null ? live : Math.max(eff, live);
+      // GG-15 (fix ronde 8): a future last_update is not evidence of
+      // age 0 — it is ignored, so the stored age stands (or null
+      // stays null). The old code clamped the live age to 0.
+      const liveMs = Date.now() - parsed;
+      if (liveMs >= 0) {
+        const live = liveMs / 3600000;
+        eff = eff == null ? live : Math.max(eff, live);
+      }
     }
   }
   return eff;
@@ -214,7 +225,10 @@ function healthSummary(health) {
   const ageMin = Number.isFinite(parsed)
     ? (Date.now() - parsed) / 60000
     : null;
-  const stale = ageMin == null || ageMin > 15 || failedStreak >= 2;
+  // GG-15 (fix ronde 8, P2-M1): a future last_success_ts is stale.
+  // The S-new-3 comment above fixed the malformed-past direction;
+  // the malformed-future direction is its mirror.
+  const stale = ageMin == null || ageMin < 0 || ageMin > 15 || failedStreak >= 2;
   return {
     cycles_ok: cyclesOk,
     failed_streak: failedStreak,
@@ -255,20 +269,42 @@ async function loadLatest(env) {
         "FROM por_feeds ORDER BY checked_at DESC LIMIT 20",
     ],
     [
-      // 2026-10-30 read-burn fix: the old correlated MAX(ts) subquery made
-      // SQLite scan `snapshots` once per row (~207K reads/run in Top Queries).
-      // Global MAX(ts) + point lookup via idx_snapshots_ts -> ~106 reads.
-      // Poller writes all pools in one batch ts (verified 35/35 at MAX(ts)).
-      // Byte-identical to per-pool MAX version.
+      // P2-M2 (fix ronde 8): anchor each ticker to ITS OWN latest
+      // snapshot, not the global latest. The old
+      // s.ts = (SELECT MAX(ts) FROM snapshots) dropped Tier 2 tickers
+      // (AAPLx, MSFTx) in the 4-of-5 minutes when only the tight-loop
+      // Tier 1 tickers had a snapshot at the global minute — they lost
+      // venues and sometimes vanished from /api/latest entirely. The
+      // 2026-10-30 read-burn premise ("all pools written in one batch
+      // ts") never held for Tier 2, which the poller writes only on
+      // 5-minute marks. The derived table scans only the last 2 h
+      // via idx_snapshots_ts, grouped by ticker — bounded, not the
+      // old per-row correlated scan.
       "SELECT p.ticker_id, p.dex, s.price_usd, s.reserve_usd " +
         "FROM pools p JOIN snapshots s ON s.pool_id = p.pool_id " +
-        "WHERE p.is_active = 1 AND s.ts = (SELECT MAX(ts) FROM snapshots) " +
+        "JOIN (SELECT p2.ticker_id AS tid, MAX(s2.ts) AS mts " +
+        "FROM pools p2 JOIN snapshots s2 ON s2.pool_id = p2.pool_id " +
+        "WHERE s2.ts >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 hours') " +
+        "GROUP BY p2.ticker_id) latest " +
+        "ON latest.tid = p.ticker_id AND s.ts = latest.mts " +
+        "WHERE p.is_active = 1 " +
         "ORDER BY s.reserve_usd DESC",
     ],
     [
+      // P2-M2 (fix ronde 8): same per-ticker anchor as above — the
+      // old COUNT at the single global MAX(ts) dipped to ~25/35 on
+      // off-minutes because Tier 2 pools had no snapshot at that
+      // minute. A pool counts as live when it has a snapshot at its
+      // own ticker's latest ts within the last 2 h.
       "SELECT (SELECT COUNT(*) FROM pools WHERE is_active = 1) AS total, " +
-        "COUNT(DISTINCT pool_id) AS live FROM snapshots " +
-        "WHERE ts = (SELECT MAX(ts) FROM snapshots)",
+        "COUNT(DISTINCT s.pool_id) AS live FROM snapshots s " +
+        "JOIN pools p ON p.pool_id = s.pool_id " +
+        "JOIN (SELECT p2.ticker_id AS tid, MAX(s2.ts) AS mts " +
+        "FROM pools p2 JOIN snapshots s2 ON s2.pool_id = p2.pool_id " +
+        "WHERE s2.ts >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 hours') " +
+        "GROUP BY p2.ticker_id) latest " +
+        "ON latest.tid = p.ticker_id AND s.ts = latest.mts " +
+        "WHERE p.is_active = 1",
     ],
     ["SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 12"],
     [
@@ -382,8 +418,17 @@ async function loadHealthMeta(env) {
     [
       "SELECT (SELECT MAX(ts) FROM snapshots) AS latest_ts, " +
         "(SELECT COUNT(*) FROM pools WHERE is_active = 1) AS total, " +
-        "(SELECT COUNT(DISTINCT pool_id) FROM snapshots " +
-        "WHERE ts = (SELECT MAX(ts) FROM snapshots)) AS live, " +
+        // P2-M2 (fix ronde 8): per-ticker anchor, as in loadLatest —
+        // the old COUNT at the single global MAX(ts) dipped on
+        // off-minutes when Tier 2 pools had no snapshot at that minute.
+        "(SELECT COUNT(DISTINCT s.pool_id) FROM snapshots s " +
+        "JOIN pools p ON p.pool_id = s.pool_id " +
+        "JOIN (SELECT p2.ticker_id AS tid, MAX(s2.ts) AS mts " +
+        "FROM pools p2 JOIN snapshots s2 ON s2.pool_id = p2.pool_id " +
+        "WHERE s2.ts >= strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 hours') " +
+        "GROUP BY p2.ticker_id) latest " +
+        "ON latest.tid = p.ticker_id AND s.ts = latest.mts " +
+        "WHERE p.is_active = 1) AS live, " +
         "(SELECT cycle_ts FROM poller_health ORDER BY id DESC LIMIT 1) AS plc",
     ],
     ["SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 12"],

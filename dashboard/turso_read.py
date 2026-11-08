@@ -23,7 +23,15 @@ URL = f"https://{HOST}/v2/pipeline"
 INSERT_WAITLIST_SQL = (
     "INSERT INTO waitlist (contact, position_size_usd, venues,"
     " willing_price, created_at, consent) SELECT ?, ?, ?, ?, ?, ?"
-    " WHERE NOT EXISTS (SELECT 1 FROM waitlist"
+    # S13 (fix ronde 8): the hourly cap is enforced INSIDE this single
+    # INSERT, exactly like the Worker (/api/waitlist, fix ronde 6
+    # S-new-2). The old code checked the cap in a separate COUNT read
+    # first, so concurrent dashboard submissions could all observe a
+    # count below 500 and exceed the cap — and its docstring claim of
+    # "SAME guarantees as the Worker" was false for concurrent writes.
+    " WHERE (SELECT COUNT(*) FROM waitlist WHERE created_at >= "
+    "strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour')) < ?"
+    " AND NOT EXISTS (SELECT 1 FROM waitlist"
     " WHERE LOWER(TRIM(contact)) = ?)"
 )
 
@@ -162,8 +170,13 @@ def insert_waitlist(contact, position_size_usd, venues, willing_price,
     waitlist count (a G0 evidence number). Now: contact format, length
     caps, hourly cap (500), and an atomic INSERT...WHERE NOT EXISTS
     dedup on the normalized contact, identical to the Worker.
+    S13 (fix ronde 8): the hourly cap is enforced INSIDE the INSERT
+    itself (a single statement executes atomically), not in a separate
+    COUNT read before it — concurrent submissions can no longer all
+    observe a count below 500 and slip past the cap.
     Returns the new row id, or None when the contact was already listed
     (idempotent success — the caller still shows the success message).
+    Raises ValueError("rate limited") when the hourly cap was hit.
     """
     contact = (contact or "").strip()
     position_size_usd = (position_size_usd or "").strip()
@@ -185,17 +198,23 @@ def insert_waitlist(contact, position_size_usd, venues, willing_price,
         raise ValueError("willing_price too long")
     if int(consent) != 1:
         raise ValueError("consent is required")
-    hourly = query(
-        "SELECT COUNT(*) AS n FROM waitlist WHERE created_at >= "
-        "strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-1 hour')")
-    if hourly and int(hourly[0]["n"]) >= WAITLIST_HOURLY_CAP:
-        raise ValueError("rate limited")
+    # S13: no separate COUNT read — the cap is enforced atomically
+    # inside INSERT_WAITLIST_SQL below (see its comment). A pre-check
+    # here would reintroduce the race the atomic INSERT closes.
     res = _pipeline([(INSERT_WAITLIST_SQL, [
         contact, position_size_usd, venues,
-        willing_price, created_at, 1, contact.lower(),
+        willing_price, created_at, 1, WAITLIST_HOURLY_CAP, contact.lower(),
     ])])[0]
-    # rows_written == 0 means the atomic WHERE NOT EXISTS lost the race
-    # to an identical contact — still an idempotent success.
+    # rows_written == 0 means the atomic statement admitted nothing:
+    # either the contact already exists (idempotent success) or the
+    # hourly cap was hit (rate limited). One follow-up read decides
+    # which — the cap itself was already enforced atomically above,
+    # so this read cannot admit a 501st row.
     if isinstance(res, dict) and res.get("rows_written") == 0:
-        return None
+        existing = query(
+            "SELECT id FROM waitlist WHERE LOWER(TRIM(contact)) = ? LIMIT 1",
+            [contact.lower()])
+        if existing:
+            return None
+        raise ValueError("rate limited")
     return res.get("last_insert_rowid") if isinstance(res, dict) else None

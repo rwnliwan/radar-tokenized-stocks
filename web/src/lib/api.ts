@@ -40,6 +40,8 @@ export type LatestResponse = {
     last_success_ts?: string | null;
     stale?: boolean;
     fresh?: boolean;
+    // S15 (fix ronde 8): the Worker returns stale_tickers in meta.
+    stale_tickers?: string[];
   };
 };
 
@@ -79,6 +81,9 @@ export type AlertRow = {
   ticker: string;
   ts: string;
   type: string;
+  // S14 (fix ronde 8): the Worker returns the delivery channel per
+  // feed row (since R7); the type now declares it.
+  channel: string | null;
   figure: number | null;
 };
 

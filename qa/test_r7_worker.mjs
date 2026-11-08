@@ -84,7 +84,10 @@ function route(sql, args) {
       { ticker_id: "SPYx", dex: "raydium", price_usd: 100.0, reserve_usd: 200000 },
     ]);
   }
-  if (sql.includes("COUNT(DISTINCT pool_id) AS live")) {
+  // P2-M2 (fix ronde 8): venues_live now counts pools at each
+  // ticker's own latest snapshot — the SQL qualifies the column
+  // (s.pool_id) because pools and snapshots both carry pool_id.
+  if (sql.includes("COUNT(DISTINCT s.pool_id) AS live") || sql.includes("COUNT(DISTINCT pool_id) AS live")) {
     return mkResult([{ total: 4, live: 4 }]);
   }
   if (sql.includes("FROM poller_health")) {

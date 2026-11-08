@@ -258,6 +258,10 @@ def default_offset_path():
 
 
 # --- Market calendar (same NYSE list as the poller) ---
+# 2028 list is the official NYSE Group calendar (announced 2025-12-23):
+# 9 closures — New Year's Day 2028 falls on a Saturday and is NOT
+# observed. The set must be IDENTICAL in poller.py, bot.py,
+# dashboard/logic.py and web/src/lib/format.ts (qa/test_r8_fix.py S11).
 ET = ZoneInfo("America/New_York")
 UTC = timezone.utc
 NYSE_HOLIDAYS = {
@@ -265,6 +269,8 @@ NYSE_HOLIDAYS = {
     "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25",
     "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
     "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+    "2028-01-17", "2028-02-21", "2028-04-14", "2028-05-29", "2028-06-19",
+    "2028-07-04", "2028-09-04", "2028-11-23", "2028-12-25",
 }
 
 
@@ -338,6 +344,13 @@ LIQ_MIN = 100000.0  # qualifying pool: reserve >= $100k (same as poller
 POR_STALE_HOURS = 72.0
 DEDUP_HOURS = 24.0
 STALE_MINUTES = 30.0
+# S2 (fix ronde 8): per-ticker staleness uses the SAME 15-min bound as
+# the Worker (TICKER_STALE_MIN) and the dashboard — a ticker 20 min old
+# used to be "stale" on the web yet still eligible for bot alerts. The
+# 30-min global stale gate above is unchanged; only the per-ticker
+# bound aligns. No threshold value changes: 15 and 30 were both already
+# decided numbers, on different surfaces.
+TICKER_STALE_MINUTES = 15.0
 SEND_DELAY_S = 2  # ACC 25 Okt: short pause between alert sends (was back-to-back)
 
 
@@ -396,6 +409,13 @@ def evaluate_alerts(tickers_data, market_open):
                 "dw": d.get("dw"), "median": d.get("median"),
                 "depth": depth, "pools_used": d.get("pools_used"),
             })
+        # S3 (fix ronde 8): redemption/PoR alerts do not depend on the
+        # dev row, so they still fire for a stale ticker — but they
+        # must NOT carry its hours-old price/depth as if fresh. When
+        # dev_stale, those fields are None and format_alert renders
+        # "—" (same "missing renders as —" rule as fix ronde 5, S2).
+        stale_price = (None, None, None) if dev_stale else (
+            d.get("dw"), depth, d.get("pools_used"))
         status = (d.get("redemption_status") or "").lower()
         if status in ("closed", "gated"):
             alerts.append({
@@ -403,8 +423,8 @@ def evaluate_alerts(tickers_data, market_open):
                 "issuer": d.get("issuer"), "status": status,
                 "next_open_at": d.get("next_open_at"),
                 "closes_within_24h": d.get("closes_within_24h", False),
-                "dw": d.get("dw"), "depth": depth,
-                "pools_used": d.get("pools_used"),
+                "dw": stale_price[0], "depth": stale_price[1],
+                "pools_used": stale_price[2],
             })
         elif status == "paused":
             alerts.append({
@@ -412,8 +432,8 @@ def evaluate_alerts(tickers_data, market_open):
                 "issuer": d.get("issuer"), "status": status,
                 "next_open_at": d.get("next_open_at"),
                 "closes_within_24h": d.get("closes_within_24h", False),
-                "dw": d.get("dw"), "depth": depth,
-                "pools_used": d.get("pools_used"),
+                "dw": stale_price[0], "depth": stale_price[1],
+                "pools_used": stale_price[2],
             })
         age = d.get("por_age_hours")
         if age is not None and age > POR_STALE_HOURS:
@@ -421,8 +441,8 @@ def evaluate_alerts(tickers_data, market_open):
                 "type": "por", "ticker": d["ticker"],
                 "issuer": d.get("issuer"), "age_hours": round(age, 1),
                 "last_update": d.get("por_last_update"),
-                "dw": d.get("dw"), "depth": depth,
-                "pools_used": d.get("pools_used"),
+                "dw": stale_price[0], "depth": stale_price[1],
+                "pools_used": stale_price[2],
             })
     # Note: the DB window_note is Indonesian, so it is NOT carried
     # into messages; format_alert uses a fixed language-appropriate
@@ -639,6 +659,48 @@ def handle_command(text, lang="en"):
 
 
 # --- Live data assembly (reads only; no sends, no writes) ---
+def _extend_window_rows(issuer, rows):
+    """S7 (fix ronde 8): when the fetched history hits the 5000-row
+    LIMIT while still inside a window, the true window start is OLDER
+    than the oldest returned row. Find it with two bounded queries:
+    the most recent row that breaks ANY window, then the first row of
+    the current run after it. That row (with its true status) is
+    appended as the synthetic oldest row, so window_start_from_rows
+    walks to the true start instead of the truncated one. Returns the
+    (possibly extended) rows. Best-effort: any error leaves the rows
+    unchanged (the old 5000-row bound applies). Limitation: when the
+    window predates ALL recorded history there is no breaking row, so
+    no true start exists in the data — the oldest returned row stays
+    the anchor."""
+    if len(rows) < 5000:
+        return rows
+    try:
+        b = db_query(
+            "SELECT MAX(observed_at) AS m FROM redemption_windows "
+            "WHERE issuer = ? AND status NOT IN ('closed','gated','paused')",
+            [issuer])
+        boundary = b[0]["m"] if b and b[0].get("m") else None
+        if boundary is None:
+            return rows
+        f = db_query(
+            "SELECT status, observed_at FROM redemption_windows "
+            "WHERE issuer = ? AND observed_at > ? "
+            "ORDER BY observed_at ASC LIMIT 1",
+            [issuer, boundary])
+        if not f:
+            return rows
+        first = f[0]
+        if first["observed_at"] < rows[-1]["observed_at"]:
+            rows = list(rows) + [{
+                "status": first["status"],
+                "window_note": None, "next_open_at": None,
+                "observed_at": first["observed_at"],
+            }]
+    except Exception as e:
+        print(f"WINDOW EXTEND FAILED ({issuer}): {e}")
+    return rows
+
+
 def snapshot_redemption_rows():
     """One redemption_windows snapshot per pass, shared by evaluation
     and dedup (see SINGLE-SNAPSHOT RULE in the module docstring).
@@ -651,10 +713,11 @@ def snapshot_redemption_rows():
     snap = {}
     for r in db_query("SELECT DISTINCT issuer FROM universe"):
         iss = r["issuer"]
-        snap[iss] = db_query(
+        rows = db_query(
             "SELECT status, window_note, next_open_at, observed_at "
             "FROM redemption_windows WHERE issuer = ? "
             "ORDER BY observed_at DESC LIMIT 5000", [iss])
+        snap[iss] = _extend_window_rows(iss, rows)
     return snap
 
 
@@ -756,30 +819,37 @@ def load_live_tickers(red_rows_by_issuer=None):
             lu = parse_ts(por_last)
             if lu is not None:
                 live_age = (datetime.now(UTC) - lu).total_seconds() / 3600.0
-                if por_age is None:
-                    por_age = max(0.0, live_age)
-                else:
-                    try:
-                        por_age = max(float(por_age), live_age)
-                    except (TypeError, ValueError):
+                # GG-15 (fix ronde 8, P2-M1 bot half): a FUTURE
+                # last_update is not evidence of age 0 — it is ignored,
+                # so the stored age stands (or None stays None).
+                if live_age >= 0:
+                    if por_age is None:
                         por_age = max(0.0, live_age)
+                    else:
+                        try:
+                            por_age = max(float(por_age), live_age)
+                        except (TypeError, ValueError):
+                            por_age = max(0.0, live_age)
         # M1 (fix ronde 7): per-ticker staleness. The global stale gate
         # (load_health_age_minutes) only knows whether the POLLER is
         # healthy; a ticker whose own deviations row stopped updating
         # while other tickers kept flowing would still be evaluated
         # and alerted on hours-old dw/dev. dev_stale is True when the
         # ticker has no deviations row at all, its ts is unparseable,
-        # or its age exceeds the same STALE_MINUTES the global gate
-        # uses. evaluate_alerts skips spread/deviation alerts for such
-        # tickers (redemption/PoR alerts do not depend on the dev row
-        # and still fire).
+        # its ts is in the FUTURE (GG-15, fix ronde 8 — a negative age
+        # is not fresh), or its age exceeds TICKER_STALE_MINUTES.
+        # S2 (fix ronde 8): the per-ticker bound is 15 min, the same
+        # as the Worker's TICKER_STALE_MIN — the old code used the
+        # 30-min global gate here, so a 20-min-old ticker was stale on
+        # the web yet still alertable by the bot.
         dev_ts = d.get("ts")
         dev_age_min = None
         if dev_ts:
             parsed = parse_ts(dev_ts)
             if parsed is not None:
                 dev_age_min = (datetime.now(UTC) - parsed).total_seconds() / 60.0
-        dev_stale = dev_ts is None or dev_age_min is None or dev_age_min > STALE_MINUTES
+        dev_stale = (dev_ts is None or dev_age_min is None
+                     or dev_age_min < 0 or dev_age_min > TICKER_STALE_MINUTES)
         out.append({
             "ticker": tid, "issuer": u["issuer"], "venues": venues,
             "dw": d.get("depth_weighted_price"),
@@ -825,7 +895,14 @@ def load_health_age_minutes(now_utc):
             last = parse_ts(r.get("cycle_ts"))
             if last is None:
                 return None
-            return (now_utc - last).total_seconds() / 60.0
+            # GG-15 (fix ronde 8, P2-M1 bot half): a last-success
+            # timestamp in the FUTURE is not "0 minutes old" — the age
+            # is untrustworthy, so this reads as stale (None), exactly
+            # like "no successful cycle at all".
+            age = (now_utc - last).total_seconds() / 60.0
+            if age < 0:
+                return None
+            return age
     return None
 
 
@@ -904,6 +981,7 @@ def alerted_in_current_window(ticker, alert_type, statuses, red_rows=None,
             "SELECT status, observed_at FROM redemption_windows "
             "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 5000",
             [issuer_rows[0]["issuer"]])
+        rows = _extend_window_rows(issuer_rows[0]["issuer"], rows)
     else:
         rows = red_rows
     start = window_start_from_rows(rows, statuses)
@@ -934,6 +1012,13 @@ ALERT_FALLBACK_PATH = os.path.join(
 
 
 def _fallback_markers():
+    """Markers from the local fallback file.
+
+    Returns [] when the file does not exist yet, or None when the file
+    cannot be read at all. GG-16 / S9 (fix ronde 8): an unreadable
+    file is UNKNOWN, never "empty" — the old code returned [] on any
+    OSError, silently lifting suppression exactly when the filesystem
+    was broken."""
     try:
         with open(ALERT_FALLBACK_PATH, "r", encoding="utf-8") as f:
             out = []
@@ -948,16 +1033,49 @@ def _fallback_markers():
             return out
     except FileNotFoundError:
         return []
-    except OSError:
-        return []
+    except OSError as e:
+        print(f"ALERT FALLBACK READ FAILED ({ALERT_FALLBACK_PATH}): {e} "
+              f"— suppression state UNKNOWN, treating as not suppressed")
+        return None
+
+
+# S6 (fix ronde 8): the fallback file is append-only by design, so it
+# is pruned on every append. Non-redemption markers live 48h (the 24h
+# dedup + margin); redemption markers live 30 days (a closed window is
+# days long; the DB alert_log is the primary record — the fallback
+# only matters while Turso writes fail).
+_FALLBACK_PRUNE_NONRED_HOURS = 48
+_FALLBACK_PRUNE_RED_DAYS = 30
+
+
+def _prune_fallback_markers(markers, now=None):
+    """Drop markers whose suppression window is long past (pure)."""
+    now = now or datetime.now(UTC)
+    kept = []
+    for m in markers:
+        ts = parse_ts(m.get("alert_ts"))
+        if ts is None:
+            continue
+        age_h = (now - ts).total_seconds() / 3600.0
+        if m.get("type") in REDEMPTION_WINDOW_STATUSES:
+            if age_h <= _FALLBACK_PRUNE_RED_DAYS * 24:
+                kept.append(m)
+        elif age_h <= _FALLBACK_PRUNE_NONRED_HOURS:
+            kept.append(m)
+    return kept
 
 
 def _fallback_suppressed(alert, channel, window_start=None):
     """True iff a fallback marker shows this (ticker, type, channel)
     was already delivered: within the last 24h, or (redemption) since
-    the current window began."""
+    the current window began. False when the markers cannot be read
+    (unknown state — see _fallback_markers); the read failure itself
+    is already shouted there."""
     now = datetime.now(UTC)
-    for m in _fallback_markers():
+    markers = _fallback_markers()
+    if markers is None:
+        return False
+    for m in markers:
         if (m.get("ticker") != alert["ticker"]
                 or m.get("type") != alert["type"]
                 or m.get("channel") != channel):
@@ -976,6 +1094,17 @@ def _fallback_suppressed(alert, channel, window_start=None):
 
 def _append_fallback(alert, channel, alert_ts):
     try:
+        # S6: prune stale markers before appending, so the file cannot
+        # grow without bound. Pruning is best-effort — an unreadable
+        # file (markers None) just skips the prune, the append below
+        # still tries and reports its own failure.
+        markers = _fallback_markers()
+        if markers is not None:
+            kept = _prune_fallback_markers(markers)
+            if len(kept) != len(markers):
+                with open(ALERT_FALLBACK_PATH, "w", encoding="utf-8") as f:
+                    for m in kept:
+                        f.write(json.dumps(m) + "\n")
         with open(ALERT_FALLBACK_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps({
                 "ticker": alert["ticker"], "type": alert["type"],
@@ -1005,7 +1134,14 @@ def record_alert_safe(alert, message_text, alert_ts, channel=None):
                 time.sleep(0.5)
     print(f"ALERT RECORD FAILED after 3 attempts "
           f"({alert['type']} {alert['ticker']} -> {channel}): {last_exc}")
-    _append_fallback(alert, channel, alert_ts)
+    if _append_fallback(alert, channel, alert_ts):
+        return False
+    # S9 (fix ronde 8): the delivery is now recorded NOWHERE — say so
+    # loudly. The caller still counts the channel as sent (Telegram
+    # got it), but the next pass cannot suppress it, so it may re-send.
+    print(f"ALERT RECORD LOST ({alert['type']} {alert['ticker']} -> "
+          f"{channel}): DB write failed AND fallback file unwritable — "
+          f"dedup NOT guaranteed, this alert may re-send next pass.")
     return False
 
 
@@ -1186,6 +1322,16 @@ def send_alert_channels(alert, channels, red_snapshot, now, delay_s=0):
       replacing a destination mid-period does not suppress the new one.
     """
     sent = 0
+    # S1 (fix ronde 8): ONE alert_ts per alert EVENT, shared by every
+    # channel. The old code captured the delivery time per channel, so
+    # on the --once cron path (2 s between sends) the EN and ID rows
+    # were >= 2 s apart and never grouped under the /api/alerts dedup
+    # key (ticker, alert_ts, alert_type) — one event consumed 2 of the
+    # 30 feed slots. The shared ts is the FIRST channel's delivery
+    # time (still a delivery time, per S5); the dedup period is
+    # shortened by at most the inter-channel delay (~2 s), negligible
+    # against 24h / a redemption window.
+    shared_ts = None
     for lang, cid in channels:
         channel_key = f"{lang}:{cid}"
         if suppression_reason(alert, red_snapshot, channel=channel_key):
@@ -1199,9 +1345,9 @@ def send_alert_channels(alert, channels, red_snapshot, now, delay_s=0):
             break
         try:
             send_message(cid, format_alert(alert, lang))
-            # S5: delivery time, captured per channel.
-            ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-            record_alert_safe(alert, format_alert(alert, "en"), ts,
+            if shared_ts is None:
+                shared_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            record_alert_safe(alert, format_alert(alert, "en"), shared_ts,
                               channel=channel_key)
             sent += 1
             print(f"ALERT sent ({lang}): {alert['type']} {alert['ticker']}")
@@ -1227,14 +1373,30 @@ ALERT_LOCK_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".bot_alert.lock")
 
 
+class AlertLockError(Exception):
+    """The alert lock file cannot be opened at all (permissions,
+    filesystem, read-only mount). Distinct from lock CONTENTION
+    (another pass holds the flock), which still returns None."""
+
+
 def acquire_alert_lock():
     """Return an open lock-file handle holding an exclusive flock, or
-    None when another alert pass already holds it."""
+    None when another alert pass already holds it.
+
+    GG-16 / M4 (fix ronde 8): an open() failure used to return None —
+    exactly like contention — so ANY filesystem failure silently
+    disabled ALL alerting while every log line blamed a phantom
+    overlapping pass and --once exited 0. An open failure now RAISES
+    AlertLockError; only flock contention returns None."""
     try:
         fh = open(ALERT_LOCK_PATH, "w")
+    except OSError as e:
+        raise AlertLockError(
+            f"cannot open alert lock file {ALERT_LOCK_PATH}: {e}")
+    try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         return fh
-    except (OSError, IOError):
+    except OSError:
         try:
             fh.close()
         except Exception:
@@ -1299,11 +1461,13 @@ def main():
                 params["offset"] = offset
             data = tg_api("getUpdates", params)
             for upd in data.get("result", []):
-                offset = upd["update_id"] + 1
+                uid = upd["update_id"]
                 msg = upd.get("message") or {}
                 chat_id = (msg.get("chat") or {}).get("id")
                 text = msg.get("text") or ""
                 if not chat_id or not text.startswith("/"):
+                    # Nothing to reply to — consume it.
+                    offset = uid + 1
                     continue
                 reply, new_lang = handle_command(
                     text, lang_by_chat.get(chat_id, "en"))
@@ -1312,7 +1476,14 @@ def main():
                     send_message(chat_id, reply)
                     print(f"command reply sent to {chat_id}: {text}")
                 except Exception as e:
-                    print(f"command reply failed ({chat_id}): {e}")
+                    # S4 (fix ronde 8): a failed reply is NOT consumed.
+                    # The offset stays at this update, so the next poll
+                    # retries it; the rest of the batch is deferred, not
+                    # lost — their ids are above the saved offset.
+                    print(f"command reply failed ({chat_id}): {e} "
+                          f"— stopping batch, will retry next poll.")
+                    break
+                offset = uid + 1
         except Exception as e:
             print(f"updates error: {type(e).__name__}: {e}")
         save_update_state(offset_path, offset, lang_by_chat)
@@ -1320,7 +1491,13 @@ def main():
         # S3 (fix ronde 7): take the single-pass lock first — an
         # overlapping pass skips its alert evaluation entirely instead
         # of double-sending. The lock is released even on error.
-        lock = acquire_alert_lock()
+        # M4 (fix ronde 8): a lock-file OPEN failure is not contention
+        # — abort the pass with a nonzero exit (fail-closed), never 0.
+        try:
+            lock = acquire_alert_lock()
+        except AlertLockError as e:
+            print(f"ALERT LOCK ERROR: {e} — aborting pass (fail-closed).")
+            return 2
         if lock is None:
             print("ALERT LOCK: another alert pass is running — skipping this pass.")
             return 0
@@ -1371,11 +1548,19 @@ def main():
             if time.time() - last_eval >= 300:
                 last_eval = time.time()
                 # S3 (fix ronde 7): single-pass lock (see --once).
-                lock = acquire_alert_lock()
-                if lock is None:
+                # M4 (fix ronde 8): an open failure is not contention —
+                # log it loudly and skip this evaluation round; the
+                # command loop below keeps running.
+                lock_error = False
+                try:
+                    lock = acquire_alert_lock()
+                except AlertLockError as e:
+                    print(f"ALERT LOCK ERROR: {e} — skipping this evaluation.")
+                    lock = None
+                    lock_error = True
+                if lock is None and not lock_error:
                     print("ALERT LOCK: another alert pass is running — "
                           "skipping this evaluation.")
-                    lock = None
                 try:
                     if lock is None:
                         pass
@@ -1412,16 +1597,27 @@ def main():
                     params["offset"] = offset
                 data = tg_api("getUpdates", params)
                 for upd in data.get("result", []):
-                    offset = upd["update_id"] + 1
+                    uid = upd["update_id"]
                     msg = upd.get("message") or {}
                     chat_id = (msg.get("chat") or {}).get("id")
                     text = msg.get("text") or ""
                     if not chat_id or not text.startswith("/"):
+                        offset = uid + 1
                         continue
                     reply, new_lang = handle_command(
                         text, lang_by_chat.get(chat_id, "en"))
                     lang_by_chat[chat_id] = new_lang
-                    send_message(chat_id, reply)
+                    try:
+                        send_message(chat_id, reply)
+                    except Exception as e:
+                        # S4 (fix ronde 8): same rule as --once — a
+                        # failed reply is not consumed; the next poll
+                        # retries from this update_id.
+                        print(f"command reply failed ({chat_id}): {e} "
+                              f"— stopping batch, will retry next poll.")
+                        offset = uid
+                        break
+                    offset = uid + 1
             except Exception as e:
                 print(f"poll error: {type(e).__name__}")
                 time.sleep(5)

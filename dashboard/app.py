@@ -35,7 +35,7 @@ import streamlit as st
 from i18n import (DONATE_ADDRESS, DONATE_PAY_URL, LINKEDIN_URL,
                   SIZE_BUCKETS, t)
 from logic import (best_exit_venues, cross_venue_spread, fmt_abbr,
-                   fmt_wita, freshness_status, parse_ts,
+                   fmt_wita, freshness_status, market_is_open, parse_ts,
                    por_effective_age_hours)
 from risk import weekend_risk_score
 from trial_components import build_bars_options, build_home_grid_options
@@ -450,17 +450,9 @@ def get_alerts(ticker):
     )
 
 
-# ---------------------------------------------------------------- helpers
-def market_is_open(now_utc):
-    """NYSE regular schedule (Mon–Fri 09:30–16:00 America/New_York).
-
-    Exchange holidays are NOT tracked — the status strings say so.
-    """
-    ny = now_utc.astimezone(ET)
-    if ny.weekday() >= 5:
-        return False
-    mins = ny.hour * 60 + ny.minute
-    return 9 * 60 + 30 <= mins < 16 * 60
+# market_is_open lives in logic.py (pure, unit-tested): it is
+# holiday-aware since fix ronde 8 (S12). Do NOT re-define it here —
+# a local weekday-only copy is exactly the bug S12 fixed.
 
 
 # cross_venue_spread lives in logic.py (pure, unit-tested): it applies

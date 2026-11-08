@@ -63,6 +63,12 @@ UTC = timezone.utc
 
 # NYSE holidays (full closes). 2026 list is the NYSE calendar; 2027 list
 # follows the same pattern (observed dates). Review annually.
+# 2028 list is the official NYSE Group calendar (announced 2025-12-23):
+# 9 closures — New Year's Day 2028 falls on a Saturday and is NOT
+# observed, so there is no January 2028 closure. The calendar must
+# cover through the end of NEXT year (qa/test_r8_fix.py S11 trips when
+# it does not); the same set is duplicated in bot.py, dashboard/logic.py
+# and web/src/lib/format.ts, and the guard asserts all four identical.
 NYSE_HOLIDAYS = {
     # 2026
     "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25",
@@ -70,6 +76,12 @@ NYSE_HOLIDAYS = {
     # 2027
     "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31",
     "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
+    # 2028 (NYSE Group calendar: MLK Jan 17, Presidents Feb 21,
+    # Good Friday Apr 14, Memorial May 29, Juneteenth Jun 19,
+    # Independence Day Jul 4, Labor Day Sep 4, Thanksgiving Nov 23,
+    # Christmas Dec 25)
+    "2028-01-17", "2028-02-21", "2028-04-14", "2028-05-29", "2028-06-19",
+    "2028-07-04", "2028-09-04", "2028-11-23", "2028-12-25",
 }
 
 
@@ -143,6 +155,14 @@ def solana_mint_info(mint):
             capture_output=True, text=True)
         try:
             val = (json.loads(r.stdout).get("result") or {}).get("value") or {}
+            # GG-13 (fix ronde 8, M2): a parsed response with no usable
+            # account data is an ERROR, not a successful "unchecked"
+            # read. The old code returned (None, None, "") here, so the
+            # caller counted the mint as checked-and-unpaused.
+            if not val.get("data"):
+                err = "empty account data"
+                time.sleep(3)
+                continue
             info = (val.get("data") or {}).get("parsed", {}).get("info", {})
             paused = None
             for e in info.get("extensions") or []:
@@ -164,26 +184,33 @@ def run_hourly_redemption(cycle_dt, state, dry_run=False):
     table). Returns a gap_note fragment ('' when unremarkable).
     With dry_run=True nothing is written and the row is printed."""
     sched = redemption_schedule_status(cycle_dt)
-    paused_list, supply_now, rpc_errors = [], {}, 0
+    paused_list, supply_now, checked, rpc_errors = [], {}, set(), 0
+    total_mints = len(XSTOCKS_MINTS)
     for tick, mint in XSTOCKS_MINTS.items():
         paused, supply, err = solana_mint_info(mint)
         if err:
             rpc_errors += 1
-            if rpc_errors >= 3 and not supply_now and not paused_list:
+            if rpc_errors >= 3 and not checked and not paused_list:
                 break  # RPC looks down; stop hammering, schedule-only row.
             continue
-        supply_now[tick] = supply
+        # GG-13 (fix ronde 8, M2): a mint counts as CHECKED only when
+        # the read returned usable data (a pause verdict or a supply).
+        # A (None, None, "") read — parsed but empty — is unchecked,
+        # never "checked-and-unpaused". A None supply is not stored,
+        # so it can never count as a spurious supply change.
+        if paused is not None or supply is not None:
+            checked.add(tick)
+        if supply is not None:
+            supply_now[tick] = supply
         if paused:
             paused_list.append(tick)
         time.sleep(0.2)
-    onchain_ok = bool(supply_now)
+    onchain_ok = bool(checked)
     status = "paused" if paused_list else sched
     prev = state.get("last_mint_supply") or {}
     changed = sorted(t for t, s in supply_now.items()
-                     if t in prev and prev[t] != s)
+                     if t in prev and s is not None and prev[t] != s)
     new_baseline = sorted(t for t in supply_now if t not in prev)
-    if not dry_run:
-        state["last_mint_supply"] = supply_now
     nxt = next_nyse_open_utc(cycle_dt) if status == "closed" else None
     if status == "paused":
         note_en = (f"Schedule-derived: {sched}; ON-CHAIN PAUSE on "
@@ -197,10 +224,20 @@ def run_hourly_redemption(cycle_dt, state, dry_run=False):
         note_en = "Schedule-derived: weekend/NYSE holiday → closed."
         note_id = "Dari jadwal: akhir pekan/hari libur NYSE → tutup."
     if onchain_ok:
-        note_en += (f" On-chain: {len(paused_list)}/13 mints paused; "
+        unchecked = total_mints - len(checked)
+        note_en += (f" On-chain: {len(paused_list)} paused of "
+                    f"{len(checked)}/{total_mints} mints checked "
+                    f"({unchecked} unchecked); "
                     f"supply changes: {', '.join(changed) if changed else 'none'}.")
-        note_id += (f" On-chain: {len(paused_list)}/13 mint dijeda; "
+        note_id += (f" On-chain: {len(paused_list)} dijeda dari "
+                    f"{len(checked)}/{total_mints} mint diperiksa "
+                    f"({unchecked} belum diperiksa); "
                     f"perubahan supply: {', '.join(changed) if changed else 'tidak ada'}.")
+        if unchecked:
+            # GG-13: partial coverage must SAY it is partial — the
+            # unchecked mints' pause status is unknown, never "0 paused".
+            note_en += (f" Pause status unknown for {unchecked} mint(s).")
+            note_id += (f" Status jeda tidak diketahui untuk {unchecked} mint.")
     else:
         note_en += (" On-chain check unavailable this hour (RPC error); "
                     "pause status unknown.")
@@ -226,6 +263,12 @@ def run_hourly_redemption(cycle_dt, state, dry_run=False):
     except Exception as e:
         log(f"HOURLY redemption write FAILED: {e}")
         return f"hourly redemption write failed: {e}"
+    # S8 (fix ronde 8): the supply baseline mutates ONLY after the
+    # write lands. The old code mutated it before the write, so a
+    # failed write still consumed the new baseline and the next hour's
+    # supply-change comparison silently lost one cycle.
+    if not dry_run:
+        state["last_mint_supply"] = supply_now
     log(f"HOURLY redemption status={status} sched={sched} "
         f"paused={paused_list or '-'} rpc_errors={rpc_errors} "
         f"supply_changed={changed or '-'} baseline_new={new_baseline or '-'}")
@@ -295,14 +338,27 @@ def run_hourly_por(cycle_dt, state, dry_run=False):
     stamps = []
     for tick, rec in recs.items():
         dt = parse_por_ts(rec["timestamp"])
-        if dt:
+        # GG-13 / GG-15 (fix ronde 8, M3): a timestamp that is
+        # unparseable OR in the future is NOT usable freshness evidence
+        # — the token is missing from the age, not silently dropped.
+        # The old code dropped such tokens without even listing them.
+        if dt and dt <= now_utc:
             stamps.append((dt, rec["timestamp"]))
+        else:
+            missing.append(tick)
     if not stamps:
         return "hourly PoR fetch failed: no usable token timestamps"
     oldest_dt, oldest_ts = min(stamps)
     age = max(0.0, round((now_utc - oldest_dt).total_seconds() / 3600, 1))
     cycle_ts = cycle_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    row = ["xStocks", POR_API_BASE, oldest_ts, age, None, cycle_ts]
+    # GG-13: the issuer row carries its coverage, so the age is never
+    # read as "all 13 tokens" when only some contributed. The note
+    # surfaces on the ticker detail page (por_note) via the Worker.
+    cov_note = None
+    if missing:
+        cov_note = (f"coverage {len(stamps)}/{len(XSTOCKS_MINTS)} tokens; "
+                    f"missing from freshness age: {', '.join(sorted(missing))}")
+    row = ["xStocks", POR_API_BASE, oldest_ts, age, cov_note, cycle_ts]
     # v2: per-token rows from the SAME responses (no extra API calls).
     # Numbers stored as TEXT exactly as published (no float rounding).
     tok_rows = [
@@ -371,8 +427,14 @@ def save_state(state):
 
 
 def dex_fetch(url):
-    """GET with 429/5xx backoff. Returns (pairs_list, http_code, err)."""
+    """GET with 429/5xx backoff. Returns (pairs_list, http_code, err).
+
+    S5 (fix ronde 8): retries cover 429 and EVERY 5xx (the old list
+    429/500/502/503 missed e.g. 504/520s), and backoff exhaustion
+    reports the REAL last code — the old code returned a hardcoded
+    "429" even for transport timeouts, mislabelling the failure."""
     last_err = ""
+    last_code = None
     for attempt in range(3):
         r = subprocess.run(
             ["curl", "-s", "-w", "\nHTTP:%{http_code}", "--max-time", "30", url],
@@ -389,12 +451,40 @@ def dex_fetch(url):
                 return data.get("pairs") or [], code, ""
             except Exception as e:
                 return [], code, f"bad json: {e}"
+        last_code = code
         last_err = f"http {code}"
-        if code in ("429", "500", "502", "503") or r.returncode != 0:
+        if code == "429" or (code and code.startswith("5")) or r.returncode != 0:
             time.sleep(5 * (2 ** attempt))
             continue
         return [], code, last_err
-    return [], "429", f"backoff exhausted ({last_err})"
+    return [], last_code or "timeout", f"backoff exhausted ({last_err})"
+
+
+def _hourly_due(cycle_dt, state):
+    """True when the hourly redemption/PoR slot should run.
+
+    S8 (fix ronde 8): the slot is due 55 min after the last SUCCESSFUL
+    hourly run. A failed attempt does not make it due again at once —
+    it backs off 15 min — so a persistently failing RPC cannot make
+    every 5-min cycle pay the full hourly cost, while a transient
+    failure is still retried soon instead of waiting out the hour."""
+    last = state.get("last_hourly_check")
+    if last:
+        try:
+            age_last = (cycle_dt - datetime.fromisoformat(last)).total_seconds()
+        except (TypeError, ValueError):
+            age_last = None
+        if age_last is not None and age_last < 55 * 60:
+            return False
+    failed_at = state.get("last_hourly_failed_at")
+    if failed_at:
+        try:
+            age_f = (cycle_dt - datetime.fromisoformat(failed_at)).total_seconds()
+        except (TypeError, ValueError):
+            age_f = None
+        if age_f is not None and age_f < 15 * 60:
+            return False
+    return True
 
 
 def run_cycle(cycle_dt):
@@ -449,6 +539,7 @@ def run_cycle(cycle_dt):
         by_pair[p.get("pairAddress")] = p
     # Coverage check: batch claim verification + per-token fallback.
     missing = [pl for pl in pools if pl["pair_address"] not in by_pair]
+    fallback_errors = 0
     if missing:
         # Case-insensitive retry first (address casing), then per-token fetch.
         lower = {k.lower(): v for k, v in by_pair.items()}
@@ -458,15 +549,25 @@ def run_cycle(cycle_dt):
                 by_pair[pl["pair_address"]] = lower[pl["pair_address"].lower()]
         if still:
             fallback_used = True
+            # S5 (fix ronde 8): the fallback fetches once per DISTINCT
+            # token address, not once per missing pool — several pools
+            # share one token address, and the old code repeated the
+            # same request (up to 3 attempts each) for every one.
+            by_addr = {}
             for pl in still:
                 addr = addr_by_ticker.get(pl["ticker_id"])
-                if not addr:
-                    continue
+                if addr:
+                    by_addr.setdefault(addr, []).append(pl)
+            for addr, pls in by_addr.items():
                 tp, _c, _e = dex_fetch(DEX.format(addr))
+                if _e:
+                    fallback_errors += 1
+                    continue
                 for p in tp:
-                    if p.get("pairAddress") == pl["pair_address"]:
-                        by_pair[pl["pair_address"]] = p
-                        break
+                    for pl in pls:
+                        if p.get("pairAddress") == pl["pair_address"]:
+                            by_pair[pl["pair_address"]] = p
+                            break
 
     # Archive raw response (batch response; fallback pairs noted in meta).
     os.makedirs(os.path.join(RAW_DIR, cycle_dt.strftime("%Y-%m-%d")), exist_ok=True)
@@ -549,30 +650,50 @@ def run_cycle(cycle_dt):
         gap_bits.append(f"price-guard excluded pool(s): {', '.join(guard_notes)}")
     if fallback_used:
         gap_bits.append("dexscreener batch incomplete; per-token fallback used")
+    if fallback_errors:
+        gap_bits.append(f"per-token fallback errors: {fallback_errors} token(s)")
     if missing_now:
         gap_bits.append(f"{len(missing_now)} tracked pools missing from response")
     now_iso = cycle_dt.isoformat()
-    last_hourly = state.get("last_hourly_check")
-    if (not last_hourly
-            or (cycle_dt - datetime.fromisoformat(last_hourly)).total_seconds() >= 55 * 60):
+    if _hourly_due(cycle_dt, state):
         # Wave 3: real hourly redemption observation (schedule + on-chain).
         # A failure here must never break the deviation cycle, so the
         # hourly write lives in its own pipeline call inside
         # run_hourly_redemption; only its gap fragment lands here.
+        hourly_failed = False
         try:
             _frag = run_hourly_redemption(cycle_dt, state)
             if _frag:
                 gap_bits.append(_frag)
+                # Only a FAILURE fragment holds the clock back. An
+                # informational fragment (on-chain PAUSE observed,
+                # partial coverage honestly recorded) is a successful
+                # observation — the clock advances.
+                if "failed" in _frag:
+                    hourly_failed = True
         except Exception as _e:
             gap_bits.append(f"hourly redemption failed: {_e}")
+            hourly_failed = True
         # PoR v1 (ACC'd): same isolation pattern as redemption.
         try:
             _frag = run_hourly_por(cycle_dt, state)
             if _frag:
                 gap_bits.append(_frag)
+                if "failed" in _frag:
+                    hourly_failed = True
         except Exception as _e:
             gap_bits.append(f"hourly PoR failed: {_e}")
-        state["last_hourly_check"] = now_iso
+            hourly_failed = True
+        # S8 (fix ronde 8): the shared hourly clock advances ONLY when
+        # BOTH hourly jobs succeeded. The old code advanced it
+        # unconditionally, so a failed hour silently waited out the
+        # next 55 min; a failed attempt instead backs off 15 min
+        # (see _hourly_due) and is retried.
+        if hourly_failed:
+            state["last_hourly_failed_at"] = now_iso
+        else:
+            state["last_hourly_check"] = now_iso
+            state.pop("last_hourly_failed_at", None)
     # Equity-close slot: once per NYSE day after 16:30 ET (median-only mode).
     et = cycle_dt.astimezone(ET)
     if is_nyse_day(et) and (et.hour, et.minute) >= (16, 30):
@@ -583,12 +704,51 @@ def run_cycle(cycle_dt):
             state["last_equity_note_date"] = et.strftime("%Y-%m-%d")
     save_state(state)
 
+    # GG-16 / M1 (fix ronde 8): a cycle that wrote ZERO snapshots and
+    # ZERO deviations is a FAILED cycle, never a success heartbeat. The
+    # old code wrote cycles_ok=1 unconditionally here, so an HTTP 200
+    # with no pairs refreshed the global freshness verdict forever
+    # (healthSummary / the bot's 30-min gate look only at cycle_ts
+    # and cycles_ok — nothing downstream reads gap_note).
+    if n_snap == 0 and not per_ticker:
+        gap_bits.append("empty response: no snapshots or deviations written")
+        try:
+            pipeline([(
+                "INSERT INTO poller_health (cycle_ts, cycles_expected, cycles_ok,"
+                " failed_sources, gap_note) VALUES (?,?,?,?,?)",
+                [cycle_ts, 1, 0, "dexscreener",
+                 "; ".join(gap_bits) if gap_bits else None],
+            )])
+        except Exception as e:
+            log(f"CYCLE {cycle_ts} FAIL empty response + heartbeat write "
+                f"failed: {e}")
+        log(f"CYCLE {cycle_ts} FAIL empty response: no snapshots or "
+            f"deviations written")
+        return False
+
     stmts.append((
         "INSERT INTO poller_health (cycle_ts, cycles_expected, cycles_ok,"
         " failed_sources, gap_note) VALUES (?,?,?,?,?)",
         [cycle_ts, 1, 1, None, "; ".join(gap_bits) if gap_bits else None],
     ))
-    pipeline(stmts)
+    try:
+        pipeline(stmts)
+    except Exception as e:
+        # S10 (fix ronde 8): a failing final write still attempts a
+        # FAILURE heartbeat, so the cycle is visible as failed instead
+        # of vanishing with no heartbeat row at all.
+        log(f"CYCLE {cycle_ts} FAIL final pipeline: {e}")
+        try:
+            pipeline([(
+                "INSERT INTO poller_health (cycle_ts, cycles_expected, cycles_ok,"
+                " failed_sources, gap_note) VALUES (?,?,?,?,?)",
+                [cycle_ts, 1, 0, "turso",
+                 f"final pipeline failed: {e}"
+                 + ("; " + "; ".join(gap_bits) if gap_bits else "")],
+            )])
+        except Exception as e2:
+            log(f"CYCLE {cycle_ts} FAIL failure heartbeat also failed: {e2}")
+        return False
     log(f"CYCLE {cycle_ts} OK tight={tight} snapshots={n_snap} "
         f"deviations={len(per_ticker)} missing={len(missing_now)} "
         f"fallback={fallback_used} "
@@ -645,13 +805,26 @@ def main():
             cur = datetime.now(UTC).replace(second=0, microsecond=0)
             if not in_tight_window(cur):
                 break
-            run_cycle(cur)
+            # S10 (fix ronde 8): an uncaught cycle failure used to kill
+            # the whole tight-window loop with no failure heartbeat.
+            # A failed minute is logged and skipped; the loop continues
+            # to the next minute (run_cycle itself writes a failure
+            # heartbeat for the failures it catches).
+            try:
+                run_cycle(cur)
+            except Exception as e:
+                log(f"TIGHT CYCLE {cur.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+                    f"FAILED (uncaught, continuing): {e}")
             nxt = (datetime.now(UTC).replace(second=0, microsecond=0)
                    + timedelta(minutes=1))
             time.sleep(max(0, (nxt - datetime.now(UTC)).total_seconds()) + 1)
         log("TIGHT LOOP done")
     else:
-        run_cycle(now)
+        try:
+            run_cycle(now)
+        except Exception as e:
+            log(f"CYCLE FAILED (uncaught): {e}")
+            return 1
     return 0
 
 

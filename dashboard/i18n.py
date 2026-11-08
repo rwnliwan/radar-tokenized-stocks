@@ -125,9 +125,9 @@ STR = {
         "movers_note": "By absolute deviation vs cross-venue median, latest row.",
         "narrowest_note": "Lowest qualifying depth, latest row.",
         "coverage_short": "Coverage: 13 xStocks tickers across 35 Solana DEX pools (Raydium 27, Orca 7, Meteora 1). Public reference is the cross-venue median; vs-close figures await a data license.",
-        "coverage_live_line": "Live today: DEX deviation and schedule-derived redemption status. Proof-of-reserve and vs-close are not yet available.",
+        "coverage_live_line": "Live today: DEX deviation, schedule-derived redemption status, and hourly proof-of-reserve token snapshots. Vs-close is not yet available.",
         "col_spark": "Sparkline",
-        "market_open": "US market open (regular schedule; exchange holidays not tracked)",
+        "market_open": "US market open (regular schedule; NYSE holidays excluded)",
         "market_closed": "US market closed",
         "market_title": "Market status & live cross-venue spread",
         "spread_label": "Cross-venue spread",
@@ -258,7 +258,6 @@ STR = {
         "coming_text": (
             "Not yet connected — each keeps its honest label where it appears:\n"
             "- Deviation vs stock close — awaiting a data license.\n"
-            "- PoR feed — not connected.\n"
             "- Alert history — the log fills as alerts fire."
         ),
         "risk_partial_n": "Partial score — {n} of 4 components present (missing components excluded, not zeroed).",
@@ -276,7 +275,7 @@ STR = {
         "methodology_redemption": "Redemption status: open, closed, paused (on-chain), gated (legacy), or unknown. Since Wave 3, the poller writes one observation per hour: the status is computed from the official xStocks 24/5 schedule plus the NYSE calendar (conservative: open on NYSE business days, closed on weekends/holidays) — schedule-derived, NOT confirmed live by the issuer. An hourly on-chain check over the 13 Solana mints overrides the status to paused when a pausable pause flag is detected. Actual redemption still requires KYC onboarding and the $5,000 minimum (xStocks docs); the window status is not a guarantee of execution.",
         "methodology_thresholds": "Status column (display-only): |deviation| over 50 bps = Watch, over 100 bps = Alert. These are display thresholds, not alert triggers. Bot alerts (separate): |deviation vs cross-venue median| ≥ 3.0% (high priority, any time), cross-venue spread ≥ 1.0% when open, redemption window closed, gated or paused, PoR stale over 72 hours. Deviation vs stock close is NOT live yet — roadmap, needs a close-price feed license. Weekend risk score: deviation (0–40) + depth (0–25) + redemption (0–20) + PoR age (0–15), normalized to 0–100; missing components are excluded, not zeroed, and partial scores say how many of 4 components are present. The score is experimental until calibrated on 8 weekends.",
         "methodology_sources": "Sources: DexScreener pool data polled every 5 minutes (tighter 1-minute polling around the US open and close for Tier 1), stored in Turso, with a heartbeat row per cycle. Raw snapshots are kept 30 days, then hourly for 12 months, then daily. A quote more than 25% away from the cross-venue median is excluded from the calculation when at least 3 pools qualify (it is counted and noted, not silently dropped).",
-        "methodology_limits": "Limitations. (1) Median-only mode: without a data license, vs-close deviation cannot be shown. (2) Market open/closed is derived from the New York clock and weekday only — exchange holidays are NOT distinguished, so on a US holiday the label may say 'open' while the market is closed. (3) Single-pool tickers have no median, no spread, and no deviation — they are listed, never plotted at zero. (4) Data is 5-minute snapshots, not tick-by-tick. (5) Gaps are shown as gaps, never interpolated. (6) History begins 24 October 2026.",
+        "methodology_limits": "Limitations. (1) Median-only mode: without a data license, vs-close deviation cannot be shown. (2) Market open/closed is derived from the New York clock, weekday, and the NYSE holiday calendar (2026–2028) — on a US holiday the label says 'closed'. (3) Single-pool tickers have no median, no spread, and no deviation — they are listed, never plotted at zero. (4) Data is 5-minute snapshots, not tick-by-tick. (5) Gaps are shown as gaps, never interpolated. (6) History begins 24 October 2026.",
         "methodology_human": "What 'human-checked methodology' covers. Human: choosing the 13-ticker universe from 43 candidates against written criteria; designing and reviewing the price-guard rule; writing the coverage statements; reviewing the weekly-story template. Automated: polling, medians, depth weighting, score arithmetic, and the story's numbers. No individual price or deviation is hand-checked — the methodology is human-checked, the data feed is automated. That distinction is why the tagline says 'human-checked methodology', not 'human-verified data'.",
         "methodology_coming": "Coming soon (not yet connected): deviation vs stock close (awaiting a data license). Redemption status is live since Wave 3 (schedule-derived, plus an hourly on-chain pause check — not issuer-confirmed). Each item keeps its honest per-place label until it connects; this list does not hide missing data.",
     },
@@ -394,9 +393,9 @@ STR = {
         "movers_note": "Berdasarkan deviasi absolut vs median lintas-venue, baris terbaru.",
         "narrowest_note": "Kedalaman lolos terendah, baris terbaru.",
         "coverage_short": "Cakupan: 13 ticker xStocks di 35 pool DEX Solana (Raydium 27, Orca 7, Meteora 1). Acuan publik adalah median lintas-venue; angka vs-close menunggu lisensi data.",
-        "coverage_live_line": "Yang live hari ini: deviasi DEX dan status redemption dari jadwal resmi. Proof-of-reserve dan vs-close belum tersedia.",
+        "coverage_live_line": "Yang live hari ini: deviasi DEX, status redemption dari jadwal resmi, dan snapshot proof-of-reserve per token per jam. Vs-close belum tersedia.",
         "col_spark": "Grafik mini",
-        "market_open": "Bursa AS buka (jadwal reguler; hari libur bursa tidak dilacak)",
+        "market_open": "Bursa AS buka (jadwal reguler; hari libur NYSE dikecualikan)",
         "market_closed": "Bursa AS tutup",
         "market_title": "Status bursa & spread antar-venue live",
         "spread_label": "Spread antar-venue",
@@ -527,7 +526,6 @@ STR = {
         "coming_text": (
             "Belum terhubung — masing-masing tetap memakai label jujur di tempatnya:\n"
             "- Deviasi vs close saham — menunggu lisensi data.\n"
-            "- Feed PoR — belum terhubung.\n"
             "- Riwayat alert — log terisi saat alert menyala."
         ),
         "risk_partial_n": "Skor parsial — {n} dari 4 komponen tersedia (komponen yang hilang dikeluarkan, bukan dinolkan).",
@@ -545,7 +543,7 @@ STR = {
         "methodology_redemption": "Status redemption: buka, tutup, dijeda (on-chain), terbatas (legacy), atau belum diketahui. Sejak Gelombang 3, poller menulis satu observasi per jam: status dihitung dari jadwal resmi xStocks 24/5 ditambah kalender NYSE (konservatif: buka pada hari kerja NYSE, tutup pada akhir pekan/hari libur) — dari jadwal, BUKAN konfirmasi live dari issuer. Pemeriksaan on-chain per jam atas 13 mint Solana mengubah status menjadi dijeda bila flag jeda pausable terdeteksi. Redemption sungguhan tetap mensyaratkan onboarding KYC dan minimum $5.000 (dokumen xStocks); status jendela bukan jaminan eksekusi.",
         "methodology_thresholds": "Kolom Status (tampilan saja): |deviasi| di atas 50 bps = Pantau, di atas 100 bps = Alert. Ini ambang tampilan, bukan pemicu alert. Alert bot (terpisah): |deviasi vs median lintas-venue| ≥ 3,0% (prioritas tinggi, kapan saja), spread antar-venue ≥ 1,0% saat bursa buka, jendela redemption tutup, terbatas, atau dijeda, PoR basi di atas 72 jam. Deviasi vs close saham BELUM live — roadmap, butuh lisensi feed harga close. Skor risiko akhir pekan: deviasi (0–40) + kedalaman (0–25) + redemption (0–20) + umur PoR (0–15), dinormalisasi ke 0–100; komponen yang hilang dikeluarkan, bukan dinolkan, dan skor parsial menyebut berapa dari 4 komponen yang tersedia. Skor ini eksperimental sampai terkalibrasi pada 8 akhir pekan.",
         "methodology_sources": "Sumber: data pool DexScreener yang dipoll tiap 5 menit (poll 1 menit yang lebih rapat di sekitar buka dan tutup bursa AS untuk Tier 1), disimpan di Turso, dengan baris heartbeat per siklus. Snapshot mentah disimpan 30 hari, lalu per jam selama 12 bulan, lalu harian. Quote yang menyimpang lebih dari 25% dari median lintas-venue dikeluarkan dari perhitungan bila minimal 3 pool lolos (dihitung dan dicatat, bukan dibuang diam-diam).",
-        "methodology_limits": "Batasan. (1) Mode median-only: tanpa lisensi data, deviasi vs-close tidak bisa ditampilkan. (2) Status buka/tutup bursa diturunkan dari jam New York dan hari kerja saja — hari libur bursa TIDAK dibedakan, jadi pada hari libur AS label bisa bertuliskan 'buka' padahal bursa tutup. (3) Ticker 1 pool tidak punya median, spread, maupun deviasi — mereka didaftar, tidak pernah diplot di nol. (4) Data adalah snapshot 5 menit, bukan tick-by-tick. (5) Celah tampil sebagai celah, tidak pernah diinterpolasi. (6) Riwayat dimulai 24 Oktober 2026.",
+        "methodology_limits": "Batasan. (1) Mode median-only: tanpa lisensi data, deviasi vs-close tidak bisa ditampilkan. (2) Status buka/tutup bursa diturunkan dari jam New York, hari kerja, dan kalender libur NYSE (2026–2028) — pada hari libur AS label bertuliskan 'tutup'. (3) Ticker 1 pool tidak punya median, spread, maupun deviasi — mereka didaftar, tidak pernah diplot di nol. (4) Data adalah snapshot 5 menit, bukan tick-by-tick. (5) Celah tampil sebagai celah, tidak pernah diinterpolasi. (6) Riwayat dimulai 24 Oktober 2026.",
         "methodology_human": "Apa yang dicakup 'metodologi diperiksa manusia'. Manusia: memilih universe 13 ticker dari 43 kandidat berdasarkan kriteria tertulis; merancang dan meninjau aturan price-guard; menulis pernyataan cakupan; meninjau templat cerita mingguan. Otomatis: polling, median, pembobotan kedalaman, hitungan skor, dan angka-angka cerita. Tidak ada harga atau deviasi individual yang diperiksa tangan — metodologinya diperiksa manusia, feed datanya otomatis. Perbedaan itu alasan tagline bertuliskan 'metodologi diperiksa manusia', bukan 'data terverifikasi manusia'.",
         "methodology_coming": "Segera hadir (belum terhubung): deviasi vs close saham (menunggu lisensi data). Status redemption live sejak Gelombang 3 (dari jadwal resmi, ditambah pemeriksaan jeda on-chain per jam — bukan konfirmasi issuer). Setiap item tetap memakai label jujur di tempatnya sampai terhubung; daftar ini tidak menyembunyikan data yang hilang.",
     },

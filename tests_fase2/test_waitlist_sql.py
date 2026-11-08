@@ -29,7 +29,7 @@ def main():
         " willing_price TEXT, created_at TEXT NOT NULL, consent INTEGER NOT NULL DEFAULT 0)"
     )
     args = ("test-telegram-user", "$100–$1,000", "Raydium / xStocks",
-            None, "2026-10-24T11:00:00Z", 1, "test-telegram-user")
+            None, "2026-10-24T11:00:00Z", 1, 500, "test-telegram-user")
     cur = con.execute(INSERT_WAITLIST_SQL, args)
     assert cur.lastrowid == 1
     row = con.execute("SELECT contact, position_size_usd, venues, "
@@ -38,10 +38,26 @@ def main():
     # Duplicate (same contact, different case/whitespace) inserts nothing.
     cur = con.execute(INSERT_WAITLIST_SQL, (
         "  Test-Telegram-User ", "$100–$1,000", "Raydium / xStocks",
-        None, "2026-10-24T11:05:00Z", 1, "test-telegram-user"))
+        None, "2026-10-24T11:05:00Z", 1, 500, "test-telegram-user"))
     assert cur.rowcount == 0, f"duplicate insert must affect 0 rows, got {cur.rowcount}"
     n = con.execute("SELECT COUNT(*) FROM waitlist").fetchone()[0]
     assert n == 1, f"expected 1 row after duplicate submit, got {n}"
+
+    # S13 (fix ronde 8): the hourly cap is enforced INSIDE the SQL.
+    # Fill the hour to 500 rows (all stamped within the last hour) —
+    # the 501st insert must affect 0 rows, with no separate COUNT read.
+    import datetime as _dt
+    hour_ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for i in range(500):
+        con.execute(INSERT_WAITLIST_SQL,
+                    (f"cap-user-{i}", "$100", "Raydium", None,
+                     hour_ts, 1, 500, f"cap-user-{i}"))
+    cur = con.execute(INSERT_WAITLIST_SQL,
+                      ("cap-user-500", "$100", "Raydium", None,
+                       hour_ts, 1, 500, "cap-user-500"))
+    assert cur.rowcount == 0, f"501st insert in the hour must affect 0 rows, got {cur.rowcount}"
+    n = con.execute("SELECT COUNT(*) FROM waitlist").fetchone()[0]
+    assert n == 501, f"expected 501 rows after refused insert, got {n}"
 
     # Validation mirrors the Worker: bad contact / long fields / no
     # consent must fail BEFORE any pipeline call.
@@ -72,10 +88,12 @@ def main():
         expect_reject("missing venues", dict(good, venues="  "))
         expect_reject("venues too long", dict(good, venues="x" * 301))
         expect_reject("no consent", dict(good, consent=0))
-        # A valid submit reaches the pipeline with the 7-arg atomic SQL.
+        # A valid submit reaches the pipeline with the 8-arg atomic SQL
+        # (7 values + the hourly-cap bound).
         calls.clear()
         assert insert_waitlist(**good) == 7
-        assert len(calls) == 1 and "WHERE NOT EXISTS" in calls[0][0][0]
+        assert len(calls) == 1 and "NOT EXISTS" in calls[0][0][0]
+        assert "COUNT(*) FROM waitlist" in calls[0][0][0]
         assert calls[0][0][1][-1] == "valid_user"
         # Email contacts are accepted too.
         calls.clear()
