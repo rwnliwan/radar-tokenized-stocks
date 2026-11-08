@@ -3,7 +3,10 @@
 Alert rules (design §5.3, adapted where the schema forces it — see
 notes below):
 - Market OPEN: inter-venue spread (max-min)/depth-weighted >= 1.0%,
-  qualifying depth >= $250k, >= 2 qualifying pools.
+  qualifying depth >= $250k, >= 2 qualifying pools. Spread is
+  evaluated on price-sanity-guarded venues (same >25%-from-median,
+  >=3-pool rule as the poller guard; fix 2026-11-08, Q6 vote A 3-0):
+  a pool the guard excluded cannot set hi/lo.
 - Any time: |dev vs cross-venue median| >= 3.0% -> HIGH priority
   deviation alert. Median basis is labeled as such: vs-close is NULL
   in median-only mode (license pending), so no vs-close alert fires.
@@ -57,6 +60,7 @@ link in dry-run messages is a template, not a live page.
 import argparse
 import json
 import os
+import statistics
 import subprocess
 import sys
 import time
@@ -289,6 +293,37 @@ def parse_ts(iso):
 TICKER_PAGE_BASE = "https://radar.omdanny.site"  # intended; pending subdomain decision
 SPREAD_THRESHOLD = 1.0
 DEV_HIGH_THRESHOLD = 3.0
+PRICE_GUARD_MAX_DEV = 0.25  # poller price-sanity guard: drop prices >25% from median
+
+
+def guarded_venues(venues):
+    """Price-sanity-guarded venue list — the SAME rule as the poller
+    guard (poller.py run_cycle, 2026-10-24): with >=3 venues, drop any
+    venue whose price deviates >25% from the cross-venue median;
+    excluded venues contribute neither price nor depth. With <3 venues
+    no consensus exists, so the guard is skipped (same documented
+    limitation as the poller). If exclusion would empty the list, fall
+    back to all venues. Pure: no I/O.
+    Why this exists: the poller applies the guard to dw/deviation
+    only — snapshots still store the raw tick, and
+    load_live_tickers reads those raw snapshots. Until 2026-11-08
+    the spread check used the raw venues, so one bad tick (SPYx
+    $0.1044 on 2026-11-06 19:06 UTC, reserve $1.24M) fired a
+    100.041% spread alert while the poller had already excluded that
+    pool from dw (guard=SPYx:1). From 2026-11-08 (Q6 vote A, 3-0)
+    evaluate_alerts runs the spread check on guarded_venues, so a
+    guarded-out pool cannot set hi/lo."""
+    if len(venues) < 3:
+        return list(venues)
+    prices = [v["price"] for v in venues]
+    med = statistics.median(prices)
+    if not med:
+        return list(venues)
+    kept = [v for v in venues
+            if abs(v["price"] - med) / med <= PRICE_GUARD_MAX_DEV]
+    return kept if kept else list(venues)
+
+
 DEPTH_MIN = 250000.0
 POR_STALE_HOURS = 72.0
 DEDUP_HOURS = 24.0
@@ -312,21 +347,26 @@ def evaluate_alerts(tickers_data, market_open):
         venues = [v for v in d.get("venues", [])
                   if v.get("price") is not None and v.get("reserve") is not None]
         depth = d.get("depth")
-        if market_open and len(venues) >= 2 and depth is not None and depth >= DEPTH_MIN:
-            prices = [v["price"] for v in venues]
+        # Spread is evaluated on price-sanity-guarded venues (see
+        # guarded_venues): a pool the poller guard excluded must not
+        # set hi/lo. Threshold, depth gate, dedup, stale gate and
+        # alert format are unchanged.
+        guarded = guarded_venues(venues)
+        if market_open and len(guarded) >= 2 and depth is not None and depth >= DEPTH_MIN:
+            prices = [v["price"] for v in guarded]
             dw = d.get("dw")
             if dw:
                 spread = (max(prices) - min(prices)) / dw * 100.0
                 if spread >= SPREAD_THRESHOLD:
-                    hi = max(venues, key=lambda v: v["price"])
-                    lo = min(venues, key=lambda v: v["price"])
+                    hi = max(guarded, key=lambda v: v["price"])
+                    lo = min(guarded, key=lambda v: v["price"])
                     alerts.append({
                         "type": "spread", "ticker": d["ticker"],
                         "issuer": d.get("issuer"),
                         "spread_pct": round(spread, 3),
                         "high_venue": hi, "low_venue": lo,
-                        "dw": dw, "median": d.get("median"),
-                        "depth": depth, "pools_used": len(venues),
+                        "dw": dw, "median": statistics.median(prices),
+                        "depth": depth, "pools_used": len(guarded),
                     })
         dev = d.get("dev_med")
         if dev is not None and abs(dev) >= DEV_HIGH_THRESHOLD:

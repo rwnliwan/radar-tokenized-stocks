@@ -519,3 +519,29 @@ begitu token asli terpasang.
   halaman ticker penuh (metrics + chart + venue + redemption
   + skor risiko); seksi metodologi contoh. 4 tangkapan
   (desktop gelap/terang, HP gelap/terang) terverifikasi render.
+
+## Gerbang A1 + G0 Tahap 2 — ditetapkan 8 Nov 2026 (vote Q4 A / Q5 B)
+
+- Dokumen kanonis: `GATE-A1-G0.md` (dibuat 8 Nov 2026, fase fix
+  putaran 3). Jangan tulis angka gerbang di dokumen lain — satu
+  sumber kebenaran, di file itu.
+- A1 (evaluasi akhir 19 Des 2026): ≥200 pelanggan TG aktif, retensi
+  30 hari ≥30%, ≥10 pernyataan akan bayar, ≥1 calon B2B; nol =
+  pivot/berhenti. Catatan jujur: angka ini sebelumnya hanya ada di
+  catatan induk — grep repo 8 Nov tidak menemukan dokumen yang
+  menuliskannya; ditetapkan resmi per vote Q4 A (2–1, Kimi penentu).
+- G0 Tahap 2 = opsi B (3–0 bulat): GO untuk Tahap 2 (pengumuman +
+  akuisisi pengguna) dengan syarat bukti permintaan minimal — ≥10
+  pendaftar waitlist ATAU ≥5 pengguna TG eksternal lingkaran dekat —
+  sebelum pengumuman massal; target ~23 Nov 2026. Opsi A ditolak
+  (terlalu longgar; alert belum pernah dilihat pengguna sungguhan),
+  opsi C ditolak (deadlock: traksi tak datang tanpa pengumuman).
+  Tinjauan Minggu 4 ~21 Nov 2026.
+- Prasyarat Q6 A (3–0, SELESAI 8 Nov 2026): perbaikan spread-alert
+  bad-tick di `bot.py` (`guarded_venues()`, aturan sama dengan guard
+  poller: ≥3 pool, buang harga >25% dari median) + test
+  `qa/test_spread_guard.py` (18 checks PASS; SPYx 100,041% palsu
+  tidak lagi memicu, NVDAx 4,426% asli tetap memicu). Ambang, dedup,
+  stale gate, format alert TIDAK berubah. Evaluasi testing-week yang
+  melandasi: `EVALUASI-TESTING-WEEK-2026-11-08.md` (vonis: TEKNIS
+  LULUS, KOMERSIAL NOL; QA 7/7, burn 43,6 jt reads = 8,7%).
