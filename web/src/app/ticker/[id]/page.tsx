@@ -87,8 +87,11 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
     // freshness verdict as the homepage (fix ronde 5, M4 contract:
     // age since last SUCCESSFUL cycle + failed streak), not just the
     // snapshot age from detail.latest_ts. A failed health fetch must
-    // NOT keep a previous verdict (S-new-6 pattern from HomeClient):
-    // clearing lets the snapshot-age fallback below speak.
+    // NOT keep a previous verdict (S-new-6 pattern from HomeClient).
+    // S9 (fix ronde 7): clearing no longer lets a snapshot-age
+    // fallback speak as "fresh" — the detail response itself carries
+    // the Worker's health verdict (health_stale), and when that is
+    // absent too the page fails closed to stale.
     try {
       setHealth(await fetchHealth());
     } catch {
@@ -144,14 +147,20 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
   // /api/health verdict; snapshot age (detail.latest_ts) is only the
   // last resort when health is unreachable. STALE_MIN = 15 matches
   // the Worker's healthSummary threshold and HomeClient.
-  const detailAgeMin =
-    detail?.latest_ts != null
-      ? Math.max(0, Math.round((Date.now() - Date.parse(detail.latest_ts)) / 60000))
-      : null;
-  const healthStale = health?.stale ?? null;
-  const stale =
-    healthStale != null ? healthStale : detailAgeMin != null && detailAgeMin > 15;
-  const staleTime = health?.last_success_ts ?? detail?.latest_ts ?? null;
+  // S9 (fix ronde 7): the snapshot-age fallback is REMOVED as a
+  // fresh-decider. When /api/health fails, the canonical verdict is
+  // unavailable — and a recent snapshot can still be stale on
+  // failed-streak grounds (≥2 failed cycles) while its age is <15
+  // min. The detail response now carries the Worker's own health
+  // verdict (health_stale, same pipeline as the detail data), so
+  // prefer it; a separate /api/health fetch is only a second source.
+  // When BOTH are unavailable, fail CLOSED (stale) instead of
+  // letting a recent snapshot read as fresh. No banner while nothing
+  // has loaded yet (detail == null).
+  const healthStale = detail?.health_stale ?? health?.stale ?? null;
+  const stale = detail == null ? false : healthStale != null ? healthStale : true;
+  const staleTime =
+    health?.last_success_ts ?? detail?.health_last_success_ts ?? detail?.latest_ts ?? null;
 
   return (
     <div className="wrap">

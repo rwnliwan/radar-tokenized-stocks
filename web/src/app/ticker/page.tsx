@@ -125,6 +125,12 @@ export default function TickerIndex() {
                   </td>
                   <td>
                     <span className={`pill ${r.status}`}>{statusLabel(lang, r.status)}</span>
+                    {/* M1 (fix ronde 7): a ticker whose own deviations
+                        row is stale is flagged per-row — the global
+                        banner alone cannot say which ticker is old. */}
+                    {r.stale && (
+                      <span className="pill stale"> {t(lang, "ticker_stale")}</span>
+                    )}
                   </td>
                 </tr>
               ))}

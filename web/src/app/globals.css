@@ -237,6 +237,7 @@ tbody tr:hover td { background: var(--hover-row); }
 .pill.watch { background: var(--orange-bg); color: var(--orange); }
 .pill.alert { background: var(--red-bg); color: var(--red); }
 .pill.na { background: var(--border); color: var(--muted); }
+.pill.stale { background: var(--orange-bg); color: var(--orange); }
 .pill.paused { background: var(--red-bg); color: var(--red); }
 .redcard { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; margin: 10px 0 18px; }
 .redcard-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }

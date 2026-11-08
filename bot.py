@@ -62,6 +62,7 @@ TICKER_PAGE_BASE is the live public-site base URL
 /ticker/<ticker> route (web/src/app/ticker/[id]/page.tsx).
 """
 import argparse
+import fcntl
 import json
 import os
 import statistics
@@ -353,6 +354,12 @@ def evaluate_alerts(tickers_data, market_open):
     ticker). Other alert types stay per-ticker as before."""
     alerts = []
     for d in tickers_data:
+        # M1 (fix ronde 7): a ticker whose own deviations row is stale
+        # must not fire spread/deviation alerts on hours-old dw/dev —
+        # even when the poller as a whole is healthy. Redemption and
+        # PoR alerts below do not depend on the dev row, so they still
+        # fire for such a ticker.
+        dev_stale = bool(d.get("dev_stale"))
         # Qualifying venues only (fix ronde 5, M2): same population the
         # poller uses for dw/dev (reserve >= LIQ_MIN), then the 25%
         # price-sanity guard. A sub-$100k pool can no longer set hi/lo.
@@ -365,7 +372,7 @@ def evaluate_alerts(tickers_data, market_open):
         # set hi/lo. Threshold, depth gate, dedup, stale gate and
         # alert format are unchanged.
         guarded = guarded_venues(venues)
-        if market_open and len(guarded) >= 2 and depth is not None and depth >= DEPTH_MIN:
+        if not dev_stale and market_open and len(guarded) >= 2 and depth is not None and depth >= DEPTH_MIN:
             prices = [v["price"] for v in guarded]
             dw = d.get("dw")
             if dw:
@@ -382,7 +389,7 @@ def evaluate_alerts(tickers_data, market_open):
                         "depth": depth, "pools_used": len(guarded),
                     })
         dev = d.get("dev_med")
-        if dev is not None and abs(dev) >= DEV_HIGH_THRESHOLD:
+        if not dev_stale and dev is not None and abs(dev) >= DEV_HIGH_THRESHOLD:
             alerts.append({
                 "type": "deviation_high", "ticker": d["ticker"],
                 "issuer": d.get("issuer"), "dev_pct": round(dev, 3),
@@ -647,7 +654,7 @@ def snapshot_redemption_rows():
         snap[iss] = db_query(
             "SELECT status, window_note, next_open_at, observed_at "
             "FROM redemption_windows WHERE issuer = ? "
-            "ORDER BY observed_at DESC LIMIT 500", [iss])
+            "ORDER BY observed_at DESC LIMIT 5000", [iss])
     return snap
 
 
@@ -756,12 +763,31 @@ def load_live_tickers(red_rows_by_issuer=None):
                         por_age = max(float(por_age), live_age)
                     except (TypeError, ValueError):
                         por_age = max(0.0, live_age)
+        # M1 (fix ronde 7): per-ticker staleness. The global stale gate
+        # (load_health_age_minutes) only knows whether the POLLER is
+        # healthy; a ticker whose own deviations row stopped updating
+        # while other tickers kept flowing would still be evaluated
+        # and alerted on hours-old dw/dev. dev_stale is True when the
+        # ticker has no deviations row at all, its ts is unparseable,
+        # or its age exceeds the same STALE_MINUTES the global gate
+        # uses. evaluate_alerts skips spread/deviation alerts for such
+        # tickers (redemption/PoR alerts do not depend on the dev row
+        # and still fire).
+        dev_ts = d.get("ts")
+        dev_age_min = None
+        if dev_ts:
+            parsed = parse_ts(dev_ts)
+            if parsed is not None:
+                dev_age_min = (datetime.now(UTC) - parsed).total_seconds() / 60.0
+        dev_stale = dev_ts is None or dev_age_min is None or dev_age_min > STALE_MINUTES
         out.append({
             "ticker": tid, "issuer": u["issuer"], "venues": venues,
             "dw": d.get("depth_weighted_price"),
             "dev_med": d.get("dev_vs_median_pct"),
             "depth": d.get("qualifying_depth_usd"),
             "pools_used": d.get("pools_used"), "median": median,
+            "dev_ts": dev_ts, "dev_age_min": dev_age_min,
+            "dev_stale": dev_stale,
             "redemption_status": red["status"] if red else None,
             "redemption_note": red["window_note"] if red else None,
             "next_open_at": red["next_open_at"] if red else None,
@@ -876,7 +902,7 @@ def alerted_in_current_window(ticker, alert_type, statuses, red_rows=None,
             return False
         rows = db_query(
             "SELECT status, observed_at FROM redemption_windows "
-            "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 500",
+            "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 5000",
             [issuer_rows[0]["issuer"]])
     else:
         rows = red_rows
@@ -894,6 +920,95 @@ def alerted_in_current_window(ticker, alert_type, statuses, red_rows=None,
     return bool(hits and int(hits[0]["n"]) > 0)
 
 
+# --- Alert-delivery dedup fallback (fix ronde 7, M2) -----------------
+# record_alert writes to Turso AFTER the Telegram send. If that write
+# fails (Turso outage), the old code had no dedup row at all, so the
+# next pass re-sent the same alert — including once-per-window
+# redemption alerts, violating rule B. record_alert_safe retries the
+# write 3x; if it still fails, the delivery is recorded in a LOCAL
+# JSONL marker file next to bot.py, and suppression_reason consults
+# that file exactly like alert_log. A marker never expires by itself:
+# the 24h / window-start comparisons below bound it, same as the DB.
+ALERT_FALLBACK_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".alert_sent_fallback.jsonl")
+
+
+def _fallback_markers():
+    try:
+        with open(ALERT_FALLBACK_PATH, "r", encoding="utf-8") as f:
+            out = []
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+            return out
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return []
+
+
+def _fallback_suppressed(alert, channel, window_start=None):
+    """True iff a fallback marker shows this (ticker, type, channel)
+    was already delivered: within the last 24h, or (redemption) since
+    the current window began."""
+    now = datetime.now(UTC)
+    for m in _fallback_markers():
+        if (m.get("ticker") != alert["ticker"]
+                or m.get("type") != alert["type"]
+                or m.get("channel") != channel):
+            continue
+        ts = parse_ts(m.get("alert_ts"))
+        if ts is None:
+            continue
+        if window_start is not None:
+            start = parse_ts(window_start)
+            if start is not None and ts >= start:
+                return True
+        elif (now - ts).total_seconds() <= DEDUP_HOURS * 3600:
+            return True
+    return False
+
+
+def _append_fallback(alert, channel, alert_ts):
+    try:
+        with open(ALERT_FALLBACK_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "ticker": alert["ticker"], "type": alert["type"],
+                "channel": channel, "alert_ts": alert_ts,
+            }) + "\n")
+        return True
+    except OSError as e:
+        print(f"ALERT FALLBACK WRITE FAILED: {e}")
+        return False
+
+
+def record_alert_safe(alert, message_text, alert_ts, channel=None):
+    """Record a delivery, retrying the Turso write 3x. Returns True
+    when the DB row landed. When all retries fail, the delivery is
+    recorded in the local fallback file instead (see above) so the
+    next pass still suppresses it — a sent alert is NEVER re-sent
+    just because its log write failed. Returns False in that case
+    (caller still counts the channel as sent: Telegram got it)."""
+    last_exc = None
+    for attempt in range(3):
+        try:
+            record_alert(alert, message_text, alert_ts, channel=channel)
+            return True
+        except Exception as e:
+            last_exc = e
+            if attempt < 2:
+                time.sleep(0.5)
+    print(f"ALERT RECORD FAILED after 3 attempts "
+          f"({alert['type']} {alert['ticker']} -> {channel}): {last_exc}")
+    _append_fallback(alert, channel, alert_ts)
+    return False
+
+
 def suppression_reason(alert, red_rows_by_issuer=None, channel=None):
     """None when the alert may fire, else a short reason string.
     Redemption types use the once-per-window rule; all other types use
@@ -901,16 +1016,45 @@ def suppression_reason(alert, red_rows_by_issuer=None, channel=None):
     (the same rows evaluation used) instead of re-querying.
     With channel given (fix ronde 6, S-new-10), the check is
     per-channel: an alert already sent to the EN channel does not
-    suppress the ID channel (and vice versa)."""
+    suppress the ID channel (and vice versa).
+    M2 (fix ronde 7): the local fallback file is consulted too, so a
+    delivery whose Turso record failed still suppresses the next pass.
+    S8 (fix ronde 7): the channel key is "lang:chat_id", not the bare
+    language — replacing a destination mid-dedup-period no longer
+    suppresses delivery to the new chat. (One-time transition cost:
+    rows recorded under the old bare-language key do not suppress the
+    new composite key, so an alert may fire once per channel right
+    after this upgrade; legacy NULL rows still suppress everything.)"""
     statuses = REDEMPTION_WINDOW_STATUSES.get(alert["type"])
     if statuses is not None:
         rows = None
         if red_rows_by_issuer is not None:
             rows = red_rows_by_issuer.get(alert.get("issuer"))
+        if channel is not None:
+            if rows is not None:
+                start = window_start_from_rows(rows, statuses)
+            else:
+                start = None
+                try:
+                    issuer_rows = db_query(
+                        "SELECT issuer FROM universe WHERE ticker_id = ? COLLATE NOCASE",
+                        [alert["ticker"]])
+                    if issuer_rows:
+                        wrows = db_query(
+                            "SELECT status, observed_at FROM redemption_windows "
+                            "WHERE issuer = ? ORDER BY observed_at DESC LIMIT 5000",
+                            [issuer_rows[0]["issuer"]])
+                        start = window_start_from_rows(wrows, statuses)
+                except Exception:
+                    start = None
+            if start is not None and _fallback_suppressed(alert, channel, start):
+                return "same window"
         if alerted_in_current_window(alert["ticker"], alert["type"], statuses, rows,
                                      channel=channel):
             return "same window"
         return None
+    if channel is not None and _fallback_suppressed(alert, channel):
+        return "dedup 24h"
     if recent_alert_exists(alert["ticker"], alert["type"], channel=channel):
         return "dedup 24h"
     return None
@@ -1024,17 +1168,41 @@ def send_alert_channels(alert, channels, red_snapshot, now, delay_s=0):
     (or the whole redemption window) and never got the alert. Now a
     failed channel is simply not recorded, so the next pass retries
     that channel only; a channel that already has a row is skipped
-    (per-channel suppression_reason), never re-sent."""
-    ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    (per-channel suppression_reason), never re-sent.
+
+    Fix ronde 7:
+    - M2: the record goes through record_alert_safe (3 retries, then
+      a local fallback marker) — a successful send is never re-sent
+      just because its Turso log write failed.
+    - S2: the 30-min stale gate is re-checked before EACH channel
+      send, not once per alert: the residual drift is now at most one
+      send (~2 s + one Telegram round-trip), not one alert's two sends.
+    - S5: the recorded alert_ts is the DELIVERY time of that channel
+      (captured per send), not the pass-start time — the 24h dedup
+      period is no longer shortened by the pass duration, and a
+      redemption alert can no longer be recorded with a timestamp
+      before its own window's first observation.
+    - S8: the dedup key is "lang:chat_id", not the bare language, so
+      replacing a destination mid-period does not suppress the new one.
+    """
     sent = 0
     for lang, cid in channels:
-        if suppression_reason(alert, red_snapshot, channel=lang):
+        channel_key = f"{lang}:{cid}"
+        if suppression_reason(alert, red_snapshot, channel=channel_key):
             print(f"ALERT already sent to {lang} channel, skipping: "
                   f"{alert['type']} {alert['ticker']}")
             continue
+        # S2: re-check the stale gate before each channel send.
+        if not data_still_fresh():
+            print("STALE GATE (re-check): data went stale mid-alert — "
+                  "stopping remaining channel sends.")
+            break
         try:
             send_message(cid, format_alert(alert, lang))
-            record_alert(alert, format_alert(alert, "en"), ts, channel=lang)
+            # S5: delivery time, captured per channel.
+            ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            record_alert_safe(alert, format_alert(alert, "en"), ts,
+                              channel=channel_key)
             sent += 1
             print(f"ALERT sent ({lang}): {alert['type']} {alert['ticker']}")
         except Exception as e:
@@ -1043,6 +1211,45 @@ def send_alert_channels(alert, channels, red_snapshot, now, delay_s=0):
         if delay_s:
             time.sleep(delay_s)
     return sent
+
+
+# --- Single-pass lock (fix ronde 7, S3) -------------------------------
+# Two overlapping bot passes (--once overlapping --live, or two --once
+# runs from a hung cron) can both observe "no prior row" and both
+# send the same alert. The poller's flock does not cover the bot.
+# One exclusive non-blocking flock on a lock file next to bot.py
+# serializes alert passes: a pass that cannot take the lock skips
+# its alert evaluation entirely (commands/replies are unaffected —
+# the lock only wraps the alert pass). The lock is held only for the
+# duration of one pass (~1 min); a stale lock file left by a killed
+# process is harmless because flock releases on process exit.
+ALERT_LOCK_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".bot_alert.lock")
+
+
+def acquire_alert_lock():
+    """Return an open lock-file handle holding an exclusive flock, or
+    None when another alert pass already holds it."""
+    try:
+        fh = open(ALERT_LOCK_PATH, "w")
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fh
+    except (OSError, IOError):
+        try:
+            fh.close()
+        except Exception:
+            pass
+        return None
+
+
+def release_alert_lock(fh):
+    if fh is None:
+        return
+    try:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+        fh.close()
+    except Exception:
+        pass
 
 
 def main():
@@ -1110,6 +1317,13 @@ def main():
             print(f"updates error: {type(e).__name__}: {e}")
         save_update_state(offset_path, offset, lang_by_chat)
         # 2) One alert pass (same gates as the live loop).
+        # S3 (fix ronde 7): take the single-pass lock first — an
+        # overlapping pass skips its alert evaluation entirely instead
+        # of double-sending. The lock is released even on error.
+        lock = acquire_alert_lock()
+        if lock is None:
+            print("ALERT LOCK: another alert pass is running — skipping this pass.")
+            return 0
         now = datetime.now(UTC)
         try:
             age = load_health_age_minutes(now)
@@ -1138,6 +1352,8 @@ def main():
             print(f"once done: alerts sent: {sent}")
         except Exception as e:
             print(f"evaluation error: {type(e).__name__}: {e}")
+        finally:
+            release_alert_lock(lock)
         return 0
     if args.live:
         # Fail fast when the bot token is missing — never loop blind.
@@ -1154,9 +1370,16 @@ def main():
             now = datetime.now(UTC)
             if time.time() - last_eval >= 300:
                 last_eval = time.time()
+                # S3 (fix ronde 7): single-pass lock (see --once).
+                lock = acquire_alert_lock()
+                if lock is None:
+                    print("ALERT LOCK: another alert pass is running — "
+                          "skipping this evaluation.")
+                    lock = None
                 try:
-                    age = load_health_age_minutes(now)
-                    if age is None or age > STALE_MINUTES:
+                    if lock is None:
+                        pass
+                    elif (age := load_health_age_minutes(now)) is None or age > STALE_MINUTES:
                         print("STALE GATE: skipping alert evaluation (no fresh data).")
                     else:
                         red_snapshot = snapshot_redemption_rows()
@@ -1180,6 +1403,8 @@ def main():
                                                 now)
                 except Exception as e:
                     print(f"evaluation error: {type(e).__name__}: {e}")
+                finally:
+                    release_alert_lock(lock)
             # Long-poll updates (30s) for commands.
             try:
                 params = {"timeout": 30}

@@ -7,6 +7,11 @@ export type TickerRow = {
   dw_price: number | null;
   dev_pct: number | null;
   dev_bps: number | null;
+  // M1 (fix ronde 7): per-ticker freshness — the row's own deviations
+  // timestamp, not just the global poller verdict in meta.
+  dev_ts: string | null;
+  dev_age_min?: number | null;
+  stale: boolean;
   best_price: number | null;
   best_dex: string | null;
   spread_pct: number | null;
@@ -109,6 +114,15 @@ export type TickerDetail = {
   dw_price: number | null;
   dev_pct: number | null;
   dev_bps: number | null;
+  // M1 (fix ronde 7): per-ticker freshness + S9: the canonical global
+  // health verdict, carried by the detail response itself.
+  dev_ts: string | null;
+  dev_age_min: number | null;
+  stale: boolean;
+  health_stale: boolean | null;
+  health_fresh: boolean | null;
+  health_last_success_ts: string | null;
+  health_failed_streak: number | null;
   best_price: number | null;
   best_dex: string | null;
   spread_pct: number | null;

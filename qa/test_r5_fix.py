@@ -144,6 +144,7 @@ def main():
         return (now - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     orig_query2, orig_execute, orig_send = bot.db_query, bot.db_execute, bot.send_message
+    orig_fresh = bot.data_still_fresh
     try:
         # S-new-8a: stored age frozen at 6h, but last_update 100h ago
         # -> effective age ~100h, PoR alert fires.
@@ -253,14 +254,20 @@ def main():
             return {"ok": True}
         bot.send_message = fake_send
         channels = [("en", "1"), ("id", "2")]
+        # R7 S2: send_alert_channels now re-checks the stale gate before
+        # each channel send. The fake DB here has no health rows, so the
+        # gate would read stale — stub it fresh for the happy-path
+        # sends below (the stale-mid-alert case is covered by
+        # qa/test_r7_fix.py).
+        bot.data_still_fresh = lambda: True
         n1 = bot.send_alert_channels(alert, channels, {}, now, delay_s=0)
         check("S-new-10 failed ID channel is NOT recorded (EN only)",
-              n1 == 1 and [r["channel"] for r in recorded] == ["en"],
+              n1 == 1 and [r["channel"] for r in recorded] == ["en:1"],
               f"sent={n1} recorded={recorded}")
         fake_send.id_ok = True
         n2 = bot.send_alert_channels(alert, channels, {}, now, delay_s=0)
         check("S-new-10 next pass retries ID only (EN skipped, not re-sent)",
-              n2 == 1 and [r["channel"] for r in recorded] == ["en", "id"]
+              n2 == 1 and [r["channel"] for r in recorded] == ["en:1", "id:2"]
               and sent_log.count("en") == 1,
               f"sent={n2} recorded={recorded} sends={sent_log}")
         n3 = bot.send_alert_channels(alert, channels, {}, now, delay_s=0)
@@ -268,6 +275,7 @@ def main():
               n3 == 0, f"sent={n3}")
     finally:
         bot.db_query, bot.db_execute, bot.send_message = orig_query2, orig_execute, orig_send
+        bot.data_still_fresh = orig_fresh
 
     print(f"\nSUMMARY: {len(FAILURES)} FAIL — "
           + ("R5 FIX TEST: PASS" if not FAILURES else f"FAILED: {FAILURES}"))

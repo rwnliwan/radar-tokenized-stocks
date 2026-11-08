@@ -246,12 +246,22 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
     return ages.length ? Math.max(...ages) : null;
   }, [data]);
 
+  // M1 (fix ronde 7): a ticker whose own deviations row is stale is
+  // NOT plotted as a live deviation, even when the poller as a whole
+  // is fresh — it is listed separately below instead.
   const plotted = useMemo(
-    () => rows.filter((r) => r.dev_bps != null).sort((a, b) => (b.dev_bps ?? 0) - (a.dev_bps ?? 0)),
+    () =>
+      rows
+        .filter((r) => r.dev_bps != null && !r.stale)
+        .sort((a, b) => (b.dev_bps ?? 0) - (a.dev_bps ?? 0)),
     [rows],
   );
   const notPlotted = useMemo(
-    () => rows.filter((r) => r.dev_bps == null).map((r) => r.ticker),
+    () => rows.filter((r) => r.dev_bps == null && !r.stale).map((r) => r.ticker),
+    [rows],
+  );
+  const staleTickers = useMemo(
+    () => rows.filter((r) => r.stale).map((r) => r.ticker),
     [rows],
   );
   const barsRange = useMemo(() => {
@@ -606,6 +616,10 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
                         <span className={`pill ${r.status}`}>
                           {statusLabel(lang, r.status)}
                         </span>
+                        {/* M1 (fix ronde 7): per-ticker staleness flag. */}
+                        {r.stale && (
+                          <span className="pill stale"> {t(lang, "ticker_stale")}</span>
+                        )}
                       </td>
                       <td>
                         <Link className="detailbtn" href={`/ticker/${r.ticker}`} aria-label={`${t(lang, "detail_link")} ${r.ticker}`}>
@@ -722,6 +736,12 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
                 <>
                   <br />
                   {t(lang, "bars_nodata")} {notPlotted.join(", ")}.
+                </>
+              )}
+              {staleTickers.length > 0 && (
+                <>
+                  <br />
+                  {t(lang, "bars_stale")} {staleTickers.join(", ")}.
                 </>
               )}
             </p>

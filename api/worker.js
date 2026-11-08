@@ -19,6 +19,56 @@ const HOST = "radar-tokenized-stocks-trisaktipan.aws-ap-northeast-1.turso.io";
 const HRANA = `https://${HOST}/v2/pipeline`;
 const LIQ_MIN = 100000;
 
+// Per-ticker staleness threshold (fix ronde 7, M1): the SAME 15-min
+// bound as healthSummary, applied to each ticker's OWN deviations
+// row instead of the global poller verdict. A ticker whose row is
+// older than this (or missing/unparseable) is stale even when the
+// poller as a whole is fresh.
+const TICKER_STALE_MIN = 15;
+
+function tickerFreshness(devTs) {
+  const parsed = devTs != null ? Date.parse(devTs) : NaN;
+  const ageMin = Number.isFinite(parsed)
+    ? Math.max(0, (Date.now() - parsed) / 60000)
+    : null;
+  const stale = ageMin == null || ageMin > TICKER_STALE_MIN;
+  return {
+    dev_ts: devTs ?? null,
+    dev_age_min: ageMin != null ? Math.round(ageMin * 10) / 10 : null,
+    stale,
+  };
+}
+
+// Re-evaluate freshness of an already-built /api/latest payload at
+// serve time (fix ronde 7, S1): a 60 s edge-cache HIT used to return
+// the previously computed meta.fresh/meta.stale verbatim, so a
+// response cached just before the 15-min boundary could be served as
+// fresh up to 60 s past it. Recomputing from the stored timestamps
+// (last_success_ts + per-ticker dev_ts) costs no DB read and bounds
+// the overshoot to zero.
+function reevaluateFreshness(payload) {
+  const meta = payload.meta || {};
+  const parsed =
+    meta.last_success_ts != null ? Date.parse(meta.last_success_ts) : NaN;
+  const ageMin = Number.isFinite(parsed) ? (Date.now() - parsed) / 60000 : null;
+  const stale = ageMin == null || ageMin > 15 || (meta.failed_streak ?? 0) >= 2;
+  const tickers = (payload.tickers || []).map((t) => {
+    const tf = tickerFreshness(t.dev_ts ?? null);
+    return { ...t, dev_age_min: tf.dev_age_min, stale: tf.stale };
+  });
+  return {
+    ...payload,
+    tickers,
+    meta: {
+      ...meta,
+      age_minutes: ageMin != null ? Math.round(ageMin * 10) / 10 : null,
+      stale,
+      fresh: !stale,
+      stale_tickers: tickers.filter((t) => t.stale).map((t) => t.ticker),
+    },
+  };
+}
+
 function encArg(v) {
   if (v === null || v === undefined) return { type: "null" };
   if (typeof v === "number")
@@ -270,6 +320,13 @@ async function loadLatest(env) {
     if (d.ts && (!latestTs || d.ts > latestTs)) latestTs = d.ts;
     const status =
       bps == null ? "na" : Math.abs(bps) > 100 ? "alert" : Math.abs(bps) > 50 ? "watch" : "ok";
+    // M1 (fix ronde 7): per-ticker staleness — the global health
+    // verdict in meta must NOT be the only freshness signal. A ticker
+    // whose own deviations row stopped updating while the poller
+    // stayed healthy for the other 12 used to be served as fresh for
+    // up to ~3.2 h (the LIMIT 500 window). Each row now carries its
+    // own dev_ts / dev_age_min / stale, and meta lists stale tickers.
+    const tf = tickerFreshness(d.ts ?? null);
     return {
       ticker: u.ticker_id,
       tier: u.tier,
@@ -277,6 +334,9 @@ async function loadLatest(env) {
       dw_price: dw,
       dev_pct: dev,
       dev_bps: bps,
+      dev_ts: tf.dev_ts,
+      dev_age_min: tf.dev_age_min,
+      stale: tf.stale,
       best_price: best ? best.price_usd : null,
       best_dex: best ? best.dex : null,
       spread_pct: crossVenueSpread(venuesByTicker[u.ticker_id] || [], dw),
@@ -306,6 +366,7 @@ async function loadLatest(env) {
       last_success_ts: hs.last_success_ts,
       stale: hs.stale,
       fresh: hs.fresh,
+      stale_tickers: tickers.filter((t) => t.stale).map((t) => t.ticker),
     },
   };
 }
@@ -384,7 +445,9 @@ async function loadTicker(env, ticker) {
       "AND dev_vs_median_pct IS NOT NULL ORDER BY ts ASC LIMIT 1",
     [ticker],
   ];
-  const stmts = [
+  // Stage 1: everything except the per-pool snapshots — in particular
+  // the latest deviations row, whose ts anchors stage 2.
+  const stage1 = [
     [
       "SELECT ticker_id, issuer, underlying, legal_type, tier FROM universe " +
         "WHERE ticker_id = ? COLLATE NOCASE",
@@ -394,14 +457,6 @@ async function loadTicker(env, ticker) {
       "SELECT ts, depth_weighted_price, dev_vs_median_pct, qualifying_depth_usd, " +
         "pools_used FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
         "ORDER BY ts DESC, id DESC LIMIT 1",
-      [ticker],
-    ],
-    [
-      "SELECT p.dex, p.chain, p.pair_address, s.price_usd, s.reserve_usd, " +
-        "s.volume_24h_usd, s.ts FROM pools p JOIN snapshots s ON s.pool_id = p.pool_id " +
-        "WHERE p.ticker_id = ? COLLATE NOCASE AND p.is_active = 1 " +
-        "AND s.ts = (SELECT MAX(ts) FROM snapshots s2 WHERE s2.pool_id = p.pool_id) " +
-        "ORDER BY s.reserve_usd DESC",
       [ticker],
     ],
     [
@@ -427,27 +482,59 @@ async function loadTicker(env, ticker) {
     anchor(1),
     anchor(24),
     anchor(168),
+    // S9 (fix ronde 7): the detail response carries the canonical
+    // global health verdict itself, so the page never has to decide
+    // fresh/stale from snapshot age when its /api/health fetch fails.
+    ["SELECT cycle_ts, cycles_ok FROM poller_health ORDER BY id DESC LIMIT 12"],
   ];
+  const res1 = await pipeline(env, stage1);
+  const uni = rowsOf(res1[0])[0];
+  if (!uni) return null;
+  const d = rowsOf(res1[1])[0] || {};
+  const red = rowsOf(res1[2])[0] || null;
+  const por = rowsOf(res1[3])[0] || null;
+  const series = rowsOf(res1[4]).map((s) => s.dev_vs_median_pct);
+  const firstOf = (i) => {
+    const r = rowsOf(res1[i])[0];
+    return r ? r.dev_vs_median_pct : null;
+  };
+  const hs = healthSummary(rowsOf(res1[8]));
+  // Stage 2: per-pool snapshots anchored to the SAME cycle ts as the
+  // deviations row (S6, fix ronde 7 — same mixed-cycle pattern
+  // S-new-9 fixed in the bot). The old per-pool MAX(ts) combined
+  // another cycle's venue prices with this cycle's depth-weighted
+  // price. When there is no deviations row (no ts to anchor on),
+  // fall back to the old per-pool MAX(ts) pattern.
+  const devTs = d.ts ?? null;
+  const venueSql = devTs
+    ? "SELECT p.dex, p.chain, p.pair_address, s.price_usd, s.reserve_usd, " +
+      "s.volume_24h_usd, s.ts FROM pools p JOIN snapshots s ON s.pool_id = p.pool_id " +
+      "WHERE p.ticker_id = ? COLLATE NOCASE AND p.is_active = 1 " +
+      "AND s.ts = ? " +
+      "ORDER BY s.reserve_usd DESC"
+    : "SELECT p.dex, p.chain, p.pair_address, s.price_usd, s.reserve_usd, " +
+      "s.volume_24h_usd, s.ts FROM pools p JOIN snapshots s ON s.pool_id = p.pool_id " +
+      "WHERE p.ticker_id = ? COLLATE NOCASE AND p.is_active = 1 " +
+      "AND s.ts = (SELECT MAX(ts) FROM snapshots s2 WHERE s2.pool_id = p.pool_id) " +
+      "ORDER BY s.reserve_usd DESC";
+  const venueArgs = devTs ? [ticker, devTs] : [ticker];
+  const stage2 = [[venueSql, venueArgs]];
   if (hasExcluded) {
-    stmts.push([
+    stage2.push([
       "SELECT pools_excluded FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
         "ORDER BY ts DESC, id DESC LIMIT 1",
       [ticker],
     ]);
   }
-  // PoR v2: latest per-token snapshot (index computed dynamically so the
-  // conditional push above cannot shift it).
-  const tokIdx = stmts.length;
-  stmts.push([
+  // PoR v2: latest per-token snapshot.
+  const tokIdx = stage2.length;
+  stage2.push([
     "SELECT ts, shares_held, circulating_supply FROM por_token_snapshots " +
       "WHERE ticker_id = ? COLLATE NOCASE ORDER BY checked_at DESC, id DESC LIMIT 1",
     [ticker],
   ]);
-  const res = await pipeline(env, stmts);
-  const uni = rowsOf(res[0])[0];
-  if (!uni) return null;
-  const d = rowsOf(res[1])[0] || {};
-  const venues = rowsOf(res[2]).map((v) => ({
+  const res2 = await pipeline(env, stage2);
+  const venues = rowsOf(res2[0]).map((v) => ({
     dex: v.dex,
     chain: v.chain,
     pair_address: v.pair_address,
@@ -457,14 +544,7 @@ async function loadTicker(env, ticker) {
     ts: v.ts,
     qualifies: v.reserve_usd != null && v.reserve_usd >= LIQ_MIN,
   }));
-  const red = rowsOf(res[3])[0] || null;
-  const por = rowsOf(res[4])[0] || null;
-  const tok = rowsOf(res[tokIdx])[0] || null;
-  const series = rowsOf(res[5]).map((s) => s.dev_vs_median_pct);
-  const firstOf = (i) => {
-    const r = rowsOf(res[i])[0];
-    return r ? r.dev_vs_median_pct : null;
-  };
+  const tok = rowsOf(res2[tokIdx])[0] || null;
   const dw = d.depth_weighted_price ?? null;
   const dev = d.dev_vs_median_pct ?? null;
   const bps = dev != null ? dev * 100 : null;
@@ -473,6 +553,9 @@ async function loadTicker(env, ticker) {
   const status =
     bps == null ? "na" : Math.abs(bps) > 100 ? "alert" : Math.abs(bps) > 50 ? "watch" : "ok";
   const best = venues.filter((v) => v.qualifies && v.price_usd != null)[0] || null;
+  // M1 (fix ronde 7): per-ticker staleness, same 15-min bound as
+  // loadLatest; health_* is the canonical global verdict (S9).
+  const tf = tickerFreshness(devTs);
   return {
     ticker: uni.ticker_id,
     issuer: uni.issuer,
@@ -482,12 +565,19 @@ async function loadTicker(env, ticker) {
     dw_price: dw,
     dev_pct: dev,
     dev_bps: bps,
+    dev_ts: tf.dev_ts,
+    dev_age_min: tf.dev_age_min,
+    stale: tf.stale,
+    health_stale: hs.stale,
+    health_fresh: hs.fresh,
+    health_last_success_ts: hs.last_success_ts,
+    health_failed_streak: hs.failed_streak,
     best_price: best ? best.price_usd : null,
     best_dex: best ? best.dex : null,
     spread_pct: crossVenueSpread(venues, dw),
     depth_usd: d.qualifying_depth_usd ?? null,
     pools_used: d.pools_used ?? null,
-    pools_excluded: hasExcluded ? (rowsOf(res[9])[0]?.pools_excluded ?? 0) : 0,
+    pools_excluded: hasExcluded ? (rowsOf(res2[1])[0]?.pools_excluded ?? 0) : 0,
     redemption_status: red ? String(red.status).toLowerCase() : null,
     redemption_next_open: red ? red.next_open_at : null,
     redemption_note_en: red ? red.window_note_en : null,
@@ -502,9 +592,9 @@ async function loadTicker(env, ticker) {
     por_supply: tok ? tok.circulating_supply : null,
     por_token_last_update: tok ? tok.ts : null,
     spark_bps: series.slice(-12).map((v) => v * 100),
-    change_1h_bps: change(firstOf(6)),
-    change_24h_bps: change(firstOf(7)),
-    change_7d_bps: change(firstOf(8)),
+    change_1h_bps: change(firstOf(5)),
+    change_24h_bps: change(firstOf(6)),
+    change_7d_bps: change(firstOf(7)),
     status,
     venues,
     latest_ts: d.ts ?? null,
@@ -527,6 +617,13 @@ async function handleWaitlist(request, env) {
     if (text.length > 10000) return json({ error: "payload too large" }, 413);
     body = JSON.parse(text);
   } catch {
+    return json({ error: "invalid JSON" }, 400);
+  }
+  // N1 (fix ronde 7): JSON.parse("null") succeeds, so a JSON null
+  // body used to reach `body.contact` and throw a TypeError, which
+  // the outer catch turned into a 502 "upstream read failed". A null
+  // / array / non-object body is a client error: 400, not 502.
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return json({ error: "invalid JSON" }, 400);
   }
   // Reject cross-site browser POSTs outright: CORS alone would only hide
@@ -616,11 +713,19 @@ async function handleWaitlist(request, env) {
 }
 
 async function loadAlerts(env) {
+  // S7 (fix ronde 7): one alert_log row is written PER CHANNEL since
+  // ronde 6, so an EN+ID delivery appeared twice as indistinguishable
+  // entries and consumed 2 of the 30 feed slots. Deduplicate by event
+  // identity (ticker, alert_ts, alert_type) — keep the earliest row
+  // per event (MIN(id)) and report its channel. The feed now shows
+  // up to 30 distinct events.
   const [res] = await pipeline(env, [
     [
-      "SELECT ticker_id, alert_ts, alert_type, " +
+      "SELECT ticker_id, alert_ts, alert_type, channel, " +
         "COALESCE(dev_at_alert_pct, threshold_pct) AS figure " +
-        "FROM alert_log ORDER BY alert_ts DESC, id ASC LIMIT 30",
+        "FROM alert_log WHERE id IN (SELECT MIN(id) FROM alert_log " +
+        "GROUP BY ticker_id, alert_ts, alert_type) " +
+        "ORDER BY alert_ts DESC, id ASC LIMIT 30",
       [],
     ],
   ]);
@@ -629,6 +734,7 @@ async function loadAlerts(env) {
       ticker: r.ticker_id,
       ts: r.alert_ts,
       type: r.alert_type,
+      channel: r.channel ?? null,
       figure: r.figure != null ? Number(r.figure) : null,
     })),
   };
@@ -680,7 +786,13 @@ export default {
           const cache = caches.default;
           const cached = await cache.match(request);
           if (cached) {
-            const hit = new Response(cached.body, cached);
+            // S1 (fix ronde 7): a HIT must NOT return the cached
+            // meta.fresh/meta.stale verbatim — the verdict may have
+            // crossed the 15-min boundary inside the 60 s cache
+            // window. Re-evaluate from the stored timestamps (no DB
+            // read); the cached rows themselves stay as-is.
+            const hitPayload = reevaluateFreshness(await cached.json());
+            const hit = json(hitPayload);
             hit.headers.set("X-Edge-Cache", "HIT");
             return hit;
           }
