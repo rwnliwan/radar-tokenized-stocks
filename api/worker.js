@@ -240,6 +240,27 @@ function healthSummary(health) {
 }
 
 async function loadLatest(env) {
+  // Gap R9 (CSV pools_excluded): /api/latest rows carry the column
+  // the poller writes, probed via PRAGMA like loadTicker (the column
+  // is declared in schema.sql since fix ronde 9, P1-4 — the probe
+  // keeps a fresh DB without it from failing the whole endpoint).
+  let hasExcluded = false;
+  try {
+    const [pragma] = await pipeline(env, [["PRAGMA table_info(deviations)"]]);
+    hasExcluded = rowsOf(pragma).some((c) => c.name === "pools_excluded");
+  } catch {
+    hasExcluded = false;
+  }
+  const devSql =
+    "SELECT ticker_id, ts, depth_weighted_price, dev_vs_median_pct, " +
+    "qualifying_depth_usd, pools_used" +
+    (hasExcluded ? ", pools_excluded" : "") +
+    " FROM deviations " +
+    // LIMIT 500 capacity (fix ronde 5, N5): 13 tickers x ~38 cycles
+    // (~3.2h at the 5-min cadence) — the newest row per ticker
+    // always survives inside the window. Revisit if the universe
+    // grows a lot.
+    "ORDER BY ts DESC, id DESC LIMIT 500";
   const [
     uniR,
     devR,
@@ -251,15 +272,7 @@ async function loadLatest(env) {
     seriesR,
   ] = await pipeline(env, [
     ["SELECT ticker_id, issuer, tier FROM universe ORDER BY tier, ticker_id"],
-    [
-      "SELECT ticker_id, ts, depth_weighted_price, dev_vs_median_pct, " +
-        "qualifying_depth_usd, pools_used FROM deviations " +
-        // LIMIT 500 capacity (fix ronde 5, N5): 13 tickers x ~38 cycles
-        // (~3.2h at the 5-min cadence) — the newest row per ticker
-        // always survives inside the window. Revisit if the universe
-        // grows a lot.
-        "ORDER BY ts DESC, id DESC LIMIT 500",
-    ],
+    [devSql],
     [
       "SELECT issuer, status, window_note_en, next_open_at, observed_at " +
         "FROM redemption_windows ORDER BY observed_at DESC LIMIT 20",
@@ -378,6 +391,7 @@ async function loadLatest(env) {
       spread_pct: crossVenueSpread(venuesByTicker[u.ticker_id] || [], dw),
       depth_usd: d.qualifying_depth_usd ?? null,
       pools_used: d.pools_used ?? null,
+      pools_excluded: hasExcluded ? (d.pools_excluded ?? null) : null,
       redemption_status: red ? String(red.status).toLowerCase() : null,
       redemption_next_open: red ? red.next_open_at : null,
       redemption_note_en: red ? red.window_note_en : null,
@@ -474,9 +488,10 @@ async function loadHistory(env, ticker, window) {
 }
 
 async function loadTicker(env, ticker) {
-  // pools_excluded lives in deviations only if a live ALTER added it
-  // (schema.sql does not declare it; the dashboard reads it defensively).
-  // Probe first so a missing column cannot fail the main pipeline.
+  // pools_excluded is declared in schema.sql (fix ronde 9, P1-4 —
+  // the live DB already had it via an undocumented ALTER). Probe
+  // first so a fresh DB without the column cannot fail the main
+  // pipeline.
   let hasExcluded = false;
   try {
     const [pragma] = await pipeline(env, [["PRAGMA table_info(deviations)"]]);

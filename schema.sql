@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS deviations (
   dev_vs_median_pct REAL,
   qualifying_depth_usd REAL,
   pools_used INTEGER,
+  pools_excluded INTEGER NOT NULL DEFAULT 0, -- written by the poller price-guard since 2026-10-24; declared here in fix ronde 9 (P1-4) after live PRAGMA verification 2026-11-09 (cid 12, INTEGER NOT NULL DEFAULT 0 — the live DB already had it via an undocumented ALTER; see migrations/2026-11-09-pools-excluded.sql)
   redemption_status TEXT,
   por_age_hours REAL,
   weekend_risk_score REAL,

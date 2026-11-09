@@ -66,11 +66,13 @@ export default function TickerIndex() {
   const latestTs = data?.meta.latest_ts ?? null;
   const ageMin =
     latestTs != null
-      ? Math.max(0, Math.round((Date.now() - Date.parse(latestTs)) / 60000))
+      ? Math.round((Date.now() - Date.parse(latestTs)) / 60000)
       : null;
   const healthStale = health?.stale ?? data?.meta.stale ?? null;
+  // GG-31 (fix ronde 9): a NEGATIVE age (future latest_ts) is stale,
+  // never fresh — the old Math.max(0, ...) clamp hid it as "just now".
   const stale =
-    healthStale != null ? healthStale : ageMin != null && ageMin > 15;
+    healthStale != null ? healthStale : ageMin != null && (ageMin < 0 || ageMin > 15);
   const staleTime = health?.last_success_ts ?? latestTs;
 
   return (

@@ -43,12 +43,16 @@ export function fmtDepth(n: number | null | undefined): string {
 
 /** Signed fixed-point without negative zero: a tiny negative that rounds
  *  to zero renders "+0.0", not "-0.0" (AAPLx showed "-0.0" bps). Only the
- *  negative-zero string changes; every other value keeps toFixed rounding. */
+ *  negative-zero string changes; every other value keeps toFixed rounding.
+ *  F2 (fix ronde 9, GG-17 central): a negative value rendered at RUNTIME
+ *  uses U+2212 (minus sign), never ASCII hyphen-minus — toFixed emits
+ *  "-" and the old code returned it verbatim. */
 export function fmtSigned(n: number, digits: number): string {
   const s = n.toFixed(digits);
   const zero = "0." + "0".repeat(digits);
   if (s === "-" + zero) return "+" + zero;
-  return `${n >= 0 ? "+" : ""}${s}`;
+  const body = s.startsWith("-") ? "−" + s.slice(1) : s;
+  return `${n >= 0 ? "+" : ""}${body}`;
 }
 
 export function fmtSigned1(n: number | null | undefined): string {
@@ -58,7 +62,10 @@ export function fmtSigned1(n: number | null | undefined): string {
 
 export function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
-  return `${n.toFixed(2)}%`;
+  // F2 (fix ronde 9, GG-17): same U+2212 rule as fmtSigned — a
+  // negative percent renders "−0.05%", never "-0.05%".
+  const s = n.toFixed(2);
+  return `${s.startsWith("-") ? "−" + s.slice(1) : s}%`;
 }
 
 /** PoR age: minutes below one hour (rows would otherwise all read 0h,

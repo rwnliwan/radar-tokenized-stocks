@@ -13,6 +13,7 @@ import {
   type TickerDetail,
 } from "../../../lib/api";
 import {
+  fmtAge,
   fmtDepth,
   fmtPct,
   fmtSigned,
@@ -59,6 +60,11 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
   const [window, setWindow] = useState<Window>("24h");
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState(false);
+  // P1-1 (fix ronde 9, GG-30): detailFailed = the shown detail was
+  // retained after a fetch failure (its health_stale is stale
+  // evidence); healthFailed = the /api/health refresh failed.
+  const [detailFailed, setDetailFailed] = useState(false);
+  const [healthFailed, setHealthFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [histLoading, setHistLoading] = useState(true);
 
@@ -77,9 +83,18 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
       setDetail(await fetchTicker(ticker));
       setNotFound(false);
       setError(false);
+      setDetailFailed(false);
     } catch (e) {
-      if (e instanceof Error && e.message === "NOT_FOUND") setNotFound(true);
-      else setError(true);
+      if (e instanceof Error && e.message === "NOT_FOUND") {
+        setNotFound(true);
+        setDetailFailed(false);
+      } else {
+        // The old detail stays on screen (retained), but it is now
+        // marked as retained — its health_stale must not outrank a
+        // live /api/health verdict (P1-1).
+        setError(true);
+        setDetailFailed(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -94,8 +109,10 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
     // absent too the page fails closed to stale.
     try {
       setHealth(await fetchHealth());
+      setHealthFailed(false);
     } catch {
       setHealth(null);
+      setHealthFailed(true);
     }
   }, [ticker]);
 
@@ -157,10 +174,30 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
   // When BOTH are unavailable, fail CLOSED (stale) instead of
   // letting a recent snapshot read as fresh. No banner while nothing
   // has loaded yet (detail == null).
-  const healthStale = detail?.health_stale ?? health?.stale ?? null;
-  const stale = detail == null ? false : healthStale != null ? healthStale : true;
+  // P1-1 (fix ronde 9, opsi b — GG-30): when the shown detail was
+  // RETAINED after a failed fetch, its health_stale is stale evidence
+  // and must never outrank a live /api/health verdict — use the live
+  // verdict (or fail closed when it is missing too). And when the
+  // health fetch itself failed while old detail is shown, force stale
+  // and show a failure indicator below.
+  const healthStale = detailFailed
+    ? (health?.stale ?? null)
+    : (detail?.health_stale ?? health?.stale ?? null);
+  const stale = detail == null
+    ? false
+    : healthFailed && detailFailed
+      ? true
+      : healthStale != null
+        ? healthStale
+        : true;
   const staleTime =
     health?.last_success_ts ?? detail?.health_last_success_ts ?? detail?.latest_ts ?? null;
+  // GG-31 (fix ronde 9): a future latest_ts (negative age) makes no
+  // freshness claim in the header — the bare timestamp, never "0 min".
+  const latestAgeMin =
+    detail?.latest_ts != null
+      ? Math.round((Date.now() - Date.parse(detail.latest_ts)) / 60000)
+      : null;
 
   return (
     <div className="wrap">
@@ -171,10 +208,12 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
         right={
           detail?.latest_ts ? (
             <span>
-              {t(lang, "freshness", {
-                time: fmtWITA(detail.latest_ts, lang),
-                mins: Math.max(0, Math.round((Date.now() - Date.parse(detail.latest_ts)) / 60000)),
-              })}
+              {latestAgeMin != null && latestAgeMin < 0
+                ? fmtWITA(detail.latest_ts, lang)
+                : t(lang, "freshness", {
+                    time: fmtWITA(detail.latest_ts, lang),
+                    mins: Math.max(0, latestAgeMin ?? 0),
+                  })}
             </span>
           ) : undefined
         }
@@ -203,6 +242,25 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
       {error && !detail && (
         <div className="errorbox" role="alert">
           {u(lang, "load_error")}{" "}
+          <button type="button" onClick={loadDetail}>
+            {u(lang, "retry")}
+          </button>
+        </div>
+      )}
+      {/* P1-1 (fix ronde 9, opsi b): the refresh failed but old detail
+          is still on screen — say so, instead of silently keeping the
+          old verdict. */}
+      {error && detail && (
+        <div className="errorbox" role="alert">
+          {u(lang, "load_error")}{" "}
+          <button type="button" onClick={loadDetail}>
+            {u(lang, "retry")}
+          </button>
+        </div>
+      )}
+      {healthFailed && detail && (
+        <div className="errorbox" role="alert">
+          {t(lang, "health_fetch_failed")}{" "}
           <button type="button" onClick={loadDetail}>
             {u(lang, "retry")}
           </button>
@@ -474,7 +532,14 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                 <b>{t(lang, "por_title")}:</b>{" "}
                 {detail.por_age_hours != null ? (
                   <>
-                    {t(lang, "por_age_label")}: {detail.por_age_hours} h
+                    {/* P1-6 (fix ronde 9): rounded age + the 72h
+                        stale/fresh label, like the home stat strip —
+                        a raw "27.4893 h" read as neutral before. */}
+                    {t(lang, "por_age_label")}: {fmtAge(detail.por_age_hours)}{" "}
+                    {detail.por_age_hours > 72
+                      ? u(lang, "por_age_stale")
+                      : u(lang, "por_age_fresh")}{" "}
+                    {u(lang, "por_stale_sub")}
                   </>
                 ) : (
                   <>{t(lang, "por_none")}</>
@@ -483,6 +548,14 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                   <div>
                     {u(lang, "por_shares_label")}: {fmtPorNum(detail.por_shares_held, 0, lang)} ·{" "}
                     {u(lang, "por_supply_label")}: {fmtPorNum(detail.por_supply, 2, lang)}
+                  </div>
+                )}
+                {/* Gap R9 (por_note): the Worker's coverage note
+                    ("coverage N/13 tokens; missing …") finally reaches
+                    the reader — it was returned but never rendered. */}
+                {detail.por_note && (
+                  <div>
+                    {t(lang, "por_note_label")}: {detail.por_note}
                   </div>
                 )}
               </div>

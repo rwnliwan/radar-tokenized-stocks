@@ -1511,7 +1511,11 @@ def notify_admin_poller_troubled(age_minutes, now=None, state_path=None,
         last = parse_ts(state.get("last_poller_troubled_at"))
         if last is not None:
             since_min = (now - last).total_seconds() / 60.0
-            if since_min < ADMIN_POLLER_ALERT_COOLDOWN_MINUTES:
+            # GG-31 (fix ronde 9): a FUTURE-dated state stamp never
+            # suppresses the alert — only a real elapsed time inside
+            # the cooldown does. A negative since_min means the state
+            # is untrustworthy, not "just notified".
+            if 0 <= since_min < ADMIN_POLLER_ALERT_COOLDOWN_MINUTES:
                 print(f"POLLER TROUBLED (admin already notified "
                       f"{since_min:.0f} min ago — throttled).")
                 return False
@@ -1524,9 +1528,17 @@ def notify_admin_poller_troubled(age_minutes, now=None, state_path=None,
         )
         send = sender or send_message
         send(chat_id, text)
-        _save_admin_alert_state(
+        # GG-32 (fix ronde 9, P2-2): the state-write return value was
+        # ignored — a failed write silently voided the "max 1/hour"
+        # promise (the next pass would resend). A failure is now
+        # shouted: the throttle may not hold after a restart.
+        state_saved = _save_admin_alert_state(
             {"last_poller_troubled_at":
              now.strftime("%Y-%m-%dT%H:%M:%SZ")}, state_path)
+        if not state_saved:
+            print("POLLER TROUBLED admin alert sent, BUT the throttle "
+                  "state could NOT be saved — the 1/hour throttle may "
+                  "not hold after a restart; the next pass may resend.")
         print(f"POLLER TROUBLED alert sent to admin ({chat_id}).")
         return True
     except Exception as e:
@@ -1624,11 +1636,15 @@ def send_alert_channels(alert, channels, red_snapshot, now, delay_s=0):
     - S2: the 30-min stale gate is re-checked before EACH channel
       send, not once per alert: the residual drift is now at most one
       send (~2 s + one Telegram round-trip), not one alert's two sends.
-    - S5: the recorded alert_ts is the DELIVERY time of that channel
-      (captured per send), not the pass-start time — the 24h dedup
-      period is no longer shortened by the pass duration, and a
-      redemption alert can no longer be recorded with a timestamp
-      before its own window's first observation.
+    - S5: the recorded alert_ts is ONE shared timestamp per alert
+      EVENT (S1, fix ronde 8 — the first channel's delivery time,
+      shared by every channel), not a per-channel delivery time.
+      The old bullet claimed a per-channel delivery time, which
+      contradicted S1; the 24h dedup period is shortened by at most
+      the inter-channel delay (~2 s), negligible against 24h / a
+      redemption window, and a redemption alert can no longer be
+      recorded with a timestamp before its own window's first
+      observation.
     - S8: the dedup key is "lang:chat_id", not the bare language, so
       replacing a destination mid-period does not suppress the new one.
     """
@@ -1658,8 +1674,19 @@ def send_alert_channels(alert, channels, red_snapshot, now, delay_s=0):
             send_message(cid, format_alert(alert, lang))
             if shared_ts is None:
                 shared_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-            record_alert_safe(alert, format_alert(alert, "en"), shared_ts,
-                              channel=channel_key)
+            # GG-32 (fix ronde 9): the record result was ignored — a
+            # False means the row did NOT land in alert_log (it is in
+            # the fallback file at best, lost at worst). The channel
+            # still counts as sent (Telegram got it, per the
+            # record_alert_safe contract), but the feed will only show
+            # it after the fallback replay, and a LOST record may
+            # re-send next pass — say so instead of staying silent.
+            recorded = record_alert_safe(alert, format_alert(alert, "en"), shared_ts,
+                                         channel=channel_key)
+            if not recorded:
+                print(f"ALERT sent but NOT recorded in alert_log "
+                      f"({lang}): {alert['type']} {alert['ticker']} — "
+                      f"feed shows it only after fallback replay.")
             sent += 1
             print(f"ALERT sent ({lang}): {alert['type']} {alert['ticker']}")
         except Exception as e:
@@ -1822,7 +1849,11 @@ def main():
             if age is None or age > STALE_MINUTES:
                 # Gap R8 P1-G2: the stale gate trips — tell the admin
                 # (once/hour max) instead of only logging it.
-                notify_admin_poller_troubled(age, now=now)
+                # GG-32 (fix ronde 9): the return value is captured —
+                # False means no message went out (no destination,
+                # throttled, or failed); the outcome is already logged
+                # inside, and the pass continues regardless.
+                admin_notified = notify_admin_poller_troubled(age, now=now)
                 print("STALE GATE: skipping alert evaluation (no fresh data).")
                 return 0
             red_snapshot = snapshot_redemption_rows()
@@ -1892,7 +1923,9 @@ def main():
                     elif (age := load_health_age_minutes(now)) is None or age > STALE_MINUTES:
                         # Gap R8 P1-G2: the stale gate trips — tell the
                         # admin (once/hour max) instead of only logging.
-                        notify_admin_poller_troubled(age, now=now)
+                        # GG-32 (fix ronde 9): return value captured —
+                        # see the --once path above.
+                        admin_notified = notify_admin_poller_troubled(age, now=now)
                         print("STALE GATE: skipping alert evaluation (no fresh data).")
                     else:
                         red_snapshot = snapshot_redemption_rows()

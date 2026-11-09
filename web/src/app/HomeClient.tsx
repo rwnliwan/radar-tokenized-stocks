@@ -129,7 +129,9 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
     if (!data) return null;
     let w: TickerRow | null = null;
     for (const r of data.tickers) {
-      if (r.dev_bps == null) continue;
+      // GG-30 (fix ronde 9): the verdict hero is a LIVE verdict — a
+      // stale ticker must not set the worst deviation (M1 principle).
+      if (r.dev_bps == null || r.stale) continue;
       if (!w || Math.abs(r.dev_bps) > Math.abs(w.dev_bps ?? 0)) w = r;
     }
     return w;
@@ -145,7 +147,8 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
   const worstSpread = useMemo(() => {
     let w: TickerRow | null = null;
     for (const r of data?.tickers ?? []) {
-      if (r.spread_pct == null) continue;
+      // GG-30 (fix ronde 9): stale tickers do not set the verdict.
+      if (r.spread_pct == null || r.stale) continue;
       if (!w || r.spread_pct > (w.spread_pct ?? 0)) w = r;
     }
     return w;
@@ -153,7 +156,8 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
   const minDepth = useMemo(() => {
     let m: TickerRow | null = null;
     for (const r of data?.tickers ?? []) {
-      if (r.depth_usd == null) continue;
+      // GG-30 (fix ronde 9): stale tickers do not set the verdict.
+      if (r.depth_usd == null || r.stale) continue;
       if (!m || r.depth_usd < (m.depth_usd ?? Infinity)) m = r;
     }
     return m;
@@ -180,11 +184,13 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
           : u(lang, "verdict_danger");
   /* Coverage honesty (QA 25 Okt): the verdict skips tickers without a
      deviation, so the headline itself carries the counted coverage. */
-  const covN = data ? data.tickers.filter((r) => r.dev_bps != null).length : 0;
+  const covN = data ? data.tickers.filter((r) => r.dev_bps != null && !r.stale).length : 0;
   const covTotal = data ? data.tickers.length : 0;
   const blips = useMemo(() => {
     const list = (data?.tickers ?? [])
-      .filter((r) => r.dev_bps != null)
+      // P1-3 (fix ronde 9, GG-30): same M1 rule as the bar chart —
+      // a stale ticker is NOT plotted as a live deviation.
+      .filter((r) => r.dev_bps != null && !r.stale)
       .sort((a, b) => Math.abs(b.dev_bps ?? 0) - Math.abs(a.dev_bps ?? 0));
     /* Real deviations cluster near the center (all <50 bps on calm days),
        so the top-4 labels would collide. Keep at most 4 labels, dropping
@@ -226,19 +232,27 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
   // Freshness contract (M4): prefer the Worker's /api/health verdict;
   // /api/latest meta carries the same fields as a second fallback.
   // Snapshot age is only the last resort when health is unreachable.
+  // GG-31 (fix ronde 9): a NEGATIVE age (future latest_ts) is stale,
+  // never fresh — the old `ageMin > STALE_MIN` fallback let it read
+  // as fresh, and the freshness text below read it as "just now".
   const healthStale = health?.stale ?? data?.meta.stale ?? null;
   const stale =
-    healthStale != null ? healthStale : ageMin != null && ageMin > STALE_MIN;
+    healthStale != null ? healthStale : ageMin != null && (ageMin < 0 || ageMin > STALE_MIN);
   const staleTime = health?.last_success_ts ?? latestTs;
 
-  const redStatus = useMemo(() => {
-    const found = data?.tickers.find((r) => r.redemption_status != null);
-    return found?.redemption_status ?? null;
+  // P1-2 (fix ronde 9, nit): redemption status + next-open come from
+  // ONE find. Redemption is per-issuer in the data model (one row per
+  // issuer; all 13 tickers share xStocks), so two independent finds
+  // could only diverge if the model ever went per-asset — one find
+  // removes the latent cross-pairing.
+  const redemption = useMemo(() => {
+    const found = data?.tickers.find(
+      (r) => r.redemption_status != null || r.redemption_next_open != null,
+    );
+    return found ?? null;
   }, [data]);
-  const redNextOpen = useMemo(() => {
-    const found = data?.tickers.find((r) => r.redemption_next_open != null);
-    return found?.redemption_next_open ?? null;
-  }, [data]);
+  const redStatus = redemption?.redemption_status ?? null;
+  const redNextOpen = redemption?.redemption_next_open ?? null;
   const porMaxAge = useMemo(() => {
     const ages = (data?.tickers ?? [])
       .map((r) => r.por_age_hours)
@@ -316,9 +330,13 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
   };
 
   const freshnessText = latestTs
-    ? ageMin != null && ageMin <= 0
+    ? ageMin != null && ageMin === 0
       ? t(lang, "freshness_now", { time: fmtWITA(latestTs, lang) })
-      : t(lang, "freshness", { time: fmtWITA(latestTs, lang), mins: ageMin ?? 0 })
+      : // GG-31 (fix ronde 9): a future latest_ts (negative age) makes
+        // NO freshness claim — the bare timestamp, never "just now".
+        ageMin != null && ageMin < 0
+        ? fmtWITA(latestTs, lang)
+        : t(lang, "freshness", { time: fmtWITA(latestTs, lang), mins: ageMin ?? 0 })
     : t(lang, "loading");
 
   return (
@@ -646,6 +664,11 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
                   <span className={`pill ${r.status}`}>
                     {statusLabel(lang, r.status)}
                   </span>
+                  {/* GG-30 (fix ronde 9): the row card shows the stale
+                      pill, same as the table row. */}
+                  {r.stale && (
+                    <span className="pill stale"> {t(lang, "ticker_stale")}</span>
+                  )}
                 </div>
                 <div className="mid">
                   <span className="num">{fmtUsd(r.dw_price)}</span>

@@ -81,6 +81,9 @@ export default function Header({
     autoTs != null
       ? (() => {
           const m = Math.round((Date.now() - Date.parse(autoTs)) / 60000);
+          // GG-31 (fix ronde 9): a future autoTs (negative age) makes
+          // NO freshness claim — render nothing, never "just now".
+          if (m < 0) return null;
           return m <= 0
             ? t(lang, "freshness_now", { time: fmtWITA(autoTs, lang) })
             : t(lang, "freshness", { time: fmtWITA(autoTs, lang), mins: m });

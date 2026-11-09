@@ -494,7 +494,10 @@ def _hourly_due(cycle_dt, state):
             age_last = (cycle_dt - datetime.fromisoformat(last)).total_seconds()
         except (TypeError, ValueError):
             age_last = None
-        if age_last is not None and age_last < 55 * 60:
+        # GG-31 (fix ronde 9, P2-1): a FUTURE last stamp is due, never
+        # "recent" — the old `age_last < 55*60` was also true for a
+        # negative age, so a future-dated state suppressed the slot.
+        if age_last is not None and 0 <= age_last < 55 * 60:
             return False
     failed_at = state.get("last_hourly_failed_at")
     if failed_at:
@@ -502,7 +505,9 @@ def _hourly_due(cycle_dt, state):
             age_f = (cycle_dt - datetime.fromisoformat(failed_at)).total_seconds()
         except (TypeError, ValueError):
             age_f = None
-        if age_f is not None and age_f < 15 * 60:
+        # GG-31: same mirror direction — a future failed-at stamp does
+        # not earn the 15-min backoff.
+        if age_f is not None and 0 <= age_f < 15 * 60:
             return False
     return True
 

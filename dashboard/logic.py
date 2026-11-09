@@ -145,7 +145,12 @@ def freshness_status(health_rows, now_utc):
 
 def fmt_abbr(v):
     """'$1.40M' / '$312K' / '$2.38B' or '—' for None. KPI cards only —
-    tables keep the full comma format (v3 rule)."""
+    tables keep the full comma format (v3 rule).
+
+    F2 (fix ronde 9, GG-17): a negative value renders U+2212, never
+    ASCII hyphen-minus. The magnitude test already used abs(); the
+    formatted value itself did not — '$-1.40M' until this fix.
+    """
     if v is None:
         return "—"
     try:
@@ -153,12 +158,14 @@ def fmt_abbr(v):
     except (TypeError, ValueError):
         return "—"
     if abs(x) >= 1e9:
-        return f"${x / 1e9:,.2f}B"
-    if abs(x) >= 1e6:
-        return f"${x / 1e6:,.2f}M"
-    if abs(x) >= 1e3:
-        return f"${x / 1e3:,.0f}K"
-    return f"${x:,.0f}"
+        s = f"${x / 1e9:,.2f}B"
+    elif abs(x) >= 1e6:
+        s = f"${x / 1e6:,.2f}M"
+    elif abs(x) >= 1e3:
+        s = f"${x / 1e3:,.0f}K"
+    else:
+        s = f"${x:,.0f}"
+    return s.replace("-", "−")
 
 
 PRICE_GUARD_MAX_DEV = 0.25  # price-sanity guard: drop prices >25%

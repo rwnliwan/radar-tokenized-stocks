@@ -17,6 +17,9 @@ export type TickerRow = {
   spread_pct: number | null;
   depth_usd: number | null;
   pools_used: number | null;
+  // Gap R9: the Worker returns pools_excluded per row (loadLatest);
+  // null when the column is absent from the DB.
+  pools_excluded: number | null;
   redemption_status: string | null;
   redemption_next_open: string | null;
   redemption_note_en: string | null;

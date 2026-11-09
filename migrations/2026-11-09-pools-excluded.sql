@@ -1,0 +1,14 @@
+-- Migration 2026-11-09 (fix ronde 9, P1-4): deviations.pools_excluded.
+-- The poller has written this column since the 2026-10-24 price-guard
+-- (run_cycle INSERT into deviations) and the Worker + dashboard read
+-- it, but neither schema.sql nor any migration declared it — schema
+-- drift (GG-34): a fresh database built from schema.sql alone would
+-- fail every poller INSERT.
+-- Live Turso ALREADY has the column (verified 2026-11-09 via
+-- PRAGMA table_info(deviations): cid 12, INTEGER NOT NULL DEFAULT 0),
+-- so NO live ALTER was run for this fix — the column reached live via
+-- an undocumented ALTER at some earlier point, and this file +
+-- schema.sql now declare it so fresh reproductions match live.
+-- Apply ONLY if PRAGMA shows the column missing (ADD COLUMN fails if
+-- the column already exists — check first).
+ALTER TABLE deviations ADD COLUMN pools_excluded INTEGER NOT NULL DEFAULT 0;

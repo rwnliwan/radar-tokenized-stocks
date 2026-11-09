@@ -22,7 +22,14 @@ evaluasi akhir jatuh pada akhir Minggu ke-8 sejak tanggal itu
 
 **Konsekuensi: nol di semua kriteria = pivot / berhenti.** Tidak ada
 ambang parsial yang menyelamatkan — gerbang ini lolos-atau-gagal
-sebagai satu paket pada 19 Des 2026.
+sebagai satu paket pada 19 Des 2026. Gagal-parsial (sebagian kriteria
+terpenuhi, sebagian tidak) = GAGAL sebagai satu paket; keputusan
+pivot/berhenti diambil pada evaluasi akhir 19 Des 2026 berdasarkan
+hasil itu — tidak ada ambang parsial yang menyelamatkan, dan tidak ada
+"lanjut dengan syarat" yang mengubah vonis gagal. (Klarifikasi fix
+ronde 9, P1-8 — diputuskan 3-0: DeepSeek + Terra + rekomendasi induk;
+teks sebelumnya sudah mendefinisikan lolos/gagal sebagai satu paket,
+tetapi tidak menamai konsekuensi gagal-parsial.)
 
 ### Catatan kejujuran (wajib dibaca)
 
