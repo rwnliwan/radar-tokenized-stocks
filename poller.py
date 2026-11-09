@@ -139,6 +139,26 @@ def next_nyse_open_utc(now_utc):
     return nxt_et.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def next_schedule_close_utc(now_utc):
+    """00:00 ET at the end of the current open run, as a UTC 'Z' string.
+
+    The schedule model is "open all day on NYSE business days"
+    (redemption_schedule_status), so the window closes at midnight ET
+    ending the last NYSE business day before a weekend / NYSE holiday:
+    Friday -> Saturday 00:00 ET; the day before a holiday -> 00:00 ET
+    of the holiday itself. Only meaningful when the schedule status is
+    open; callers pass None (not this value) for closed/paused. This
+    is SCHEDULE-DERIVED, not a published issuer close-time — the same
+    honesty level as the status itself. Pure: no I/O. (Gap R7, built
+    2026-11-09: the advance "closing within 24h" alert's close-time
+    comes from this helper, not from any new external source.)"""
+    d = now_utc.astimezone(ET).date()
+    while is_nyse_day(datetime(d.year, d.month, d.day, tzinfo=ET)):
+        d += timedelta(days=1)
+    close_et = datetime(d.year, d.month, d.day, 0, 0, tzinfo=ET)
+    return close_et.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def solana_mint_info(mint):
     """(paused_or_None, supply_or_None, err_or_None) via public RPC.
 

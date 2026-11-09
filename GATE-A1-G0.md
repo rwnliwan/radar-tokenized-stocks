@@ -192,3 +192,23 @@ SATU kontrak bersama — ambang TIDAK berubah (alert spread ≥1,0%,
   methodology_thresholds, close_note, coverage_short) — tidak ada
   yang bisa dibangun tanpa lisensi feed; tidak ada feed yang
   dikarang.
+
+### Gap ronde 7 (9 Nov 2026): advance redemption-close alert — DIBANGUN
+- **Advance redemption-close alert (gap R7 #2 — kini dibangun).** Tipe
+  alert baru `redemption_closing_soon`: menyala saat status masih open
+  dan waktu tutup <= 24 jam lagi. TIDAK ada sumber close-time baru —
+  waktu tutup diturunkan dari jadwal resmi 24/5 + kalender NYSE yang
+  sudah dipakai status live (`poller.next_schedule_close_utc` /
+  `bot.next_schedule_close_utc`: 00:00 ET di akhir hari kerja NYSE
+  terakhir sebelum akhir pekan/hari libur; Jumat -> Sabtu 00:00 ET,
+  hari sebelum libur -> 00:00 ET hari libur itu). Labelnya jujur di
+  pesan ("schedule-derived close time") dan di methodology_thresholds
+  web + dashboard (EN+ID, byte-identik). Dedup 24 jam standar per
+  channel (BUKAN once-per-window — belum ada window saat alert ini
+  menyala), dan tipe berbeda dari `redemption` sehingga alert ini
+  tidak pernah menekan alert jendela-tutup yang menyusul. Ambang lain
+  TIDAK berubah (spread >= 1,0%, |dev| >= 3,0%, dedup 24 jam, stale
+  gate 30 menit). Field `closes_within_24h` kini terisi dari data live
+  di `load_live_tickers` (sebelumnya hanya True di skenario dry-run
+  sintetis). Catatan batas: waktu tutup ini turunan jadwal, BUKAN
+  konfirmasi live issuer — sama seperti status redemption itu sendiri.

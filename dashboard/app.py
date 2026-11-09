@@ -1690,6 +1690,7 @@ elif page == "ticker":
         if alerts:
             type_map = {"spread": t(lang, "alert_type_spread"),
                         "redemption": t(lang, "alert_type_redemption"),
+                        "redemption_closing_soon": t(lang, "alert_type_redemption_closing"),
                         "por": t(lang, "alert_type_por"),
                         "close": t(lang, "alert_type_close")}
             arows = []

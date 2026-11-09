@@ -15,10 +15,19 @@ notes below):
   per ticker PER CLOSED WINDOW (rule B, ACC 2026-10-25): a closed
   weekend is 13 messages per channel, with NO daily re-fire while
   the window stays closed.
-  ADAPTATION: the schema has no close-time column, so
-  the design's "closing within <=24h" rule cannot be computed live
-  yet; it needs a future next_close_at column. The dry-run scenario
-  demonstrates the intended <=24h message format with synthetic data.
+  ADAPTATION (gap R7, BUILT 2026-11-09): the design's "closing
+  within <=24h" rule IS live now, as a distinct alert type
+  'redemption_closing_soon'. There is still no issuer-published
+  close-time feed — the close-time is DERIVED from the same official
+  24/5 schedule + NYSE calendar that already drives the live status
+  (next_schedule_close_utc: 00:00 ET ending the last NYSE business
+  day before a weekend/holiday), so it carries the same
+  schedule-derived honesty label, never presented as issuer
+  confirmation. It fires while the status is still open and the
+  derived close is <=24h away (typically Fridays and days before a
+  NYSE holiday), once per 24h per channel (standard dedup, NOT the
+  once-per-window rule — no window exists yet), and never suppresses
+  the later closed-window alert (different alert type).
 - PoR: latest feed age > 72h (or last update older than 72h).
 - Stale data gate (design §7.1): when the last successful poller
   cycle is older than 30 minutes, NO new alerts are sent. The admin
@@ -288,6 +297,36 @@ def is_market_open(now_utc):
     return (et.hour, et.minute) >= (9, 30) and (et.hour, et.minute) < (16, 0)
 
 
+def next_schedule_close_utc(now_utc):
+    """00:00 ET at the end of the current open run, as a UTC 'Z' string.
+
+    Mirror of poller.next_schedule_close_utc (same schedule model:
+    open all day on NYSE business days, so the window closes at
+    midnight ET ending the last NYSE business day before a weekend /
+    NYSE holiday). Only meaningful when the schedule status is open;
+    callers pass None (not this value) for closed/paused. Pure: no I/O.
+    The two copies are locked to agree by qa/test_r7_gap_close_alert.py
+    (same pattern as the S11 holiday-set identity guard)."""
+    d = now_utc.astimezone(ET).date()
+    while is_nyse_day(datetime(d.year, d.month, d.day, tzinfo=ET)):
+        d += timedelta(days=1)
+    close_et = datetime(d.year, d.month, d.day, 0, 0, tzinfo=ET)
+    return close_et.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def closes_within_24h(now_utc, close_utc=None):
+    """True iff the derived schedule close is >0h and <=24h away.
+
+    close_utc defaults to next_schedule_close_utc(now_utc). Pure."""
+    if close_utc is None:
+        close_utc = next_schedule_close_utc(now_utc)
+    close = parse_ts(close_utc)
+    if close is None:
+        return False
+    delta_h = (close - now_utc).total_seconds() / 3600.0
+    return 0.0 < delta_h <= 24.0
+
+
 def parse_ts(iso):
     if iso is None:
         return None
@@ -438,6 +477,20 @@ def evaluate_alerts(tickers_data, market_open):
                 "dw": stale_price[0], "depth": stale_price[1],
                 "pools_used": stale_price[2],
             })
+        elif status == "open" and d.get("closes_within_24h"):
+            # Gap R7 (built 2026-11-09): advance warning while the
+            # window is still OPEN and the derived close is <=24h away.
+            # Distinct type 'redemption_closing_soon' so its 24h dedup
+            # (standard, per-channel — NOT once-per-window) never
+            # suppresses the later closed-window 'redemption' alert.
+            alerts.append({
+                "type": "redemption_closing_soon", "ticker": d["ticker"],
+                "issuer": d.get("issuer"), "status": status,
+                "next_close_at": d.get("next_close_at"),
+                "closes_within_24h": True,
+                "dw": stale_price[0], "depth": stale_price[1],
+                "pools_used": stale_price[2],
+            })
         age = d.get("por_age_hours")
         if age is not None and age > POR_STALE_HOURS:
             alerts.append({
@@ -491,6 +544,14 @@ BOT_STR = {
         "red_batch_paused_note": ("Pause detected on-chain via the mint pausable "
                                   "flag — not confirmed live by the issuer. "
                                   "Redemption stays halted until the pause is lifted."),
+        "red_closing_head": "🟡 REDEMPTION CLOSING SOON — {ticker} ({issuer})",
+        "red_closing_body": ("Redemption window closes: {close}\n"
+                             "(within 24h — schedule-derived close time)\n"
+                             "\n"
+                             "Price (depth-weighted): {dw_s}\n"
+                             "Qualifying depth: {depth_s} across {n_s} pools\n"
+                             "\n"
+                             "{note}"),
         "por_head": "🟡 PROOF-OF-RESERVE STALE — {ticker} ({issuer})",
         "por_body": ("PoR feed age: {age:.1f} hours (threshold {thr:.0f}h) · "
                     "Last update: {upd}\n"
@@ -535,6 +596,14 @@ BOT_STR = {
         "red_batch_paused_note": ("Jeda terdeteksi on-chain lewat flag pausable "
                                   "mint — bukan konfirmasi live dari issuer. "
                                   "Redemption tetap berhenti sampai jeda dicabut."),
+        "red_closing_head": "🟡 REDEMPTION SEGERA TUTUP — {ticker} ({issuer})",
+        "red_closing_body": ("Jendela redemption tutup: {close}\n"
+                             "(dalam 24 jam — waktu tutup turunan jadwal)\n"
+                             "\n"
+                             "Harga (tertimbang kedalaman): {dw_s}\n"
+                             "Kedalaman lolos: {depth_s} di {n_s} pool\n"
+                             "\n"
+                             "{note}"),
         "por_head": "🟡 PROOF-OF-RESERVE BASI — {ticker} ({issuer})",
         "por_body": ("Umur feed PoR: {age:.1f} jam (ambang {thr:.0f} jam) · "
                     "Pembaruan terakhir: {upd}\n"
@@ -624,6 +693,21 @@ def format_alert(alert, lang="en"):
             n_s=_count(alert.get("pools_used")))
         if paused:
             body = s["red_batch_paused_priority"] + "\n\n" + body
+    elif alert["type"] == "redemption_closing_soon":
+        # Gap R7 (built 2026-11-09): advance warning, still open.
+        # next_close_at is schedule-derived (see next_schedule_close_utc);
+        # the note is the same schedule-derived honesty label as the
+        # closed-window alert. Falls back to "within 24h" only when the
+        # close instant is missing (never fabricated).
+        head = s["red_closing_head"].format(
+            ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
+        close = fmt_next_open(alert.get("next_close_at") or (
+            s["red_batch_within24h"] if alert.get("closes_within_24h") else "—"),
+            lang)
+        body = s["red_closing_body"].format(
+            close=close, note=s["red_batch_note"],
+            dw_s=_usd(alert.get("dw")), depth_s=_usd0(alert.get("depth")),
+            n_s=_count(alert.get("pools_used")))
     elif alert["type"] == "por":
         head = s["por_head"].format(ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
         body = s["por_body"].format(
@@ -724,7 +808,10 @@ def snapshot_redemption_rows():
     return snap
 
 
-def load_live_tickers(red_rows_by_issuer=None):
+def load_live_tickers(red_rows_by_issuer=None, now_utc=None):
+    # now_utc is injectable for tests (gap R7 guard stubs a Friday to
+    # prove the close field goes True); live callers leave it None.
+    now = now_utc or datetime.now(UTC)
     uni = db_query(
         "SELECT ticker_id, issuer FROM universe ORDER BY tier, ticker_id")
     latest = {}
@@ -807,6 +894,19 @@ def load_live_tickers(red_rows_by_issuer=None):
             median = gprices[m] if len(gprices) % 2 == 1 else (gprices[m - 1] + gprices[m]) / 2
         red = red_by_issuer.get(u["issuer"])
         por = por_by_issuer.get(u["issuer"])
+        # Gap R7 (built 2026-11-09): the live close field. While the
+        # schedule status is open, the close instant is derived from
+        # the same NYSE calendar (next_schedule_close_utc) and the
+        # <=24h flag from it — this is what makes closes_within_24h
+        # True on real data, not only in the dry-run scenario. When
+        # the status is closed/gated/paused there is no upcoming close
+        # to warn about (the closed/paused alert fires instead).
+        _red_status = (red["status"] if red else None)
+        if _red_status and str(_red_status).lower() == "open":
+            _next_close = next_schedule_close_utc(now)
+            _closes_soon = closes_within_24h(now, _next_close)
+        else:
+            _next_close, _closes_soon = None, False
         # S-new-8 (fix ronde 6): PoR age backstop. age_hours is written
         # by the hourly poller job, so if that job fails repeatedly the
         # stored value freezes — possibly below the 72h threshold while
@@ -864,6 +964,8 @@ def load_live_tickers(red_rows_by_issuer=None):
             "redemption_status": red["status"] if red else None,
             "redemption_note": red["window_note"] if red else None,
             "next_open_at": red["next_open_at"] if red else None,
+            "closes_within_24h": _closes_soon,
+            "next_close_at": _next_close,
             "por_age_hours": por_age,
             "por_last_update": por_last,
         })
@@ -1455,6 +1557,16 @@ def dry_run_scenarios():
         "next_open_at": None, "closes_within_24h": True,
         "por_age_hours": 6.0,
     }
+    closing_data = {
+        "ticker": "NVDAx", "issuer": "xStocks",
+        "venues": [{"dex": "raydium", "price": 180.50, "reserve": 4000000.0}],
+        "dw": 180.50, "dev_med": 0.20, "depth": 4000000.0,
+        "pools_used": 1, "median": 180.50,
+        "redemption_status": "open",
+        "next_open_at": None, "closes_within_24h": True,
+        "next_close_at": "2026-11-07T05:00:00Z",
+        "por_age_hours": 6.0,
+    }
     por_data = {
         "ticker": "NVDAx", "issuer": "xStocks",
         "venues": [{"dex": "raydium", "price": 180.50, "reserve": 4000000.0}],
@@ -1466,6 +1578,7 @@ def dry_run_scenarios():
     scenarios = [
         ("spread (market open)", [spread_data], True),
         ("redemption <=24h (synthetic)", [red_data], False),
+        ("redemption closing within 24h (schedule-derived)", [closing_data], False),
         ("PoR stale >72h (synthetic)", [por_data], False),
     ]
     for name, data, mopen in scenarios:

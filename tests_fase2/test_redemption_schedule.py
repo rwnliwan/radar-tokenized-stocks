@@ -13,7 +13,8 @@ ROOT = "/home/hatch/workspace/radar-tokenized-stocks"
 sys.path.insert(0, ROOT)
 
 from poller import (  # noqa: E402
-    next_nyse_open_utc, redemption_schedule_status)
+    next_nyse_open_utc, next_schedule_close_utc,
+    redemption_schedule_status)
 
 UTC = timezone.utc
 
@@ -46,6 +47,17 @@ def main():
     check("next open from Sat Oct 24", next_nyse_open_utc(dt("2026-10-24T12:00:00+00:00")), "2026-10-26T04:00:00Z")
     check("next open from Sun Oct 25", next_nyse_open_utc(dt("2026-10-25T12:00:00+00:00")), "2026-10-26T04:00:00Z")
     check("next open from Christmas", next_nyse_open_utc(dt("2026-12-25T12:00:00+00:00")), "2026-12-28T05:00:00Z")
+
+    # Next close (00:00 ET ending the last NYSE business day before a
+    # weekend / NYSE holiday). Gap R7 (built 2026-11-09): the advance
+    # "closing within 24h" alert's close-time.
+    check("next close from Fri Nov 6", next_schedule_close_utc(dt("2026-11-06T12:00:00+00:00")), "2026-11-07T05:00:00Z")
+    check("next close from Thu Nov 5", next_schedule_close_utc(dt("2026-11-05T12:00:00+00:00")), "2026-11-07T05:00:00Z")
+    check("next close from Mon Oct 26", next_schedule_close_utc(dt("2026-10-26T12:00:00+00:00")), "2026-10-31T04:00:00Z")
+    check("next close from Wed before Thanksgiving", next_schedule_close_utc(dt("2026-11-25T12:00:00+00:00")), "2026-11-26T05:00:00Z")
+    check("next close from Thu before Good Friday", next_schedule_close_utc(dt("2026-04-02T12:00:00+00:00")), "2026-04-03T04:00:00Z")
+    check("next close from Sat Oct 24 (already closed: past midnight, open-only use)",
+          next_schedule_close_utc(dt("2026-10-24T12:00:00+00:00")), "2026-10-24T04:00:00Z")
 
     print("REDEMPTION SCHEDULE TEST:", "PASS" if ok else "FAIL")
     return 0 if ok else 1

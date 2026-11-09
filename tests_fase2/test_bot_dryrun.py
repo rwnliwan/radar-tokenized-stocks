@@ -1,7 +1,8 @@
-"""Bot dry-run test: 3 scenarios, §5.6 format checks, forbidden words.
+"""Bot dry-run test: 4 scenarios, §5.6 format checks, forbidden words.
 
 Runs `python3 bot.py --dry-run` (no network, no token access) and asserts:
-- 3 scenarios each fire >= 1 message;
+- 4 scenarios each fire >= 1 message (gap R7, 2026-11-09: the 4th is
+  the schedule-derived "redemption closing within 24h" alert);
 - every message has a ticker-page link + disclaimer;
 - spread message has venue + depth + reference;
 - redemption message has status; PoR message has feed age;
@@ -26,7 +27,7 @@ def main():
     out = r.stdout
     assert "custom.radar-telegram" not in out, "dry-run must not touch token entry"
     scenarios = re.split(r"=== scenario: ", out)[1:]
-    assert len(scenarios) == 3, f"expected 3 scenarios, got {len(scenarios)}"
+    assert len(scenarios) == 4, f"expected 4 scenarios, got {len(scenarios)}"
     for sc in scenarios:
         name, _, body = sc.partition("===\n")
         messages = [m for m in body.split("---\n") if m.strip()]
@@ -41,13 +42,17 @@ def main():
         if name.startswith("spread"):
             assert "raydium" in body.lower() and "orca" in body.lower()
             assert "Spread:" in body and "Depth-weighted" in body
-        if name.startswith("redemption"):
+        if name.startswith("redemption closing"):
+            assert "closes:" in body.lower() and "within 24h" in body
+            assert "schedule-derived" in body.lower()
+            assert "Price (depth-weighted)" in body  # §5.6: every alert carries price+depth
+        elif name.startswith("redemption"):
             assert "closed" in body.lower()
             assert "Price (depth-weighted)" in body  # §5.6: every alert carries price+depth
         if name.startswith("PoR"):
             assert "96.0" in body and "hours" in body
             assert "Depth-weighted price" in body
-    print("BOT DRY-RUN TEST: PASS (3 scenarios, format + forbidden-words OK)")
+    print("BOT DRY-RUN TEST: PASS (4 scenarios, format + forbidden-words OK)")
     return 0
 
 

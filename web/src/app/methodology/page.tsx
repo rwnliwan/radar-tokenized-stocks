@@ -211,6 +211,7 @@ const HIST_TYPE_KEYS: Record<string, string> = {
   redemption: "hist_type_redemption",
   redemption_batch: "hist_type_redemption",
   redemption_paused: "hist_type_redemption_paused",
+  redemption_closing_soon: "hist_type_redemption_closing",
   por: "hist_type_por",
 };
 
