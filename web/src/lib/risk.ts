@@ -72,3 +72,16 @@ export function weekendRiskScore(
     partial: avail.length < 4,
   };
 }
+
+/** Exit Score display band (design §2.3, display only — the score
+ *  itself is computed by the poller and stored, never computed here):
+ *  0–39 low, 40–69 medium, 70–100 high. Null (or out-of-range) maps
+ *  to null: a missing score is never shown as 0, and an impossible
+ *  score is never banded. Mirrors dashboard/risk.py exit_score_band. */
+export function exitScoreBand(score: number | null): "low" | "medium" | "high" | null {
+  if (score == null || !Number.isFinite(score)) return null;
+  if (score < 0 || score > 100) return null;
+  if (score < 40) return "low";
+  if (score < 70) return "medium";
+  return "high";
+}

@@ -218,3 +218,102 @@ def insert_waitlist(contact, position_size_usd, venues, willing_price,
             return None
         raise ValueError("rate limited")
     return res.get("last_insert_rowid") if isinstance(res, dict) else None
+
+
+# --- Coverage / Exit Score / Perp (2026-11-12) -------------------------
+# All latest-only via the (ticker_id, ts) index; no full scans (the
+# §6.3 read-burn rule). Every reader here is defensive about schema
+# that does not exist yet: the multichain migration (exit_score
+# columns, perp_snapshots table) has NOT run, so a missing column or
+# table returns an empty result — never an exception, never a
+# fabricated zero. Callers render "not available yet" in that case.
+def _pragma_table_info(table):
+    """Column names of a table, or [] when the table does not exist.
+
+    PRAGMA is not a SELECT, so it goes through _pipeline directly
+    (same pattern as api/worker.js). Never raises.
+    """
+    try:
+        res = _pipeline([(f"PRAGMA table_info({table})", None)])[0]
+        return [c["name"] for c in _rows(res)]
+    except Exception:
+        return []
+
+
+def _table_exists(name):
+    try:
+        rows = query(
+            "SELECT 1 AS x FROM sqlite_master "
+            "WHERE type = 'table' AND name = ? LIMIT 1", [name])
+        return bool(rows)
+    except Exception:
+        return False
+
+
+def get_coverage_pools():
+    """Active pools grouped by (chain, dex, ticker, issuer).
+
+    The pools table is tiny (35 rows live), so the GROUP BY is
+    bounded — this is not a big-table scan. Returns rows of
+    {chain, dex, ticker_id, issuer, pools}.
+    """
+    return query(
+        "SELECT p.chain AS chain, p.dex AS dex, p.ticker_id AS ticker_id, "
+        "u.issuer AS issuer, COUNT(*) AS pools "
+        "FROM pools p JOIN universe u ON u.ticker_id = p.ticker_id "
+        "WHERE p.is_active = 1 "
+        "GROUP BY p.chain, p.dex, p.ticker_id, u.issuer "
+        "ORDER BY p.chain, u.issuer, p.ticker_id"
+    )
+
+
+def get_latest_exit_scores():
+    """Latest exit_score per ticker, or {} when the columns do not
+    exist yet (migration not run) or no score has ever been stored.
+
+    Returns {ticker: {exit_score, exit_score_version, ts}}. A stored
+    NULL score is returned as None (caller shows "not available"),
+    never coerced to 0.
+    """
+    cols = _pragma_table_info("deviations")
+    if "exit_score" not in cols:
+        return {}
+    select_extra = ", exit_score_version" if "exit_score_version" in cols else ""
+    try:
+        rows = query(
+            "SELECT ticker_id, ts, exit_score" + select_extra +
+            " FROM deviations ORDER BY ts DESC, id DESC LIMIT 500"
+        )
+    except Exception:
+        return {}
+    out = {}
+    for r in rows:
+        if r["ticker_id"] not in out:
+            out[r["ticker_id"]] = {
+                "exit_score": r.get("exit_score"),
+                "exit_score_version": r.get("exit_score_version"),
+                "ts": r.get("ts"),
+            }
+    return out
+
+
+def get_perp_latest(ticker):
+    """Latest perp_snapshots row for one ticker, or None.
+
+    None covers three honest cases the caller must not distinguish
+    by inventing a number: the table does not exist yet, no snapshot
+    has ever been written, or this ticker has no perp market. The
+    caller renders "not available yet" for all three.
+    """
+    if not _table_exists("perp_snapshots"):
+        return None
+    try:
+        rows = query(
+            "SELECT ticker_id, ts, perp_px, funding, oi, dex "
+            "FROM perp_snapshots WHERE ticker_id = ? "
+            "ORDER BY ts DESC LIMIT 1",
+            [ticker],
+        )
+    except Exception:
+        return None
+    return rows[0] if rows else None

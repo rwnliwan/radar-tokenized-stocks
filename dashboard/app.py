@@ -34,12 +34,14 @@ import streamlit as st
 
 from i18n import (DONATE_ADDRESS, DONATE_PAY_URL, LINKEDIN_URL,
                   SIZE_BUCKETS, t)
-from logic import (best_exit_venues, cross_venue_spread, fmt_abbr,
+from logic import (best_exit_venues, build_coverage, cross_venue_spread,
+                   display_chain, display_issuer, fmt_abbr,
                    fmt_wita, freshness_status, market_is_open, parse_ts,
                    por_effective_age_hours)
-from risk import calibration_progress, weekend_risk_score
+from risk import calibration_progress, exit_score_band, weekend_risk_score
 from trial_components import build_bars_options, build_home_grid_options
-from turso_read import insert_waitlist, query
+from turso_read import (get_coverage_pools, get_latest_exit_scores,
+                        get_perp_latest, insert_waitlist, query)
 
 from st_aggrid import AgGrid
 from streamlit_echarts5 import st_echarts
@@ -492,6 +494,114 @@ def get_alerts(ticker):
     )
 
 
+@st.cache_data(ttl=300)
+def get_coverage():
+    """Coverage snapshot: live (chain x issuer x DEX) groups derived
+    from the pools actually polled, plus the dated 12 Nov 2026
+    verification verdicts for chains not yet in the universe
+    (logic.build_coverage). A failed read yields empty live rows —
+    never a hardcoded live claim — and the renderer says so."""
+    try:
+        return build_coverage(get_coverage_pools())
+    except Exception:
+        return build_coverage([])
+
+
+@st.cache_data(ttl=300)
+def get_exit_scores():
+    """Latest stored exit_score per ticker, or {} when the columns do
+    not exist yet (migration not run) or nothing has been stored."""
+    try:
+        return get_latest_exit_scores()
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=300)
+def get_perp(ticker):
+    """Latest perp snapshot for one ticker, or None (table missing /
+    never written / no perp market — all render as 'not available')."""
+    try:
+        return get_perp_latest(ticker)
+    except Exception:
+        return None
+
+
+def coverage_short_line(lang):
+    """The one-line coverage summary, built from LIVE data.
+
+    Single (chain, issuer) group -> the live template with real
+    counts; several groups -> the multi-chain template; no live data
+    at all -> the static coverage_short fallback (which states the
+    last verified Solana numbers). Never hardcodes 'only Solana'."""
+    cov = get_coverage()
+    live = cov.get("live", [])
+    if len(live) == 1:
+        g = live[0]
+        return t(lang, "coverage_short_live",
+                 tickers=len(g["tickers"]),
+                 issuer=display_issuer(g["issuer"]),
+                 pools=g["pools"], chain=display_chain(g["chain"]),
+                 dexes=", ".join(d.capitalize() for d in g["dexes"]))
+    if len(live) > 1:
+        chains = sorted({display_chain(g["chain"]) for g in live})
+        return t(lang, "coverage_short_multi",
+                 tickers=cov.get("live_tickers", 0),
+                 n=len(chains), chains=", ".join(chains))
+    return t(lang, "coverage_short")
+
+
+def render_coverage(lang):
+    """Coverage section (2026-11-12): an honest banner + two tables.
+
+    The banner is DERIVED from live data: it says 'only xStocks on
+    Solana' only while build_coverage reports exactly that, and flips
+    to the multi-chain wording the moment a new chain's pools are
+    seeded and polled. The live table lists chain | issuer |
+    platform-DEX | tokens | pools | status from Turso; the pending
+    table lists the dated 12 Nov 2026 verification verdicts with
+    their reasons — labelled as verdicts, never as live data."""
+    cov = get_coverage()
+    live = cov.get("live", [])
+    if cov.get("only_solana_xstocks"):
+        st.warning(t(lang, "coverage_banner_only"))
+    elif live:
+        st.info(t(lang, "coverage_banner_multi",
+                  n=len({g["chain"] for g in live})))
+    st.subheader(t(lang, "coverage_table_title"))
+    st.caption(t(lang, "coverage_table_note"))
+    if live:
+        st.dataframe(pd.DataFrame([{
+            t(lang, "col_chain"): display_chain(g["chain"]),
+            t(lang, "cov_col_issuer"): display_issuer(g["issuer"]),
+            t(lang, "cov_col_platform"): ", ".join(
+                d.capitalize() for d in g["dexes"]),
+            t(lang, "cov_col_tokens"): ", ".join(g["tickers"]),
+            t(lang, "cov_col_pools"): g["pools"],
+            t(lang, "cov_col_status"): t(lang, "cov_status_live"),
+        } for g in live]), width="stretch", hide_index=True)
+    else:
+        st.markdown(t(lang, "no_data"))
+    _verdict_label = {
+        "verified": t(lang, "cov_status_verified"),
+        "failed": t(lang, "cov_status_failed"),
+        "not_active": t(lang, "cov_status_not_active"),
+        "monitor": t(lang, "cov_status_monitor"),
+    }
+    st.markdown(f"**{t(lang, 'cov_pending_title')}**")
+    st.caption(t(lang, "cov_pending_note"))
+    st.dataframe(pd.DataFrame([{
+        t(lang, "col_chain"): display_chain(p["chain"]),
+        t(lang, "cov_col_issuer"): display_issuer(p["issuer"]),
+        t(lang, "cov_col_platform"): p["platforms"],
+        t(lang, "cov_col_tokens"): p["tokens"],
+        t(lang, "cov_col_status"): _verdict_label.get(
+            p["verdict"], p["verdict"]),
+        t(lang, "cov_col_reason"): t(lang, p["reason_key"]),
+    } for p in cov.get("pending", [])]),
+        width="stretch", hide_index=True)
+
+
 # market_is_open lives in logic.py (pure, unit-tested): it is
 # holiday-aware since fix ronde 8 (S12). Do NOT re-define it here —
 # a local weekday-only copy is exactly the bug S12 fixed.
@@ -798,6 +908,7 @@ def render_methodology(lang):
     for key in ("methodology_dev", "methodology_spread",
                 "methodology_depth", "methodology_por",
                 "methodology_redemption", "methodology_thresholds",
+                "methodology_exit_score", "methodology_perp",
                 "methodology_sources", "methodology_limits",
                 "methodology_human", "methodology_coming"):
         st.markdown("---")
@@ -1164,6 +1275,7 @@ def home_table_block(lang):
     latest = get_latest_deviations()
     sparks = get_spark_data(window_choice)
     venues_all = get_all_venues_latest()
+    exit_scores = get_exit_scores()
     issuers = sorted({u.get("issuer") for u in uni.values() if u.get("issuer")})
     red_map = {iss: get_redemption(iss) for iss in issuers}
     win_label = {1: "1h", 24: "24h", 168: "7d"}[window_choice]
@@ -1200,6 +1312,9 @@ def home_table_block(lang):
             "redemption": red_status,
             "change": change_bps, "status": status,
             "spark": series,
+            # Exit Score (exit_score_v1): the STORED score only — None
+            # renders as "—", never as 0 (see the column note below).
+            "exit_score": (exit_scores.get(tid, {}) or {}).get("exit_score"),
         })
     if sort_choice == "dev":
         items.sort(key=lambda r: abs(r["dev"]) if r["dev"] is not None else -1,
@@ -1247,6 +1362,8 @@ def home_table_block(lang):
                 else "—"),
             t(lang, "col_change", window=win_label): (
                 fmt_signed1(r["change"]) if r["change"] is not None else "—"),
+            t(lang, "exit_score_col"): (
+                f"{r['exit_score']:.1f}" if r["exit_score"] is not None else "—"),
             t(lang, "col_spark"): spark_text(r["spark"]),
             t(lang, "detail_link"): f"?ticker={r['ticker']}",
         } for r in items])
@@ -1275,6 +1392,10 @@ def home_table_block(lang):
                    else t(lang, "home_table_note_cycle"))
         st.caption(t(lang, "home_table_hint"))
         st.caption(t(lang, "status_note"))
+        if not exit_scores:
+            # The column above is all "—" today: say why, once, rather
+            # than leaving a silent empty column.
+            st.caption(t(lang, "exit_score_col_note"))
         # v3.2 CSV export of the CURRENTLY DISPLAYED table (same
         # filter + sort order as the dataframe above), numeric values
         # for analysts (the on-screen table keeps display strings).
@@ -1288,6 +1409,7 @@ def home_table_block(lang):
             "por_age": t(lang, "por_not_published"),
             "status": r["status"],
             "change_bps": r["change"],
+            "exit_score": r["exit_score"],
         } for r in items])
         st.download_button(t(lang, "download_csv"),
                            _csv.to_csv(index=False),
@@ -1429,6 +1551,7 @@ if page == "home":
             st.markdown(t(lang, "no_data"))
 
     st.subheader(t(lang, "coverage_title"))
+    render_coverage(lang)
     st.info(t(lang, "coverage_text"))
     render_coming_soon(lang)
 
@@ -1551,17 +1674,25 @@ elif page == "ticker":
             st.rerun()
         u = next(x for x in uni if x["ticker_id"] == ticker)
         latest = get_latest_deviations().get(ticker)
+        venues = get_venue_latest(ticker)
         st.header(f"{ticker} ({u.get('issuer')})")
+        # Coverage is per-ticker and data-driven: the chains that
+        # actually have venues for THIS ticker (never a hardcoded
+        # "DEX Solana" — that string was wrong the moment a second
+        # chain is seeded).
+        _chains = sorted({(v.get("chain") or "").strip()
+                          for v in venues if v.get("chain")})
+        _cov_txt = (", ".join(display_chain(c) for c in _chains)
+                    if _chains else "—")
         st.markdown(
             f"{t(lang, 'meta_underlying')}: {u.get('underlying')} · "
             f"{t(lang, 'meta_legal')}: {u.get('legal_type') or '—'} · "
             f"{t(lang, 'meta_tier')} {u.get('tier')} · "
-            f"{t(lang, 'meta_coverage')}: DEX Solana"
+            f"{t(lang, 'meta_coverage')}: {_cov_txt}"
         )
-        st.info(t(lang, "coverage_short"))
+        st.info(coverage_short_line(lang))
         # 1-2. header + main deviation card
         st.subheader(t(lang, "block_dev"))
-        venues = get_venue_latest(ticker)
         if latest:
             c1, c2, c3 = st.columns(3)
             with c1:
@@ -1684,6 +1815,57 @@ elif page == "ticker":
             else:
                 render_risk_breakdown(
                     lang, weekend_risk_score(dev_med, depth, red_status, por_age))
+        # 6a. exit score (exit_score_v1) — the STORED score only.
+        # This panel never computes a score: a missing column / NULL
+        # score renders "not available yet", never 0.
+        st.subheader(t(lang, "exit_score_title"))
+        _es = (get_exit_scores().get(ticker, {}) or {})
+        _es_val = _es.get("exit_score")
+        if _es_val is None:
+            st.markdown(t(lang, "exit_score_unavailable"))
+        else:
+            _band = exit_score_band(_es_val)
+            _band_txt = (t(lang, "exit_score_band_" + _band)
+                         if _band else "—")
+            st.markdown(f"**{_es_val:.1f}** — {_band_txt}")
+            if _es.get("exit_score_version"):
+                st.markdown(t(lang, "exit_score_version",
+                              v=_es["exit_score_version"]))
+            if _es.get("ts"):
+                st.markdown(t(lang, "exit_score_asof",
+                              time=fmt_wita(_es["ts"], lang)))
+            st.caption(t(lang, "exit_score_note"))
+        # 6b. perp 3-leg (perp_3leg_v1) — the latest stored snapshot.
+        # No snapshot (table missing, never written, or no perp
+        # market) renders "not available yet", never 0.
+        st.subheader(t(lang, "perp_title"))
+        _perp = get_perp(ticker)
+        if not _perp or _perp.get("perp_px") is None:
+            st.markdown(t(lang, "perp_unavailable"))
+        else:
+            _dw = latest.get("depth_weighted_price") if latest else None
+            _dev_pt = ((_perp["perp_px"] - _dw) / _dw * 100.0
+                       if _dw else None)
+            pc1, pc2, pc3 = st.columns(3)
+            with pc1:
+                st.metric(t(lang, "perp_price"),
+                          f"${_perp['perp_px']:,.2f}")
+            with pc2:
+                st.metric(t(lang, "perp_dev_token"),
+                          fmt_dev(_dev_pt, pct=True))
+            with pc3:
+                st.metric(t(lang, "dw_price"),
+                          f"${_dw:,.2f}" if _dw is not None else "—")
+            _fund = _perp.get("funding")
+            _oi = _perp.get("oi")
+            st.markdown(
+                f"{t(lang, 'perp_funding')}: "
+                f"{f'{_fund:.4%}' if _fund is not None else '—'} · "
+                f"{t(lang, 'perp_oi')}: "
+                f"{fmt_usd(_oi, 0) if _oi is not None else '—'}")
+            if _perp.get("ts"):
+                st.markdown(t(lang, "perp_asof",
+                              time=fmt_wita(_perp["ts"], lang)))
         # 7. ticker alert log
         st.subheader(t(lang, "alertlog_title"))
         alerts = get_alerts(ticker)

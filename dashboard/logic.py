@@ -267,3 +267,160 @@ def best_exit_venues(venue_rows, sizes=(1000, 5000, 10000)):
             "depth_warning": size > 0.05 * reserve,
         })
     return out
+
+
+# --- Coverage (chain x issuer x DEX), 2026-11-12 ----------------------
+# PENDING_COVERAGE records the one-off LIVE verification of 12 Nov 2026
+# (VERIFIKASI_MULTICHAIN_2026-11-12.md) for chains/issuers NOT yet in
+# the Radar universe. These rows are reference data, NOT live claims:
+# they are always rendered with their verdict date and the "not yet
+# polled" label, and a chain moves to the live table only after its
+# pools are seeded in Turso and actually polled (build_coverage below
+# derives the live rows from pools data alone — nothing here can fake
+# a live row). Verdicts: "verified" (passed the >= $500k + >= 2 venue
+# rule, awaiting seeding), "failed" (failed the rule), "not_active"
+# (announced, no liquid pool), "monitor" (watched, not a Radar leg).
+PENDING_COVERAGE = [
+    {
+        "chain": "base",
+        "issuer": "coinbase",
+        "platforms": "Aerodrome / Uniswap / Nami",
+        "tokens": "NVDAc (verified); MSTRc, SNDKc + 10 more (to verify)",
+        "verdict": "verified",
+        "reason_key": "cov_reason_base",
+    },
+    {
+        "chain": "bnb",
+        "issuer": "bstocks",
+        "platforms": "PancakeSwap / Uniswap / Metric",
+        "tokens": "TSLAB (verified); NVDAB, SPYB, QQQB + more (to verify)",
+        "verdict": "verified",
+        "reason_key": "cov_reason_bnb",
+    },
+    {
+        "chain": "robinhood",
+        "issuer": "robinhood",
+        "platforms": "Uniswap / Aerodrome / Metric / Ramses",
+        "tokens": "TSLA, NVDA, SPY (verified); 10 more (to verify)",
+        "verdict": "verified",
+        "reason_key": "cov_reason_robinhood",
+    },
+    {
+        "chain": "ethereum",
+        "issuer": "ondo",
+        "platforms": "Uniswap",
+        "tokens": "TSLAon, NVDAon, SPYon, AAPLON",
+        "verdict": "failed",
+        "reason_key": "cov_reason_ondo",
+    },
+    {
+        "chain": "elysium",
+        "issuer": "xstocks",
+        "platforms": "—",
+        "tokens": "TSLAx + 12 more (announced)",
+        "verdict": "not_active",
+        "reason_key": "cov_reason_elysium",
+    },
+    {
+        "chain": "hyperliquid",
+        "issuer": "xstocks-wrapped",
+        "platforms": "Hyperliquid spot",
+        "tokens": "TSLAX, NVDAX, SPYX, AAPLX (wrapped)",
+        "verdict": "monitor",
+        "reason_key": "cov_reason_hyperliquid",
+    },
+]
+
+COVERAGE_VERDICT_DATE = "2026-11-12"
+
+# Display names for chain / issuer slugs (live rows carry slugs).
+DISPLAY_CHAINS = {
+    "solana": "Solana", "base": "Base", "bnb": "BNB Chain",
+    "robinhood": "Robinhood Chain", "ethereum": "Ethereum",
+    "elysium": "Elysium", "hyperliquid": "Hyperliquid",
+}
+DISPLAY_ISSUERS = {
+    "xstocks": "xStocks", "coinbase": "Coinbase", "bstocks": "bStocks",
+    "robinhood": "Robinhood", "ondo": "Ondo",
+    "xstocks-wrapped": "xStocks (wrapped)",
+}
+
+
+def display_chain(chain):
+    """'solana' -> 'Solana'; unknown slugs title-cased, never dropped."""
+    if not chain:
+        return "—"
+    return DISPLAY_CHAINS.get(str(chain).strip().lower(),
+                              str(chain).strip().title())
+
+
+def display_issuer(issuer):
+    """'xstocks' -> 'xStocks'; unknown slugs title-cased, never dropped."""
+    if not issuer:
+        return "—"
+    return DISPLAY_ISSUERS.get(str(issuer).strip().lower(),
+                               str(issuer).strip().title())
+
+
+def build_coverage(pool_rows):
+    """Coverage snapshot from LIVE pools data alone.
+
+    pool_rows: rows of {chain, dex, ticker_id, issuer, pools} for
+    active pools (see turso_read.get_coverage_pools). Returns
+    {"live": [...], "pending": PENDING_COVERAGE,
+     "live_tickers": n, "live_pools": n,
+     "only_solana_xstocks": bool}.
+
+    A live group is one (chain, issuer) pair with its DEX list,
+    tickers and pool count, status "live". The
+    only_solana_xstocks flag is DERIVED (live chains == {"solana"}
+    and live issuers == {"xstocks"}), never hardcoded — so the
+    "currently only xStocks on Solana" banner disappears by itself
+    the moment a new chain's pools are seeded and polled. Empty
+    input -> no live groups and only_solana_xstocks False (nothing
+    is claimed live when there is no data).
+    """
+    groups = {}
+    tickers = set()
+    total_pools = 0
+    for r in pool_rows or []:
+        chain = (r.get("chain") or "").strip().lower()
+        issuer = (r.get("issuer") or "").strip().lower()
+        if not chain or not issuer:
+            continue
+        key = (chain, issuer)
+        g = groups.setdefault(key, {
+            "chain": chain, "issuer": issuer,
+            "dexes": set(), "tickers": set(), "pools": 0,
+            "status": "live",
+        })
+        if r.get("dex"):
+            g["dexes"].add(str(r["dex"]))
+        if r.get("ticker_id"):
+            g["tickers"].add(str(r["ticker_id"]))
+            tickers.add(str(r["ticker_id"]))
+        try:
+            n = int(r.get("pools") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        g["pools"] += n
+        total_pools += n
+    live = [{
+        "chain": g["chain"],
+        "issuer": g["issuer"],
+        "dexes": sorted(g["dexes"]),
+        "tickers": sorted(g["tickers"]),
+        "pools": g["pools"],
+        "status": "live",
+    } for g in groups.values()]
+    live.sort(key=lambda g: (g["chain"], g["issuer"]))
+    chains = {g["chain"] for g in live}
+    issuers = {g["issuer"] for g in live}
+    return {
+        "live": live,
+        "pending": [dict(p) for p in PENDING_COVERAGE],
+        "live_tickers": len(tickers),
+        "live_pools": total_pools,
+        "only_solana_xstocks": bool(live) and chains == {"solana"}
+            and issuers == {"xstocks"},
+    }

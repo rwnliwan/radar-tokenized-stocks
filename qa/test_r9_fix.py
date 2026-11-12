@@ -130,7 +130,10 @@ def main():
     rowcards = block(home, '<div className="rowcards">', "{rows.length === 0")
     check("GG30 row cards show the stale pill (same as the table)",
           "ticker_stale" in rowcards, "no ticker_stale in rowcards block")
-    table = block(home, "<tbody>", "</tbody>")
+    # GG-30: the MAIN ticker table's tbody — not the first <tbody> in
+    # the file (the coverage table added 2026-11-12 sits above it).
+    main_tbl = home.find('exit_score_col')
+    table = block(home[main_tbl:], "<tbody>", "</tbody>")
     check("GG30 table still shows the stale pill",
           "ticker_stale" in table)
 

@@ -194,6 +194,8 @@ const SECTIONS: { id: string; heading: string; keys: string[] }[] = [
   { id: "sources", heading: "method_h_sources", keys: ["methodology_sources"] },
   { id: "limits", heading: "method_h_limits", keys: ["methodology_limits"] },
   { id: "human", heading: "method_h_human", keys: ["methodology_human"] },
+  { id: "exit_score", heading: "method_h_exit_score", keys: ["methodology_exit_score"] },
+  { id: "perp", heading: "method_h_perp", keys: ["methodology_perp"] },
   { id: "coming", heading: "method_h_coming", keys: ["methodology_coming"] },
   { id: "alerts", heading: "method_h_alerts", keys: [] },
 ];

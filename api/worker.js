@@ -244,33 +244,52 @@ async function loadLatest(env) {
   // the poller writes, probed via PRAGMA like loadTicker (the column
   // is declared in schema.sql since fix ronde 9, P1-4 — the probe
   // keeps a fresh DB without it from failing the whole endpoint).
+  // Same probe pattern covers the 2026-11-12 additions: exit_score /
+  // exit_score_version columns on deviations and the perp_snapshots
+  // table. While the migration has not run, both read as null and the
+  // frontends render "not available yet" — never 0.
   let hasExcluded = false;
+  let hasExitScore = false;
+  let hasExitVersion = false;
   try {
     const [pragma] = await pipeline(env, [["PRAGMA table_info(deviations)"]]);
-    hasExcluded = rowsOf(pragma).some((c) => c.name === "pools_excluded");
+    const cols = rowsOf(pragma).map((c) => c.name);
+    hasExcluded = cols.includes("pools_excluded");
+    hasExitScore = cols.includes("exit_score");
+    hasExitVersion = cols.includes("exit_score_version");
   } catch {
     hasExcluded = false;
+    hasExitScore = false;
+    hasExitVersion = false;
+  }
+  // Separate probe (separate try): a failure here must never poison
+  // the column flags above — a missing/unreadable perp table only
+  // means "no perp data", it must not also drop pools_excluded.
+  let hasPerp = false;
+  try {
+    const [perpCheck] = await pipeline(env, [
+      ["SELECT 1 AS x FROM sqlite_master WHERE type = 'table' "
+        + "AND name = 'perp_snapshots' LIMIT 1"],
+    ]);
+    hasPerp = rowsOf(perpCheck).length > 0;
+  } catch {
+    hasPerp = false;
   }
   const devSql =
     "SELECT ticker_id, ts, depth_weighted_price, dev_vs_median_pct, " +
     "qualifying_depth_usd, pools_used" +
     (hasExcluded ? ", pools_excluded" : "") +
+    (hasExitScore ? ", exit_score" : "") +
+    (hasExitVersion ? ", exit_score_version" : "") +
     " FROM deviations " +
     // LIMIT 500 capacity (fix ronde 5, N5): 13 tickers x ~38 cycles
     // (~3.2h at the 5-min cadence) — the newest row per ticker
     // always survives inside the window. Revisit if the universe
     // grows a lot.
     "ORDER BY ts DESC, id DESC LIMIT 500";
-  const [
-    uniR,
-    devR,
-    redR,
-    porR,
-    snapR,
-    venuesLiveR,
-    healthR,
-    seriesR,
-  ] = await pipeline(env, [
+  // The perp statement is appended only when the table exists, so a
+  // DB without the migration keeps the exact 8-statement shape.
+  const latestStmts = [
     ["SELECT ticker_id, issuer, tier FROM universe ORDER BY tier, ticker_id"],
     [devSql],
     [
@@ -326,7 +345,20 @@ async function loadLatest(env) {
         "AND dev_vs_median_pct IS NOT NULL " +
         "ORDER BY ticker_id, ts",
     ],
-  ]);
+  ];
+  if (hasPerp) {
+    // Latest-only via idx_perp_ticker_ts, same first-per-ticker
+    // fold as deviations (LIMIT 200 covers the 10 perp tickers for
+    // ~100 minutes at the 5-min cadence).
+    latestStmts.push([
+      "SELECT ticker_id, ts, perp_px, funding, oi FROM perp_snapshots "
+        + "ORDER BY ts DESC LIMIT 200",
+    ]);
+  }
+  const latestRes = await pipeline(env, latestStmts);
+  const [uniR, devR, redR, porR, snapR, venuesLiveR, healthR, seriesR] =
+    latestRes;
+  const perpR = hasPerp ? latestRes[8] : null;
 
   const uni = rowsOf(uniR);
   const latest = firstPerTicker(rowsOf(devR));
@@ -345,6 +377,14 @@ async function loadLatest(env) {
   const seriesByTicker = {};
   for (const r of rowsOf(seriesR)) {
     (seriesByTicker[r.ticker_id] ||= []).push(r);
+  }
+  // Latest perp snapshot per ticker (first row wins — the query is
+  // ts-DESC). Absent entirely when the table does not exist yet.
+  const perpByTicker = {};
+  if (perpR) {
+    for (const r of rowsOf(perpR)) {
+      if (!(r.ticker_id in perpByTicker)) perpByTicker[r.ticker_id] = r;
+    }
   }
   const vl = rowsOf(venuesLiveR)[0] || {};
   const health = rowsOf(healthR);
@@ -376,6 +416,13 @@ async function loadLatest(env) {
     // up to ~3.2 h (the LIMIT 500 window). Each row now carries its
     // own dev_ts / dev_age_min / stale, and meta lists stale tickers.
     const tf = tickerFreshness(d.ts ?? null);
+    // Exit Score / perp are nullable by design: null means "not
+    // available yet" (no column / no snapshot), never 0.
+    const perp = perpByTicker[u.ticker_id] || null;
+    const perpDev =
+      perp && perp.perp_px != null && dw
+        ? ((perp.perp_px - dw) / dw) * 100
+        : null;
     return {
       ticker: u.ticker_id,
       tier: u.tier,
@@ -392,6 +439,15 @@ async function loadLatest(env) {
       depth_usd: d.qualifying_depth_usd ?? null,
       pools_used: d.pools_used ?? null,
       pools_excluded: hasExcluded ? (d.pools_excluded ?? null) : null,
+      exit_score: hasExitScore ? (d.exit_score ?? null) : null,
+      exit_score_version: hasExitVersion
+        ? (d.exit_score_version ?? null)
+        : null,
+      perp_px: perp ? (perp.perp_px ?? null) : null,
+      perp_dev_pct: perpDev,
+      perp_funding: perp ? (perp.funding ?? null) : null,
+      perp_oi: perp ? (perp.oi ?? null) : null,
+      perp_ts: perp ? (perp.ts ?? null) : null,
       redemption_status: red ? String(red.status).toLowerCase() : null,
       redemption_next_open: red ? red.next_open_at : null,
       redemption_note_en: red ? red.window_note_en : null,
@@ -491,13 +547,34 @@ async function loadTicker(env, ticker) {
   // pools_excluded is declared in schema.sql (fix ronde 9, P1-4 —
   // the live DB already had it via an undocumented ALTER). Probe
   // first so a fresh DB without the column cannot fail the main
-  // pipeline.
+  // pipeline. Same probe covers the 2026-11-12 additions: the
+  // exit_score columns and the perp_snapshots table — absent means
+  // null fields, never a fabricated score.
   let hasExcluded = false;
+  let hasExitScore = false;
+  let hasExitVersion = false;
   try {
     const [pragma] = await pipeline(env, [["PRAGMA table_info(deviations)"]]);
-    hasExcluded = rowsOf(pragma).some((c) => c.name === "pools_excluded");
+    const cols = rowsOf(pragma).map((c) => c.name);
+    hasExcluded = cols.includes("pools_excluded");
+    hasExitScore = cols.includes("exit_score");
+    hasExitVersion = cols.includes("exit_score_version");
   } catch {
     hasExcluded = false;
+    hasExitScore = false;
+    hasExitVersion = false;
+  }
+  // Separate probe (separate try): a failure here must never poison
+  // the column flags above (see loadLatest).
+  let hasPerp = false;
+  try {
+    const [perpCheck] = await pipeline(env, [
+      ["SELECT 1 AS x FROM sqlite_master WHERE type = 'table' "
+        + "AND name = 'perp_snapshots' LIMIT 1"],
+    ]);
+    hasPerp = rowsOf(perpCheck).length > 0;
+  } catch {
+    hasPerp = false;
   }
   const anchor = (hours) => [
     "SELECT dev_vs_median_pct FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
@@ -515,7 +592,10 @@ async function loadTicker(env, ticker) {
     ],
     [
       "SELECT ts, depth_weighted_price, dev_vs_median_pct, qualifying_depth_usd, " +
-        "pools_used FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
+        "pools_used" +
+        (hasExitScore ? ", exit_score" : "") +
+        (hasExitVersion ? ", exit_score_version" : "") +
+        " FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
         "ORDER BY ts DESC, id DESC LIMIT 1",
       [ticker],
     ],
@@ -593,6 +673,17 @@ async function loadTicker(env, ticker) {
       "WHERE ticker_id = ? COLLATE NOCASE ORDER BY checked_at DESC, id DESC LIMIT 1",
     [ticker],
   ]);
+  // Perp 3-leg: latest snapshot for this ticker, latest-only via
+  // idx_perp_ticker_ts. Appended only when the table exists.
+  let perpIdx = -1;
+  if (hasPerp) {
+    perpIdx = stage2.length;
+    stage2.push([
+      "SELECT ts, perp_px, funding, oi FROM perp_snapshots "
+        + "WHERE ticker_id = ? COLLATE NOCASE ORDER BY ts DESC LIMIT 1",
+      [ticker],
+    ]);
+  }
   const res2 = await pipeline(env, stage2);
   const venues = rowsOf(res2[0]).map((v) => ({
     dex: v.dex,
@@ -606,6 +697,14 @@ async function loadTicker(env, ticker) {
   }));
   const tok = rowsOf(res2[tokIdx])[0] || null;
   const dw = d.depth_weighted_price ?? null;
+  // Perp 3-leg (2026-11-12): null when the table is missing, no
+  // snapshot was ever written, or this ticker has no perp market —
+  // all three render as "not available yet", never 0.
+  const perp = perpIdx >= 0 ? rowsOf(res2[perpIdx])[0] || null : null;
+  const perpDev =
+    perp && perp.perp_px != null && dw
+      ? ((perp.perp_px - dw) / dw) * 100
+      : null;
   const dev = d.dev_vs_median_pct ?? null;
   const bps = dev != null ? dev * 100 : null;
   const change = (anchorVal) =>
@@ -638,6 +737,15 @@ async function loadTicker(env, ticker) {
     depth_usd: d.qualifying_depth_usd ?? null,
     pools_used: d.pools_used ?? null,
     pools_excluded: hasExcluded ? (rowsOf(res2[1])[0]?.pools_excluded ?? 0) : 0,
+    exit_score: hasExitScore ? (d.exit_score ?? null) : null,
+    exit_score_version: hasExitVersion
+      ? (d.exit_score_version ?? null)
+      : null,
+    perp_px: perp ? (perp.perp_px ?? null) : null,
+    perp_dev_pct: perpDev,
+    perp_funding: perp ? (perp.funding ?? null) : null,
+    perp_oi: perp ? (perp.oi ?? null) : null,
+    perp_ts: perp ? (perp.ts ?? null) : null,
     redemption_status: red ? String(red.status).toLowerCase() : null,
     redemption_next_open: red ? red.next_open_at : null,
     redemption_note_en: red ? red.window_note_en : null,
@@ -772,6 +880,154 @@ async function handleWaitlist(request, env) {
   return json({ ok: true, already: false });
 }
 
+// Coverage (2026-11-12): live rows are derived from the pools
+// actually polled in Turso — chain x issuer x DEX, grouped. The
+// PENDING rows are the one-off live-verification verdicts of 12 Nov
+// 2026 (VERIFIKASI_MULTICHAIN_2026-11-12.md), reference data that is
+// always dated and never presented as live: a chain moves to `live`
+// only after its pools are seeded in Turso and polled. The
+// only_solana_xstocks flag is derived the same way, so frontends
+// never hardcode "only Solana".
+const COVERAGE_VERDICT_DATE = "2026-11-12";
+const DISPLAY_CHAINS = {
+  solana: "Solana",
+  base: "Base",
+  bnb: "BNB Chain",
+  robinhood: "Robinhood Chain",
+  ethereum: "Ethereum",
+  elysium: "Elysium",
+  hyperliquid: "Hyperliquid",
+};
+const DISPLAY_ISSUERS = {
+  xstocks: "xStocks",
+  coinbase: "Coinbase",
+  bstocks: "bStocks",
+  robinhood: "Robinhood",
+  ondo: "Ondo",
+  "xstocks-wrapped": "xStocks (wrapped)",
+};
+const PENDING_COVERAGE = [
+  {
+    chain: "base",
+    issuer: "coinbase",
+    platforms: "Aerodrome / Uniswap / Nami",
+    tokens: "NVDAc (verified); MSTRc, SNDKc + 10 more (to verify)",
+    verdict: "verified",
+    reason_key: "cov_reason_base",
+  },
+  {
+    chain: "bnb",
+    issuer: "bstocks",
+    platforms: "PancakeSwap / Uniswap / Metric",
+    tokens: "TSLAB (verified); NVDAB, SPYB, QQQB + more (to verify)",
+    verdict: "verified",
+    reason_key: "cov_reason_bnb",
+  },
+  {
+    chain: "robinhood",
+    issuer: "robinhood",
+    platforms: "Uniswap / Aerodrome / Metric / Ramses",
+    tokens: "TSLA, NVDA, SPY (verified); 10 more (to verify)",
+    verdict: "verified",
+    reason_key: "cov_reason_robinhood",
+  },
+  {
+    chain: "ethereum",
+    issuer: "ondo",
+    platforms: "Uniswap",
+    tokens: "TSLAon, NVDAon, SPYon, AAPLON",
+    verdict: "failed",
+    reason_key: "cov_reason_ondo",
+  },
+  {
+    chain: "elysium",
+    issuer: "xstocks",
+    platforms: "—",
+    tokens: "TSLAx + 12 more (announced)",
+    verdict: "not_active",
+    reason_key: "cov_reason_elysium",
+  },
+  {
+    chain: "hyperliquid",
+    issuer: "xstocks-wrapped",
+    platforms: "Hyperliquid spot",
+    tokens: "TSLAX, NVDAX, SPYX, AAPLX (wrapped)",
+    verdict: "monitor",
+    reason_key: "cov_reason_hyperliquid",
+  },
+];
+
+async function loadCoverage(env) {
+  // The pools table is tiny (35 rows live): one grouped read, no
+  // big-table scan (the §6.3 read-burn rule).
+  const [poolsR] = await pipeline(env, [
+    [
+      "SELECT p.chain AS chain, p.dex AS dex, p.ticker_id AS ticker_id, "
+        + "u.issuer AS issuer FROM pools p "
+        + "JOIN universe u ON u.ticker_id = p.ticker_id "
+        + "WHERE p.is_active = 1",
+    ],
+  ]);
+  const groups = new Map();
+  const tickers = new Set();
+  for (const r of rowsOf(poolsR)) {
+    const chain = String(r.chain || "").trim().toLowerCase();
+    const issuer = String(r.issuer || "").trim().toLowerCase();
+    if (!chain || !issuer) continue;
+    const key = chain + "|" + issuer;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        chain,
+        chain_display: DISPLAY_CHAINS[chain] || chain,
+        issuer,
+        issuer_display: DISPLAY_ISSUERS[issuer] || issuer,
+        dexes: new Set(),
+        tickers: new Set(),
+        pools: 0,
+        status: "live",
+      });
+    }
+    const g = groups.get(key);
+    if (r.dex) g.dexes.add(String(r.dex));
+    if (r.ticker_id) {
+      g.tickers.add(String(r.ticker_id));
+      tickers.add(String(r.ticker_id));
+    }
+    g.pools += 1;
+  }
+  const live = [...groups.values()]
+    .map((g) => ({
+      ...g,
+      dexes: [...g.dexes].sort(),
+      tickers: [...g.tickers].sort(),
+    }))
+    .sort((a, b) =>
+      a.chain === b.chain
+        ? a.issuer.localeCompare(b.issuer)
+        : a.chain.localeCompare(b.chain),
+    );
+  const chains = new Set(live.map((g) => g.chain));
+  const issuers = new Set(live.map((g) => g.issuer));
+  return {
+    live,
+    pending: PENDING_COVERAGE.map((p) => ({
+      ...p,
+      chain_display: DISPLAY_CHAINS[p.chain] || p.chain,
+      issuer_display: DISPLAY_ISSUERS[p.issuer] || p.issuer,
+    })),
+    verdict_date: COVERAGE_VERDICT_DATE,
+    live_tickers: tickers.size,
+    live_pools: live.reduce((s, g) => s + g.pools, 0),
+    only_solana_xstocks:
+      live.length > 0 &&
+      chains.size === 1 &&
+      chains.has("solana") &&
+      issuers.size === 1 &&
+      issuers.has("xstocks"),
+    generated_at: new Date().toISOString(),
+  };
+}
+
 async function loadAlerts(env) {
   // S7 (fix ronde 7): one alert_log row is written PER CHANNEL since
   // ronde 6, so an EN+ID delivery appeared twice as indistinguishable
@@ -889,6 +1145,9 @@ export default {
           return json({ error: "POST only" }, 405);
         return handleWaitlist(request, env);
       }
+      if (url.pathname === "/api/coverage") {
+        return json(await loadCoverage(env));
+      }
       if (url.pathname === "/api/alerts") {
         return json(await loadAlerts(env));
       }
@@ -907,7 +1166,7 @@ export default {
           venues_total: meta.venues_total,
         });
       }
-      return json({ error: "unknown route; see /api/latest, /api/history, /api/alerts, /api/health" }, 404);
+      return json({ error: "unknown route; see /api/latest, /api/coverage, /api/history, /api/alerts, /api/health" }, 404);
     } catch (e) {
       return json({ error: "upstream read failed" }, 502);
     }

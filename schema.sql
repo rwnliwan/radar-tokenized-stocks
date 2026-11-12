@@ -65,9 +65,63 @@ CREATE TABLE IF NOT EXISTS deviations (
   redemption_status TEXT,
   por_age_hours REAL,
   weekend_risk_score REAL,
+  -- F3 (penambahan 2026-11-12, DESAIN §2.3/§3.3): exit_score_v1, written
+  -- by the poller with the deviations row (+0 writes). NULL when no
+  -- component could be computed. Live ALTER via
+  -- migrations/2026-11-12-penambahan.sql (check PRAGMA first).
+  exit_score REAL,
+  exit_score_version TEXT,
   method_version TEXT NOT NULL DEFAULT 'v1-median-only'
 );
 CREATE INDEX IF NOT EXISTS idx_deviations_ticker_ts ON deviations(ticker_id, ts);
+
+-- F1 (penambahan 2026-11-12, DESAIN §3.1): Hyperliquid XYZ perp snapshots,
+-- one row per ticker per 5-min cycle. Only the 10 tickers with a live XYZ
+-- perp (SPY/QQQ/GLD: no rows, never fabricated). funding/oi NULL when
+-- the API does not publish them.
+CREATE TABLE IF NOT EXISTS perp_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker_id TEXT NOT NULL REFERENCES universe(ticker_id),
+  ts TEXT NOT NULL,
+  perp_px REAL,
+  funding REAL,
+  oi REAL,
+  dex TEXT NOT NULL DEFAULT 'xyz'
+);
+CREATE INDEX IF NOT EXISTS idx_perp_ticker_ts ON perp_snapshots(ticker_id, ts);
+
+-- F4 (penambahan 2026-11-12, DESAIN §3.2): Liquidation Guard, one row per
+-- ticker per hour (extra 5-min rows only while warning/critical).
+-- liq_px_estimate ALWAYS NULL until a public liquidation-level source is
+-- verified — never fabricated. No oracle_lag_s column: the public info
+-- endpoints publish no oracle timestamp, so lag is unmeasurable.
+CREATE TABLE IF NOT EXISTS liquidation_watch (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker_id TEXT NOT NULL REFERENCES universe(ticker_id),
+  ts TEXT NOT NULL,
+  oracle_px REAL,
+  mark_px REAL,
+  liq_px_estimate REAL,
+  distance_pct REAL,
+  source TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_liqwatch_ticker_ts ON liquidation_watch(ticker_id, ts);
+
+-- F2 (penambahan 2026-11-12, DESAIN §3.4): Monday Gap Predictor, ONE row
+-- per ticker per week (week_start = Saturday). outcome stays 'pending'
+-- until Monday's actual gap is computed — never guessed.
+CREATE TABLE IF NOT EXISTS monday_gap (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ticker_id TEXT NOT NULL REFERENCES universe(ticker_id),
+  week_start TEXT NOT NULL,
+  gap_pred_pct REAL NOT NULL,
+  confidence REAL NOT NULL,
+  method_version TEXT NOT NULL DEFAULT 'monday_gap_v1',
+  outcome_gap_pct REAL,
+  outcome TEXT,
+  outcome_ts TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_monday_gap_ticker_week ON monday_gap(ticker_id, week_start);
 
 CREATE TABLE IF NOT EXISTS redemption_windows (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

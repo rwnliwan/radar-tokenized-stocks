@@ -102,6 +102,29 @@ def weekend_risk_score(dev_pct, depth_usd, redemption_status, por_age_hours):
     }
 
 
+# --- Exit Score bands (design §2.3, display only) --------------------
+# The score itself is computed by the poller and stored in
+# deviations.exit_score + exit_score_version; this helper only maps a
+# STORED score to its display band. Bands are labels, not advice:
+# 0-39 "low exit pressure", 40-69 "medium", 70-100 "high". None (or a
+# value outside 0-100) maps to None — a missing score is never shown
+# as 0, and an impossible score is never banded.
+def exit_score_band(score):
+    if score is None:
+        return None
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return None
+    if s < 0 or s > 100:
+        return None
+    if s < 40:
+        return "low"
+    if s < 70:
+        return "medium"
+    return "high"
+
+
 # --- Calibration counter (gap R8 P2-G1) --------------------------------
 def _as_date(value):
     """Coerce a date / datetime / 'YYYY-MM-DD' (or ISO datetime) string

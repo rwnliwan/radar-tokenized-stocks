@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "./Header";
 import { DevBar, Sparkline, StatusBlip } from "./BlipBar";
-import { fetchHealth, fetchLatest, type HealthResponse, type LatestResponse, type TickerRow } from "../lib/api";
+import { fetchCoverage, fetchHealth, fetchLatest, type CoverageResponse, type HealthResponse, type LatestResponse, type TickerRow } from "../lib/api";
 import { buildCsv } from "../lib/csv";
 import {
   fmtAge,
@@ -24,12 +24,15 @@ import { t, u, type Lang } from "../lib/i18n";
 const STALE_MIN = 15;
 const POLL_MS = 60000;
 
+const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
 type SortKey = "dev" | "depth" | "name" | "price";
 
 export default function HomeClient({ initialData }: { initialData: LatestResponse | null }) {
   const [lang, setLang] = useState<Lang>("en");
   const [data, setData] = useState<LatestResponse | null>(initialData);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(initialData == null);
   const [sortKey, setSortKey] = useState<SortKey>("dev");
@@ -71,6 +74,14 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
       setHealth(null);
     } finally {
       setLoading(false);
+    }
+    // Coverage is non-blocking: a failed fetch never blocks the table
+    // (same pattern as /api/health above) — the cover falls back to
+    // the static coverage_short line and the section stays hidden.
+    try {
+      setCoverage(await fetchCoverage());
+    } catch {
+      setCoverage(null);
     }
   }, []);
 
@@ -136,6 +147,33 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
     }
     return w;
   }, [data]);
+
+  // Coverage one-liner, built from LIVE /api/coverage data when it
+  // loaded; the static coverage_short line is only the fallback when
+  // the fetch failed (or has not returned yet). Never hardcodes the
+  // "only Solana" claim — the template follows the live groups.
+  const coverageShort = useMemo(() => {
+    if (!coverage) return t(lang, "coverage_short");
+    if (coverage.live.length === 1) {
+      const g = coverage.live[0];
+      return t(lang, "coverage_short_live", {
+        tickers: g.tickers.length,
+        issuer: g.issuer_display,
+        pools: g.pools,
+        chain: g.chain_display,
+        dexes: g.dexes.map(cap).join(", "),
+      });
+    }
+    if (coverage.live.length > 1) {
+      const chains = [...new Set(coverage.live.map((g) => g.chain_display))];
+      return t(lang, "coverage_short_multi", {
+        tickers: coverage.live_tickers,
+        n: chains.length,
+        chains: chains.join(", "),
+      });
+    }
+    return t(lang, "coverage_short");
+  }, [coverage, lang]);
 
   /* v3.1 (opsi A, ACC Septian 25 Okt): DEX verdict from THREE signals, not
      deviation alone — a low deviation must not certify an exit when the
@@ -502,8 +540,92 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
           <div className="cover">
             <b>{t(lang, "coverage_live_line")}</b>
             <br />
-            {t(lang, "coverage_short")}
+            {coverageShort}
           </div>
+
+          {/* Coverage section (2026-11-12): the banner is derived from
+              live data — "only xStocks on Solana" shows only while
+              /api/coverage reports exactly that, and flips by itself
+              when a new chain's pools are seeded and polled. The live
+              table lists what is actually polled; the pending table
+              lists the dated 12 Nov 2026 verification verdicts. */}
+          {coverage && (
+            <>
+              {coverage.only_solana_xstocks ? (
+                <div className="banner" role="status">
+                  {t(lang, "coverage_banner_only")}
+                </div>
+              ) : coverage.live.length > 0 ? (
+                <div className="banner" role="status">
+                  {t(lang, "coverage_banner_multi", {
+                    n: new Set(coverage.live.map((g) => g.chain)).size,
+                  })}
+                </div>
+              ) : null}
+              <h2 className="sec">{t(lang, "coverage_table_title")}</h2>
+              <p className="hint">{t(lang, "coverage_table_note")}</p>
+              {coverage.live.length > 0 ? (
+                <div className="tblwrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>{t(lang, "col_chain")}</th>
+                        <th>{t(lang, "cov_col_issuer")}</th>
+                        <th>{t(lang, "cov_col_platform")}</th>
+                        <th>{t(lang, "cov_col_tokens")}</th>
+                        <th>{t(lang, "cov_col_pools")}</th>
+                        <th>{t(lang, "cov_col_status")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {coverage.live.map((g) => (
+                        <tr key={`${g.chain}-${g.issuer}`}>
+                          <td>{g.chain_display}</td>
+                          <td>{g.issuer_display}</td>
+                          <td>{g.dexes.map(cap).join(", ")}</td>
+                          <td>{g.tickers.join(", ")}</td>
+                          <td className="num">{g.pools}</td>
+                          <td>{t(lang, "cov_status_live")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="hint">{t(lang, "no_data")}</p>
+              )}
+              <p>
+                <b>{t(lang, "cov_pending_title")}</b>
+              </p>
+              <p className="hint">{t(lang, "cov_pending_note")}</p>
+              <div className="tblwrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t(lang, "col_chain")}</th>
+                      <th>{t(lang, "cov_col_issuer")}</th>
+                      <th>{t(lang, "cov_col_platform")}</th>
+                      <th>{t(lang, "cov_col_tokens")}</th>
+                      <th>{t(lang, "cov_col_status")}</th>
+                      <th>{t(lang, "cov_col_reason")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {coverage.pending.map((p) => (
+                      <tr key={`${p.chain}-${p.issuer}`}>
+                        <td>{p.chain_display}</td>
+                        <td>{p.issuer_display}</td>
+                        <td>{p.platforms}</td>
+                        <td>{p.tokens}</td>
+                        <td>{t(lang, "cov_status_" + p.verdict)}</td>
+                        <td>{t(lang, p.reason_key)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
 
           <h2 className="sec">{t(lang, "heatmap_title")}</h2>
           <div className="controls">
@@ -576,6 +698,7 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
                   {sortHead("depth", t(lang, "col_depth10k"))}
                   <th className="hide-s">{t(lang, "redemption_title")}</th>
                   <th className="hide-s">{t(lang, "por_age_label")}</th>
+                  <th className="hide-s">{t(lang, "exit_score_col")}</th>
                   <th>{t(lang, "col_status")}</th>
                   <th>{t(lang, "detail_link")}</th>
                 </tr>
@@ -630,6 +753,9 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
                           ? fmtAge(r.por_age_hours)
                           : t(lang, "por_not_published")}
                       </td>
+                      <td className="num hide-s">
+                        {r.exit_score != null ? r.exit_score.toFixed(1) : "—"}
+                      </td>
                       <td title={r.status === "na" ? t(lang, "dash_no_median") : undefined}>
                         <span className={`pill ${r.status}`}>
                           {statusLabel(lang, r.status)}
@@ -651,6 +777,9 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
             </table>
           </div>
           <p className="hint">{t(lang, "status_note")}</p>
+          {!rows.some((r) => r.exit_score != null) && (
+            <p className="hint">{t(lang, "exit_score_col_note")}</p>
+          )}
           <div className="rowcards">
             {rows.map((r) => (
               <div className="rc" key={r.ticker}>

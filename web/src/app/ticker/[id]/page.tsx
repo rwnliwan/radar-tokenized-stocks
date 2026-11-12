@@ -5,9 +5,11 @@ import { use, useCallback, useEffect, useState } from "react";
 import Header from "../../Header";
 import HistoryChart from "../Chart";
 import {
+  fetchCoverage,
   fetchHealth,
   fetchHistory,
   fetchTicker,
+  type CoverageResponse,
   type HealthResponse,
   type HistoryPoint,
   type TickerDetail,
@@ -27,7 +29,7 @@ import {
   statusLabel,
 } from "../../../lib/format";
 import { t, u, type Lang } from "../../../lib/i18n";
-import { weekendRiskScore } from "../../../lib/risk";
+import { exitScoreBand, weekendRiskScore } from "../../../lib/risk";
 
 // PoR v2 numbers: API publishes them as strings; format locale-aware,
 // falling back to the raw string when unparseable (never invent a value).
@@ -50,12 +52,27 @@ const KNOWN_ID_SOURCE =
 const KNOWN_ID_SOURCE_EN =
   "Design §1.1 / 24 Oct research (documentation, not a live observation)";
 
+// Display names for venue chain slugs (mirrors api/worker.js
+// DISPLAY_CHAINS); unknown slugs fall back to a capitalized slug.
+const CHAIN_DISPLAY: Record<string, string> = {
+  solana: "Solana",
+  base: "Base",
+  bnb: "BNB Chain",
+  robinhood: "Robinhood Chain",
+  ethereum: "Ethereum",
+  elysium: "Elysium",
+  hyperliquid: "Hyperliquid",
+};
+const displayChain = (c: string) =>
+  CHAIN_DISPLAY[c.toLowerCase()] ?? (c ? c.charAt(0).toUpperCase() + c.slice(1) : c);
+
 export default function TickerPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const ticker = id.toUpperCase();
   const [lang, setLang] = useState<Lang>("en");
   const [detail, setDetail] = useState<TickerDetail | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [window, setWindow] = useState<Window>("24h");
   const [notFound, setNotFound] = useState(false);
@@ -114,6 +131,14 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
       setHealth(null);
       setHealthFailed(true);
     }
+    // Coverage is non-blocking (same pattern as /api/health): a
+    // failed fetch keeps the static coverage_short line instead of
+    // breaking the page.
+    try {
+      setCoverage(await fetchCoverage());
+    } catch {
+      setCoverage(null);
+    }
   }, [ticker]);
 
   const loadHistory = useCallback(async () => {
@@ -159,6 +184,33 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
       ? weekendRiskScore(detail.dev_pct, detail.depth_usd, detail.redemption_status, detail.por_age_hours)
       : null;
   const marketOpen = marketIsOpen();
+  // Coverage for THIS ticker, from its own venues (never a hardcoded
+  // "DEX Solana" — that string was wrong the moment a second chain
+  // is seeded).
+  const tickerChains =
+    detail != null
+      ? [...new Set(detail.venues.map((v) => v.chain))].map(displayChain).join(", ") || "—"
+      : "—";
+  // Cover one-liner from live /api/coverage when loaded; static
+  // coverage_short is only the fallback when the fetch failed.
+  const coverageShort =
+    coverage && coverage.live.length === 1
+      ? t(lang, "coverage_short_live", {
+          tickers: coverage.live[0].tickers.length,
+          issuer: coverage.live[0].issuer_display,
+          pools: coverage.live[0].pools,
+          chain: coverage.live[0].chain_display,
+          dexes: coverage.live[0].dexes
+            .map((d) => d.charAt(0).toUpperCase() + d.slice(1))
+            .join(", "),
+        })
+      : coverage && coverage.live.length > 1
+        ? t(lang, "coverage_short_multi", {
+            tickers: coverage.live_tickers,
+            n: new Set(coverage.live.map((g) => g.chain)).size,
+            chains: [...new Set(coverage.live.map((g) => g.chain_display))].join(", "),
+          })
+        : t(lang, "coverage_short");
 
   // Gap G1: same stale verdict as the homepage — prefer the Worker's
   // /api/health verdict; snapshot age (detail.latest_ts) is only the
@@ -275,9 +327,9 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
           <p className="meta">
             {t(lang, "meta_underlying")}: {detail.underlying ?? "—"} ·{" "}
             {t(lang, "meta_legal")}: {detail.legal_type ?? "—"} · {t(lang, "meta_tier")}{" "}
-            {detail.tier ?? "—"} · {t(lang, "meta_coverage")}: DEX Solana
+            {detail.tier ?? "—"} · {t(lang, "meta_coverage")}: {tickerChains}
           </p>
-          <div className="cover">{t(lang, "coverage_short")}</div>
+          <div className="cover">{coverageShort}</div>
 
           <h2 className="sec">{t(lang, "block_dev")}</h2>
           <div className="metrics metrics-3">
@@ -474,6 +526,73 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                     </details>
                   </>
                 )
+              )}
+            </>
+          )}
+
+          {/* Exit Score (exit_score_v1) — the STORED score only. A
+              missing score renders "not available yet", never 0. */}
+          <h2 className="sec">{t(lang, "exit_score_title")}</h2>
+          {detail.exit_score == null ? (
+            <p className="hint">{t(lang, "exit_score_unavailable")}</p>
+          ) : (
+            <>
+              <p>
+                <b>
+                  {detail.exit_score.toFixed(1)} —{" "}
+                  {(() => {
+                    const b = exitScoreBand(detail.exit_score);
+                    return b ? t(lang, "exit_score_band_" + b) : "—";
+                  })()}
+                </b>
+              </p>
+              {detail.exit_score_version && (
+                <p className="hint">
+                  {t(lang, "exit_score_version", { v: detail.exit_score_version })}
+                </p>
+              )}
+              {detail.dev_ts && (
+                <p className="hint">
+                  {t(lang, "exit_score_asof", { time: fmtWITA(detail.dev_ts, lang) })}
+                </p>
+              )}
+              <p className="hint">{t(lang, "exit_score_note")}</p>
+            </>
+          )}
+
+          {/* Perp 3-leg (perp_3leg_v1) — the latest stored snapshot.
+              No snapshot (table missing, never written, or no perp
+              market) renders "not available yet", never 0. */}
+          <h2 className="sec">{t(lang, "perp_title")}</h2>
+          {detail.perp_px == null ? (
+            <p className="hint">{t(lang, "perp_unavailable")}</p>
+          ) : (
+            <>
+              <div className="metrics metrics-3">
+                <div className="metric">
+                  <small>{t(lang, "perp_price")}</small>
+                  <div className="v">{fmtUsd(detail.perp_px)}</div>
+                </div>
+                <div className="metric">
+                  <small>{t(lang, "perp_dev_token")}</small>
+                  <div className="v">
+                    {detail.perp_dev_pct != null ? `${fmtSigned(detail.perp_dev_pct, 3)}%` : "—"}
+                  </div>
+                </div>
+                <div className="metric">
+                  <small>{t(lang, "dw_price")}</small>
+                  <div className="v">{fmtUsd(detail.dw_price)}</div>
+                </div>
+              </div>
+              <p className="hint">
+                {t(lang, "perp_funding")}:{" "}
+                {detail.perp_funding != null ? `${(detail.perp_funding * 100).toFixed(4)}%` : "—"} ·{" "}
+                {t(lang, "perp_oi")}: {detail.perp_oi != null ? fmtUsd(detail.perp_oi) : "—"}
+              </p>
+              {detail.perp_ts && (
+                <p className="hint">
+                  {t(lang, "perp_asof", { time: fmtWITA(detail.perp_ts, lang) })}
+                </p>
               )}
             </>
           )}

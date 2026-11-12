@@ -20,6 +20,16 @@ export type TickerRow = {
   // Gap R9: the Worker returns pools_excluded per row (loadLatest);
   // null when the column is absent from the DB.
   pools_excluded: number | null;
+  // Exit Score (exit_score_v1) + perp 3-leg (perp_3leg_v1), 2026-11-12.
+  // All null until the migration/poller writes the data — null means
+  // "not available yet", never 0.
+  exit_score: number | null;
+  exit_score_version: string | null;
+  perp_px: number | null;
+  perp_dev_pct: number | null;
+  perp_funding: number | null;
+  perp_oi: number | null;
+  perp_ts: string | null;
   redemption_status: string | null;
   redemption_next_open: string | null;
   redemption_note_en: string | null;
@@ -137,6 +147,16 @@ export type TickerDetail = {
   depth_usd: number | null;
   pools_used: number | null;
   pools_excluded: number;
+  // Exit Score (exit_score_v1) + perp 3-leg (perp_3leg_v1), 2026-11-12.
+  // All null until the migration/poller writes the data — null means
+  // "not available yet", never 0.
+  exit_score: number | null;
+  exit_score_version: string | null;
+  perp_px: number | null;
+  perp_dev_pct: number | null;
+  perp_funding: number | null;
+  perp_oi: number | null;
+  perp_ts: string | null;
   redemption_status: string | null;
   redemption_next_open: string | null;
   redemption_note_en: string | null;
@@ -190,6 +210,51 @@ export async function fetchHistory(
   if (!res.ok) throw new Error(`API HTTP ${res.status}`);
   const d = (await res.json()) as { points: HistoryPoint[] };
   return d.points;
+}
+
+/* Coverage (chain x issuer x DEX), 2026-11-12 — GET /api/coverage.
+   `live` rows are derived from the pools actually polled in Turso;
+   `pending` rows are the dated 12 Nov 2026 verification verdicts,
+   reference data, never live claims. `reason_key` is translated by
+   the frontend's own i18n (cov_reason_*). */
+export type CoverageLiveGroup = {
+  chain: string;
+  chain_display: string;
+  issuer: string;
+  issuer_display: string;
+  dexes: string[];
+  tickers: string[];
+  pools: number;
+  status: "live";
+};
+
+export type CoveragePendingRow = {
+  chain: string;
+  chain_display: string;
+  issuer: string;
+  issuer_display: string;
+  platforms: string;
+  tokens: string;
+  verdict: "verified" | "failed" | "not_active" | "monitor";
+  reason_key: string;
+};
+
+export type CoverageResponse = {
+  live: CoverageLiveGroup[];
+  pending: CoveragePendingRow[];
+  verdict_date: string;
+  live_tickers: number;
+  live_pools: number;
+  only_solana_xstocks: boolean;
+  generated_at: string | null;
+};
+
+export async function fetchCoverage(signal?: AbortSignal): Promise<CoverageResponse> {
+  const base = process.env.NEXT_PUBLIC_RADAR_API_BASE;
+  if (!base) throw new Error("API base URL is not configured");
+  const res = await fetch(`${base}/api/coverage`, { cache: "no-store", signal });
+  if (!res.ok) throw new Error(`API HTTP ${res.status}`);
+  return (await res.json()) as CoverageResponse;
 }
 
 export type WaitlistPayload = {

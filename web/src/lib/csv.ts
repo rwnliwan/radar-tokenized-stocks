@@ -21,6 +21,7 @@ export function buildCsv(rows: TickerRow[]): string {
     "pools_excluded",
     "redemption_status",
     "por_age_hours",
+    "exit_score",
     "status",
     "change_1h_bps",
   ];
@@ -38,6 +39,7 @@ export function buildCsv(rows: TickerRow[]): string {
         cell(r.pools_excluded),
         cell(r.redemption_status),
         cell(r.por_age_hours),
+        cell(r.exit_score),
         cell(r.status),
         cell(r.change_1h_bps),
       ].join(","),
