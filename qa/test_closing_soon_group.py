@@ -1,8 +1,10 @@
-"""Grouped redemption_closing_soon sends (Septian, 13 Nov 2026, opsi 1).
+"""Grouped redemption_closing_soon sends (Septian, 13 Nov 2026, opsi 1)
++ grouped 'redemption' (closed/gated) sends (Septian 👍 same day).
 
 13 xStocks tickers share one redemption window, so the advance alert
 fired as 13 separate messages per channel (26 messages on 13 Nov
-13:01 WITA). Now they go out as ONE summary message per channel:
+13:01 WITA) — and the closed-window alert would do the same when the
+window closes. Now both go out as ONE summary message per channel:
 header + close time + tickers comma-separated + the schedule-derived
 note. Readable, not a wall of text.
 
@@ -100,6 +102,69 @@ check("earliest close wins when times differ",
 no_close = [dict(closing_alert("TSLAx"), next_close_at=None)]
 check("missing close falls back to 'within 24h', never fabricated",
       "within 24h" in bot.format_grouped_closing_soon(no_close, "en"))
+
+# ---------------- (A2) format_grouped_redemption ----------------
+NEXT_OPEN = "2026-11-16T13:00:00Z"
+
+
+def closed_alert(ticker, status="closed", nxt=NEXT_OPEN, issuer="xStocks"):
+    return {"type": "redemption", "ticker": ticker, "issuer": issuer,
+            "status": status, "next_open_at": nxt, "closes_within_24h": False,
+            "dw": 400.0, "depth": 1000000.0, "pools_used": 2}
+
+
+c13 = [closed_alert(t) for t in TICKERS_13]
+cen = bot.format_grouped_redemption(c13, "en")
+check("closed EN header counts 13 tickers",
+      "REDEMPTION CLOSED — xStocks (13 tickers)" in cen, cen.split("\n")[0])
+check("closed EN shows status + next opening",
+      "Status: closed" in cen and "16 Nov 2026" in cen and "21:00" in cen)
+check("closed EN lists all 13 tickers, no per-ticker prices",
+      all(t in cen for t in TICKERS_13) and "depth-weighted" not in cen)
+check("closed EN footer: site link + disclaimer",
+      "https://radar.omdanny.site" in cen and "Not financial advice" in cen)
+check("closed EN short: under 12 lines", len(cen.split("\n")) <= 12,
+      f"{len(cen.splitlines())} lines")
+cid = bot.format_grouped_redemption(c13, "id")
+check("closed ID header + status + opening",
+      "REDEMPTION TUTUP — xStocks (13 ticker)" in cid and
+      "Status: tutup" in cid and "Pembukaan berikutnya:" in cid and
+      "16 Nov 2026" in cid)
+check("closed ID lists tickers, no per-ticker prices",
+      "Ticker: AAPLx" in cid and "tertimbang kedalaman" not in cid)
+gated_en = bot.format_grouped_redemption([closed_alert("TSLAx", "gated")], "en")
+check("gated status renders 'gated' in EN", "Status: gated" in gated_en)
+gated_id = bot.format_grouped_redemption([closed_alert("TSLAx", "gated")], "id")
+check("gated status renders 'terbatas (KYC)' in ID",
+      "Status: terbatas (KYC)" in gated_id)
+try:
+    bot.format_grouped_redemption([], "en")
+    check("closed empty batch raises ValueError", False, "no raise")
+except ValueError:
+    check("closed empty batch raises ValueError", True)
+mixed_open = [closed_alert("AAPLx", nxt="2026-11-16T13:00:00Z"),
+              closed_alert("TSLAx", nxt="2026-11-16T11:00:00Z")]
+early_open = bot.format_grouped_redemption(mixed_open, "en")
+check("closed earliest opening wins when times differ",
+      "19:00" in early_open and "21:00" not in early_open,
+      "11:00Z -> 19:00 WITA, later 13:00Z -> 21:00 WITA must not appear")
+no_open = [dict(closed_alert("TSLAx"), next_open_at=None)]
+no_open_txt = bot.format_grouped_redemption(no_open, "en")
+check("closed missing opening shows '—', never a fabricated time",
+      "Next opening: —" in no_open_txt and "2026" not in no_open_txt)
+
+# ---------------- (B2) partition_redemption ----------------
+groups, rest2 = bot.partition_redemption(
+    [closed_alert("AAPLx"), closed_alert("TSLAx", "gated"),
+     closing_alert("SPYx"), closed_alert("COINx"),
+     {"type": "redemption", "ticker": "FOOx", "issuer": "bStocks",
+      "status": "closed", "next_open_at": NEXT_OPEN}])
+check("partition_redemption splits by (issuer, status)",
+      len(groups) == 3 and
+      sorted(len(g) for g in groups) == [1, 1, 2] and
+      rest2 == [closing_alert("SPYx")])
+check("partition_redemption of empty list is empty",
+      bot.partition_redemption([]) == ([], []))
 
 # ---------------- (B) partition ----------------
 perp = {"type": "perp_deviation", "ticker": "COINx"}
@@ -232,6 +297,41 @@ try:
     check("record failure still counts the send, warns",
           n == 2 and "NOT recorded" in f.getvalue())
     bot.record_alert_safe = fake_record
+
+    # ---------------- (C2) send_redemption_group ----------------
+    # 13 closed alerts -> 1 send per channel, 26 rows, one shared ts
+    sends.clear()
+    records.clear()
+    f = io.StringIO()
+    with redirect_stdout(f):
+        n = bot.send_redemption_group(c13, CHANNELS, None, datetime.now(UTC))
+    check("closed 13 alerts -> 2 channel sends (not 26)",
+          n == 2 and len(sends) == 2, f"sent={n} sends={len(sends)}")
+    check("closed one grouped text per channel, tickers listed",
+          all(all(t in txt for t in TICKERS_13) for _, txt in sends))
+    check("closed 26 record rows, one shared alert_ts",
+          len(records) == 26 and len({r[2] for r in records}) == 1,
+          f"rows={len(records)}")
+    check("closed recorded text is the grouped EN text",
+          all(r[1] == bot.format_grouped_redemption(c13, "en") for r in records))
+
+    # window-dedup suppression ("same window") excludes per-channel too
+    suppressed.add(("TSLAx", "en:-1003867845895"))
+    sends.clear()
+    records.clear()
+    f = io.StringIO()
+    with redirect_stdout(f):
+        n = bot.send_redemption_group(c13, CHANNELS, None, datetime.now(UTC))
+    en_txt = [t for c, t in sends if c == -1003867845895][0]
+    check("closed window-dedup per-channel: EN drops TSLAx",
+          "TSLAx" not in en_txt and "(12 tickers)" in en_txt and
+          len([r for r in records if r[3].startswith("en:")]) == 12)
+    suppressed.clear()
+    sends.clear()
+    records.clear()
+    check("closed empty batch sends nothing",
+          bot.send_redemption_group([], CHANNELS, None, datetime.now(UTC)) == 0
+          and not sends and not records)
 finally:
     bot.send_message, bot.record_alert_safe = orig_send, orig_record
     bot.suppression_reason, bot.data_still_fresh = orig_suppr, orig_fresh
