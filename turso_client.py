@@ -69,6 +69,12 @@ def pipeline(stmts):
 
     Raises RuntimeError if the HTTP call fails or any statement errors.
     The token value is never included in any exception message.
+
+    Transport: the JSON body goes via curl stdin ("-d", "@-"), NOT as an
+    argv value — a full cycle/seed batch is ~143 KB, past Linux
+    MAX_ARG_STRLEN (128 KiB); passing it as "-d", body died with
+    E2BIG ("Argument list too long") and the poller cycle 01:56Z
+    13 Nov 2026 failed on its final pipeline (fixed here, 13 Nov 2026).
     """
     requests = []
     for sql, args in stmts:
@@ -84,9 +90,9 @@ def pipeline(stmts):
             "-X", "POST", URL,
             "-H", "Authorization: Bearer " + _token(),
             "-H", "Content-Type: application/json",
-            "-d", body,
+            "-d", "@-",
         ],
-        capture_output=True, text=True,
+        input=body, capture_output=True, text=True,
     )
     out = r.stdout
     http = None
