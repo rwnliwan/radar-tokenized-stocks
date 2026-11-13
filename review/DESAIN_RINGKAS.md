@@ -82,6 +82,21 @@ median |funding|/jam = 0,00125%, hanya 2/235 ≥ 0,0125%. Ambang lag
 oracle DICABUT pada revisi yang sama (S4): tidak ada timestamp oracle
 di endpoint publik, jadi lag tidak terukur.
 
+**Tampilan (opsi B, 13 Nov 2026 — display saja, definisi tidak berubah):**
+beranda + halaman ticker menampilkan skor parsial dengan jumlah
+komponennya (n/5) + badge "Skor parsial"; band TIDAK ditampilkan untuk
+skor parsial (aturan M5). Bila jumlah tersimpan cocok dengan komponen
+yang bisa disimpulkan dari baris `/api/latest` (self-check), tooltip
+badge menyebut komponen yang hilang + alasannya: "tanpa pasar perp"
+(ticker tidak punya pasar perp Hyperliquid XYZ — struktural, 34 ticker),
+"feed perp basi" (snapshot ada tapi > 15 menit), "riwayat perp <24 jam"
+(OI butuh snapshot ≥ 24 jam; feed mulai 12 Nov 2026 13:32 UTC, jadi OI
+tidak bisa ada sebelum 13 Nov 13:32 UTC), "status redemption tidak
+diterbitkan issuer" (hanya xStocks yang menerbitkan status; issuer lain
+"unknown" permanen). Bila jumlah tersimpan ≠ jumlah yang disimpulkan
+(mis. AMZNr: tersimpan 1, disimpulkan 2 — median depth 7 hari belum
+ada), hanya jumlah tersimpan yang ditampilkan, tanpa nama komponen.
+
 ### 2.5 F4 — Liquidation Guard
 Lihat §1 F4 di atas. Guard TIDAK tahu posisi pengguna — ia memonitor
 kondisi pasar/oracle, bukan akun siapa pun (ditulis di web).

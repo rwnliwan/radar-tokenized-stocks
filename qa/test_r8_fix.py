@@ -267,6 +267,8 @@ def main():
         if "FROM pools p JOIN snapshots" in sql:
             return [{"dex": "raydium", "price_usd": 100.0, "reserve_usd": 200000.0},
                     {"dex": "orca", "price_usd": 110.0, "reserve_usd": 200000.0}]
+        if "FROM perp_snapshots" in sql:
+            return []  # F1/F3 build 2026-11-13: no perp rows in this stub
         raise AssertionError(f"unexpected SQL: {sql[:80]}")
 
     orig_query = bot.db_query
@@ -301,6 +303,8 @@ def main():
                          "last_update_ts": _ts(120, now, future=True)}]
             if "FROM pools p JOIN snapshots" in sql:
                 return [{"dex": "raydium", "price_usd": 100.0, "reserve_usd": 200000.0}]
+            if "FROM perp_snapshots" in sql:
+                return []  # F1/F3 build 2026-11-13: no perp rows in this stub
             raise AssertionError(f"unexpected SQL: {sql[:80]}")
 
         bot.db_query = fake_query_por_future
@@ -530,6 +534,8 @@ def main():
         if "FROM pools p JOIN snapshots" in sql:
             return [{"dex": "raydium", "price_usd": 100.0, "reserve_usd": 200000.0},
                     {"dex": "orca", "price_usd": 110.0, "reserve_usd": 200000.0}]
+        if "FROM perp_snapshots" in sql:
+            return []  # F1/F3 build 2026-11-13: no perp rows in this stub
         raise AssertionError(f"unexpected SQL: {sql[:80]}")
 
     try:

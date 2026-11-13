@@ -244,6 +244,8 @@ def main():
         if "JOIN snapshots" in sql:
             return [{"dex": "raydium", "price_usd": 500.10,
                      "reserve_usd": 3000000.0}]
+        if "FROM perp_snapshots" in sql:
+            return []  # F1/F3 build 2026-11-13: no perp rows in this stub
         raise AssertionError(f"unexpected SQL in stub: {sql[:80]}")
 
     orig_db = bot.db_query

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Header from "./Header";
 import { DevBar, Sparkline, StatusBlip } from "./BlipBar";
 import { fetchCoverage, fetchHealth, fetchLatest, type CoverageResponse, type HealthResponse, type LatestResponse, type TickerRow } from "../lib/api";
+import { inferExitScoreComponents } from "../lib/exitScore";
 import { buildCsv } from "../lib/csv";
 import {
   fmtAge,
@@ -709,6 +710,24 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
                     r.dev_bps != null ? Math.min(Math.abs(r.dev_bps) / 100, 0.5) : 0;
                   const tint =
                     r.dev_bps != null ? { background: `rgba(224,123,74,${alpha.toFixed(2)})` } : {};
+                  // Opsi B (2026-11-13): infer which Exit Score components
+                  // were present, self-checked against the stored count.
+                  // Missing names are shown ONLY when verified; on any
+                  // mismatch (or null stored count) the badge shows the
+                  // stored count alone — never an invented name. No band
+                  // is ever shown on the homepage (aturan M5).
+                  const exit =
+                    r.exit_score != null ? inferExitScoreComponents(r) : null;
+                  const exitPartial = exit != null && (exit.stored == null || exit.stored < 5);
+                  const exitMissingTitle =
+                    exit != null && exit.verified && exit.missing.length > 0
+                      ? `${t(lang, "exit_score_missing_title")} ${exit.missing
+                          .map(
+                            (m) =>
+                              `${t(lang, "exit_score_comp_" + m.id)} — ${t(lang, "exit_score_missing_" + m.reason)}`,
+                          )
+                          .join("; ")}`
+                      : undefined;
                   return (
                     <tr key={r.ticker}>
                       <td className="tk">
@@ -754,7 +773,23 @@ export default function HomeClient({ initialData }: { initialData: LatestRespons
                           : t(lang, "por_not_published")}
                       </td>
                       <td className="num hide-s">
-                        {r.exit_score != null ? r.exit_score.toFixed(1) : "—"}
+                        {r.exit_score != null && exit != null ? (
+                          <>
+                            <div>
+                              {r.exit_score.toFixed(1)}
+                              {exit.stored != null ? ` (${exit.stored}/5)` : ""}
+                            </div>
+                            {exitPartial && (
+                              <span className="pill partial" title={exitMissingTitle}>
+                                {exit.stored != null
+                                  ? t(lang, "exit_score_partial", { n: exit.stored })
+                                  : t(lang, "exit_score_partial_nocount")}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td title={r.status === "na" ? t(lang, "dash_no_median") : undefined}>
                         <span className={`pill ${r.status}`}>

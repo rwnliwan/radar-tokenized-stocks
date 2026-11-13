@@ -29,6 +29,17 @@ notes below):
   once-per-window rule — no window exists yet), and never suppresses
   the later closed-window alert (different alert type).
 - PoR: latest feed age > 72h (or last update older than 72h).
+- F1 perp_deviation (built 2026-11-13, DESAIN §2.2): |perp_px - dw| / dw
+  >= 1.0% (high priority >= 3.0%), spot depth >= $250k, perp snapshot
+  fresh (<= 15 min). Perp trades 24/7, so this fires any time, not
+  only when the market is open. The deviation is computed live from
+  perp_snapshots.perp_px and the deviations dw — the same formula as
+  api/worker.js perp_dev_pct. No stored perp-deviation column exists.
+- F3 exit_high (built 2026-11-13, DESAIN §2.4): deviations.exit_score
+  (0-100 scale, exit_score_v2) >= 70, 1x/ticker/24h. M5 rule: fires
+  only when exit_score_components >= 3 — a partial score never fires
+  'high' (live proof: TSLAB 82.0 on 1 component, 2026-11-13).
+  Factual language only, never 'sell'/'exit now'.
 - Stale data gate (design §7.1): when the last successful poller
   cycle is older than 30 minutes, NO new alerts are sent. The admin
   "poller troubled" alert goes to the configured admin destination
@@ -347,6 +358,19 @@ def parse_ts(iso):
 TICKER_PAGE_BASE = "https://radar.omdanny.site"
 SPREAD_THRESHOLD = 1.0
 DEV_HIGH_THRESHOLD = 3.0
+# F1 (perp 3-leg, DESAIN §2.2, built 2026-11-13): alert at |dev| >= 1.0%,
+# high priority at >= 3.0%.
+PERP_DEV_THRESHOLD = 1.0
+PERP_DEV_HIGH_THRESHOLD = 3.0
+# F1 perp-snapshot freshness gate (<= 15 min). Same 15-min bound as
+# TICKER_STALE_MINUTES / the Worker, but a different gate: this is the
+# age of the perp snapshot itself, not of the deviations row.
+PERP_FRESH_MINUTES = 15.0
+# F3 (exit_high, DESAIN §2.4, built 2026-11-13): alert at score >= 70
+# on the 0-100 scale. M5 rule: the band — and the alert — only exist
+# when >= 3 of the 5 components were present.
+EXIT_HIGH_THRESHOLD = 70.0
+EXIT_SCORE_MIN_COMPONENTS = 3
 PRICE_GUARD_MAX_DEV = 0.25  # poller price-sanity guard: drop prices >25% from median
 
 
@@ -401,6 +425,10 @@ def evaluate_alerts(tickers_data, market_open):
     ticker, issuer, venues [{dex, price, reserve}], dw, dev_med, depth,
     pools_used, median, redemption_status, redemption_note, next_open_at,
     por_age_hours, por_last_update.
+    F1 keys (optional): perp_px, perp_px_source, perp_ts, perp_age_min,
+    perp_fresh (computed by load_live_tickers).
+    F3 keys (optional): exit_score, exit_score_components,
+    exit_score_version (from the deviations row).
     Returns list of alert dicts (no I/O, no sends).
     Redemption alerts are PER-TICKER (un-batched 2026-10-25): one
     alert per ticker with status closed/gated (type 'redemption')
@@ -448,6 +476,54 @@ def evaluate_alerts(tickers_data, market_open):
             alerts.append({
                 "type": "deviation_high", "ticker": d["ticker"],
                 "issuer": d.get("issuer"), "dev_pct": round(dev, 3),
+                "dw": d.get("dw"), "median": d.get("median"),
+                "depth": depth, "pools_used": d.get("pools_used"),
+            })
+        # F1 (perp 3-leg, DESAIN §2.2, built 2026-11-13):
+        # dev_perp_vs_token_pct = (perp_px - dw) / dw * 100 — the same
+        # formula as api/worker.js perp_dev_pct. Alert at |dev| >= 1.0%,
+        # high priority at >= 3.0%. Gates: spot qualifying depth >= $250k,
+        # perp snapshot fresh (<= 15 min, precomputed as perp_fresh by
+        # load_live_tickers), and the dev row itself fresh (dev_stale
+        # suppresses — the dw the deviation is measured against would be
+        # hours-old otherwise). No market-open condition: perp trades
+        # 24/7, and the weekend is exactly when perp-vs-tokenized
+        # divergence matters. No pool-count gate: DESAIN §2.2 states
+        # only depth + freshness for F1 (the >= 2-pool rule is for the
+        # inter-venue spread alert). Dedup: standard 24h per
+        # (ticker, type, channel) via suppression_reason.
+        perp_px = d.get("perp_px")
+        if (not dev_stale and perp_px is not None and d.get("perp_fresh")
+                and d.get("dw") and depth is not None and depth >= DEPTH_MIN):
+            perp_dev = (perp_px - d["dw"]) / d["dw"] * 100.0
+            if abs(perp_dev) >= PERP_DEV_THRESHOLD:
+                alerts.append({
+                    "type": "perp_deviation", "ticker": d["ticker"],
+                    "issuer": d.get("issuer"), "dev_pct": round(perp_dev, 3),
+                    "high_priority": abs(perp_dev) >= PERP_DEV_HIGH_THRESHOLD,
+                    "perp_px": perp_px, "perp_px_source": d.get("perp_px_source"),
+                    "perp_age_min": d.get("perp_age_min"),
+                    "dw": d.get("dw"), "median": d.get("median"),
+                    "depth": depth, "pools_used": d.get("pools_used"),
+                })
+        # F3 (exit_high, DESAIN §2.4, built 2026-11-13): exit_score on
+        # the 0-100 scale >= 70, 1x/ticker/24h (standard dedup, same as
+        # the other non-redemption types). M5 rule: the band — and the
+        # alert — only exist when >= 3 of the 5 components were present;
+        # a partial score never fires "high". Live proof 2026-11-13:
+        # TSLAB scored 82.0 on 1 component and must NOT alert. dev_stale
+        # suppresses: the score rides the dev row, so a stale row's
+        # score is hours-old evidence.
+        score = d.get("exit_score")
+        ncomp = d.get("exit_score_components")
+        if (not dev_stale and score is not None and ncomp is not None
+                and ncomp >= EXIT_SCORE_MIN_COMPONENTS
+                and score >= EXIT_HIGH_THRESHOLD):
+            alerts.append({
+                "type": "exit_high", "ticker": d["ticker"],
+                "issuer": d.get("issuer"), "score": round(float(score), 1),
+                "components": ncomp, "version": d.get("exit_score_version"),
+                "dev_pct": d.get("dev_med"),
                 "dw": d.get("dw"), "median": d.get("median"),
                 "depth": depth, "pools_used": d.get("pools_used"),
             })
@@ -558,6 +634,25 @@ BOT_STR = {
                     "Depth-weighted price: {dw_s} · "
                     "Qualifying depth: {depth_s} across {n_s} pools\n"
                     "Reserves freshness for this issuer is not confirmed."),
+        "perp_head": "🟠 PERP DEVIATION — {ticker} ({issuer})",
+        "perp_head_high": "🔴 PERP DEVIATION — HIGH PRIORITY — {ticker} ({issuer})",
+        "perp_body": ("Perp price (Hyperliquid XYZ, {source}): {perp_s} · "
+                      "Depth-weighted tokenized price: {dw_s}\n"
+                      "Deviation perp vs tokenized: {dev:+.2f}% "
+                      "(threshold {thr:.1f}%){high_note}\n"
+                      "Qualifying depth: {depth_s} across {n_s} pools · "
+                      "Perp snapshot age: {age} (fresh ≤ 15 min)\n"
+                      "Note: perp is market data from Hyperliquid XYZ, "
+                      "not a trading venue — no order or position."),
+        "perp_high_note": " — high priority (≥ 3.0%)",
+        "exit_head": "🟠 EXIT SCORE HIGH — {ticker} ({issuer})",
+        "exit_body": ("Exit Score: {score:.1f} (band high 70–100; "
+                      "{n} of 5 components; {ver})\n"
+                      "Depth-weighted price: {dw_s} · "
+                      "Deviation vs median: {dev} · "
+                      "Qualifying depth: {depth_s} across {n_s} pools\n"
+                      "Note: factual reading only — a high score "
+                      "describes current conditions."),
         "disclaimer": "Not financial advice. Prices are market data, not recommendations.",
     },
     "id": {
@@ -610,6 +705,25 @@ BOT_STR = {
                     "Harga tertimbang kedalaman: {dw_s} · "
                     "Kedalaman lolos: {depth_s} di {n_s} pool\n"
                     "Kesegaran cadangan issuer ini tidak terkonfirmasi."),
+        "perp_head": "🟠 DEVIASI PERP — {ticker} ({issuer})",
+        "perp_head_high": "🔴 DEVIASI PERP — PRIORITAS TINGGI — {ticker} ({issuer})",
+        "perp_body": ("Harga perp (Hyperliquid XYZ, {source}): {perp_s} · "
+                      "Harga tokenized tertimbang kedalaman: {dw_s}\n"
+                      "Deviasi perp vs tokenized: {dev:+.2f}% "
+                      "(ambang {thr:.1f}%){high_note}\n"
+                      "Kedalaman lolos: {depth_s} di {n_s} pool · "
+                      "Umur snapshot perp: {age} (segar ≤ 15 mnt)\n"
+                      "Catatan: perp adalah data pasar dari Hyperliquid XYZ, "
+                      "bukan tempat trading — tidak ada order atau posisi."),
+        "perp_high_note": " — prioritas tinggi (≥ 3,0%)",
+        "exit_head": "🟠 SKOR EXIT TINGGI — {ticker} ({issuer})",
+        "exit_body": ("Skor Exit: {score:.1f} (band tinggi 70–100; "
+                      "{n} dari 5 komponen; {ver})\n"
+                      "Harga tertimbang kedalaman: {dw_s} · "
+                      "Deviasi vs median: {dev} · "
+                      "Kedalaman lolos: {depth_s} di {n_s} pool\n"
+                      "Catatan: hanya pembacaan faktual — skor tinggi "
+                      "menggambarkan kondisi saat ini."),
         "disclaimer": "Bukan nasihat keuangan. Harga adalah data pasar, bukan rekomendasi.",
     },
 }
@@ -632,6 +746,18 @@ def _usd0(x):
 
 def _count(x):
     return str(x) if x is not None else "—"
+
+
+def _signed_pct(x):
+    """'+1.23%' for a deviation, '—' when missing (same missing-renders-
+    as-— rule as _usd). Used where the value may legitimately be None
+    (F3 exit_high carries dev_med only when the dev row has one)."""
+    return f"{float(x):+.2f}%" if x is not None else "—"
+
+
+def _perp_age_txt(age_min):
+    """'4.0 min' for a perp snapshot age, '—' when unknown."""
+    return f"{float(age_min):.1f} min" if age_min is not None else "—"
 
 
 # --- WITA rendering for next-opening (alert format, ACC 25 Okt 2026) ---
@@ -708,6 +834,26 @@ def format_alert(alert, lang="en"):
             close=close, note=s["red_batch_note"],
             dw_s=_usd(alert.get("dw")), depth_s=_usd0(alert.get("depth")),
             n_s=_count(alert.get("pools_used")))
+    elif alert["type"] == "perp_deviation":
+        high = bool(alert.get("high_priority"))
+        head = (s["perp_head_high"] if high else s["perp_head"]).format(
+            ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
+        body = s["perp_body"].format(
+            source=alert.get("perp_px_source") or "—",
+            perp_s=_usd(alert.get("perp_px")),
+            dw_s=_usd(alert.get("dw")), dev=alert["dev_pct"],
+            thr=PERP_DEV_THRESHOLD,
+            high_note=s["perp_high_note"] if high else "",
+            depth_s=_usd0(alert.get("depth")), n_s=_count(alert.get("pools_used")),
+            age=_perp_age_txt(alert.get("perp_age_min")))
+    elif alert["type"] == "exit_high":
+        head = s["exit_head"].format(
+            ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
+        body = s["exit_body"].format(
+            score=alert["score"], n=_count(alert.get("components")),
+            ver=alert.get("version") or "—",
+            dw_s=_usd(alert.get("dw")), dev=_signed_pct(alert.get("dev_pct")),
+            depth_s=_usd0(alert.get("depth")), n_s=_count(alert.get("pools_used")))
     elif alert["type"] == "por":
         head = s["por_head"].format(ticker=alert["ticker"], issuer=alert.get("issuer") or "—")
         body = s["por_body"].format(
@@ -820,11 +966,24 @@ def load_live_tickers(red_rows_by_issuer=None, now_utc=None):
     # survives inside the window. Revisit if the universe grows a lot.
     rows = db_query(
         "SELECT ticker_id, ts, depth_weighted_price, dev_vs_median_pct, "
-        "qualifying_depth_usd, pools_used FROM deviations "
+        "qualifying_depth_usd, pools_used, exit_score, exit_score_version, "
+        "exit_score_components FROM deviations "
         "ORDER BY ts DESC, id DESC LIMIT 500")
     for r in rows:
         if r["ticker_id"] not in latest:
             latest[r["ticker_id"]] = r
+    # F1 (perp 3-leg, built 2026-11-13): latest perp snapshot per ticker,
+    # one query (same newest-per-ticker pattern as the deviations rows
+    # above). The poller writes one perp_snapshots row per ticker per
+    # cycle under the same cycle_ts, so the freshest row is the current
+    # cycle's; age is checked per ticker below (perp_fresh).
+    perp_latest = {}
+    prows = db_query(
+        "SELECT ticker_id, ts, perp_px, perp_px_source FROM perp_snapshots "
+        "ORDER BY ts DESC LIMIT 200")
+    for r in prows:
+        if r["ticker_id"] not in perp_latest:
+            perp_latest[r["ticker_id"]] = r
     # Snapshot the program-wide rows ONCE before the per-ticker loop.
     # Querying them inside the loop lets a status flip mid-load split
     # one batch: proven 2026-10-25, the first hourly redemption row
@@ -953,6 +1112,39 @@ def load_live_tickers(red_rows_by_issuer=None, now_utc=None):
                 dev_age_min = (datetime.now(UTC) - parsed).total_seconds() / 60.0
         dev_stale = (dev_ts is None or dev_age_min is None
                      or dev_age_min < 0 or dev_age_min > TICKER_STALE_MINUTES)
+        # F1: perp snapshot freshness (DESAIN §2.2 gate, <= 15 min).
+        # Uses the injectable `now` (not datetime.now) so tests can stub
+        # it; a future-dated snapshot is not fresh (GG-15 pattern, same
+        # as dev_stale above). perp_px None (ticker has no perp) is
+        # never fresh — it simply has no perp leg, not a stale one.
+        _perp = perp_latest.get(tid) or {}
+        _perp_ts = _perp.get("ts")
+        _perp_age = None
+        if _perp_ts:
+            _pp = parse_ts(_perp_ts)
+            if _pp is not None:
+                _perp_age = (now - _pp).total_seconds() / 60.0
+        perp_fresh = (_perp.get("perp_px") is not None and _perp_age is not None
+                      and 0 <= _perp_age <= PERP_FRESH_MINUTES)
+        # F3: coerce the exit-score fields to numbers. Turso's hrana
+        # protocol returns INTEGER columns as STRINGS (REAL columns come
+        # back as floats) — the live DB returns exit_score_components
+        # as "4", and a bare `>= 3` comparison on it raises TypeError
+        # (proven by --evaluate-live 2026-11-13). Same int() pattern as
+        # load_health_age_minutes' cycles_ok. Unparseable -> None (the
+        # alert simply does not fire, never a crash).
+        _exit_score = d.get("exit_score")
+        try:
+            _exit_score = (float(_exit_score)
+                           if _exit_score is not None else None)
+        except (TypeError, ValueError):
+            _exit_score = None
+        _exit_ncomp = d.get("exit_score_components")
+        try:
+            _exit_ncomp = (int(_exit_ncomp)
+                           if _exit_ncomp is not None else None)
+        except (TypeError, ValueError):
+            _exit_ncomp = None
         out.append({
             "ticker": tid, "issuer": u["issuer"], "venues": venues,
             "dw": d.get("depth_weighted_price"),
@@ -961,6 +1153,13 @@ def load_live_tickers(red_rows_by_issuer=None, now_utc=None):
             "pools_used": d.get("pools_used"), "median": median,
             "dev_ts": dev_ts, "dev_age_min": dev_age_min,
             "dev_stale": dev_stale,
+            "perp_px": _perp.get("perp_px"),
+            "perp_px_source": _perp.get("perp_px_source"),
+            "perp_ts": _perp_ts, "perp_age_min": _perp_age,
+            "perp_fresh": perp_fresh,
+            "exit_score": _exit_score,
+            "exit_score_components": _exit_ncomp,
+            "exit_score_version": d.get("exit_score_version"),
             "redemption_status": red["status"] if red else None,
             "redemption_note": red["window_note"] if red else None,
             "next_open_at": red["next_open_at"] if red else None,
@@ -1410,15 +1609,22 @@ def record_alert(alert, message_text, alert_ts, channel=None):
     pass a channel); such rows count as suppressing every channel
     (see recent_alert_exists) until the migration backfills nothing —
     new live sends always pass their channel."""
+    # Observed value at alert time, in both columns (the existing
+    # convention: threshold_pct/dev_at_alert_pct carry the observed
+    # value, not the threshold constant — the F5 accuracy audit reads
+    # dev_at_alert_pct). F1 perp_deviation records dev_pct; F3
+    # exit_high records the score (0-100 scale).
+    _obs = (alert.get("spread_pct") if alert["type"] == "spread"
+            else alert.get("dev_pct") if alert["type"] in (
+                "deviation_high", "perp_deviation")
+            else alert.get("score") if alert["type"] == "exit_high"
+            else None)
     db_execute(
         "INSERT INTO alert_log (ticker_id, alert_ts, alert_type, threshold_pct, "
         "dev_at_alert_pct, depth_at_alert_usd, message_text, outcome, "
         "outcome_ts, closed_below_threshold_ts, channel) VALUES (?,?,?,?,?,?,?,'pending',NULL,NULL,?)",
         [alert["ticker"], alert_ts, alert["type"],
-         alert.get("spread_pct") if alert["type"] == "spread"
-         else alert.get("dev_pct") if alert["type"] == "deviation_high" else None,
-         alert.get("spread_pct") if alert["type"] == "spread"
-         else alert.get("dev_pct") if alert["type"] == "deviation_high" else None,
+         _obs, _obs,
          alert.get("depth"), message_text, channel],
     )
 
@@ -1587,11 +1793,36 @@ def dry_run_scenarios():
         "redemption_status": "open", "por_age_hours": 96.0,
         "por_last_update": "2026-10-20T11:00:00Z",
     }
+    # F1 (built 2026-11-13): perp +1.80% vs tokenized, fresh snapshot,
+    # market closed (perp trades 24/7, so this fires any time).
+    perp_data = {
+        "ticker": "TSLAx", "issuer": "xStocks",
+        "venues": [{"dex": "raydium", "price": 400.10, "reserve": 3000000.0}],
+        "dw": 400.16, "dev_med": 0.10, "depth": 3000000.0,
+        "pools_used": 2, "median": 400.13,
+        "redemption_status": "open", "por_age_hours": 6.0,
+        "perp_px": 407.36, "perp_px_source": "mark",
+        "perp_ts": "2026-11-13T02:20:00Z", "perp_age_min": 4.0,
+        "perp_fresh": True,
+    }
+    # F3 (built 2026-11-13): Exit Score 74.5 on 4/5 components — full
+    # enough to band (and alert) as high.
+    exit_data = {
+        "ticker": "CRCLx", "issuer": "xStocks",
+        "venues": [{"dex": "raydium", "price": 63.78, "reserve": 5000000.0}],
+        "dw": 63.78, "dev_med": 2.10, "depth": 4800000.0,
+        "pools_used": 3, "median": 63.80,
+        "redemption_status": "open", "por_age_hours": 6.0,
+        "exit_score": 74.5, "exit_score_components": 4,
+        "exit_score_version": "exit_score_v2",
+    }
     scenarios = [
         ("spread (market open)", [spread_data], True),
         ("redemption <=24h (synthetic)", [red_data], False),
         ("redemption closing within 24h (schedule-derived)", [closing_data], False),
         ("PoR stale >72h (synthetic)", [por_data], False),
+        ("perp deviation +1.80% (synthetic)", [perp_data], False),
+        ("exit score high 74.5, 4/5 components (synthetic)", [exit_data], False),
     ]
     for name, data, mopen in scenarios:
         alerts = evaluate_alerts(data, mopen)

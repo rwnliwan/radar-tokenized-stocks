@@ -94,6 +94,8 @@ def main():
                     {"dex": "raydium", "price_usd": 200.0, "reserve_usd": 200000.0},
                     {"dex": "orca", "price_usd": 50.0, "reserve_usd": 10000.0},
                 ]
+            if "FROM perp_snapshots" in sql:
+                return []  # F1/F3 build 2026-11-13: no perp rows in this stub
             raise AssertionError(f"unexpected SQL: {sql[:80]}")
 
         bot.db_query = fake_query
@@ -166,6 +168,8 @@ def main():
                 snap_args["args"] = args
                 snap_args["sql"] = sql
                 return [{"dex": "raydium", "price_usd": 100.0, "reserve_usd": 200000.0}]
+            if "FROM perp_snapshots" in sql:
+                return []  # F1/F3 build 2026-11-13: no perp rows in this stub
             raise AssertionError(f"unexpected SQL: {sql[:80]}")
         bot.db_query = fake_query_por
         tickers = bot.load_live_tickers()
