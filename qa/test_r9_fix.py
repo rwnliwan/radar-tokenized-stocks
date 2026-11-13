@@ -203,6 +203,8 @@ def main():
         ("api/worker.js", "js:reevaluateFreshness"): "future last_success_ts -> stale (ageMin < 0)",
         ("api/worker.js", "js:porEffectiveAge"): "future last_update ignored; stored age stands",
         ("api/worker.js", "js:healthSummary"): "future last_success_ts -> stale (ageMin < 0)",
+        ("web/src/lib/exitScore.ts", "?"): "PERP_OI_HISTORY_CUTOFF_MS: fixed feed-start instant (13 Nov 13:32 UTC); OI present only once now passes it — a constant gate, not a freshness verdict on data",
+        ("web/src/lib/exitScore.ts", "js:ms"): "parseTs: parses stored perp/dev timestamps; freshness compares the pair (abs diff <= 15 min), never against now",
         ("web/src/app/Header.tsx", "js:autoFresh"): "future autoTs -> no freshness claim (renders nothing)",
         ("web/src/app/HomeClient.tsx", "js:ageMin"): "negative age -> stale fallback (ageMin < 0)",
         ("web/src/app/HomeClient.tsx", "js:stale"): "negative age -> stale fallback (ageMin < 0)",

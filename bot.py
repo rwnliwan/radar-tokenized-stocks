@@ -628,6 +628,16 @@ BOT_STR = {
                              "Qualifying depth: {depth_s} across {n_s} pools\n"
                              "\n"
                              "{note}"),
+        # Grouped closing-soon summary (Septian, 13 Nov 2026, opsi 1):
+        # all tickers of one issuer share one window, so one message
+        # lists them comma-separated instead of one message per ticker.
+        "red_closing_group_head": "🟡 REDEMPTION CLOSING SOON — {issuer} ({count})",
+        "red_closing_group_body": ("Window closes: {close}\n"
+                                   "(within 24h — schedule-derived close time)\n"
+                                   "\n"
+                                   "Tickers: {tickers}\n"
+                                   "\n"
+                                   "{note}"),
         "por_head": "🟡 PROOF-OF-RESERVE STALE — {ticker} ({issuer})",
         "por_body": ("PoR feed age: {age:.1f} hours (threshold {thr:.0f}h) · "
                     "Last update: {upd}\n"
@@ -699,6 +709,16 @@ BOT_STR = {
                              "Kedalaman lolos: {depth_s} di {n_s} pool\n"
                              "\n"
                              "{note}"),
+        # Ringkasan grup closing-soon (Septian, 13 Nov 2026, opsi 1):
+        # semua ticker satu issuer berbagi satu jendela, jadi satu pesan
+        # mendaftar semuanya dipisah koma, bukan satu pesan per ticker.
+        "red_closing_group_head": "🟡 REDEMPTION SEGERA TUTUP — {issuer} ({count})",
+        "red_closing_group_body": ("Jendela redemption tutup: {close}\n"
+                                   "(dalam 24 jam — waktu tutup turunan jadwal)\n"
+                                   "\n"
+                                   "Ticker: {tickers}\n"
+                                   "\n"
+                                   "{note}"),
         "por_head": "🟡 PROOF-OF-RESERVE BASI — {ticker} ({issuer})",
         "por_body": ("Umur feed PoR: {age:.1f} jam (ambang {thr:.0f} jam) · "
                     "Pembaruan terakhir: {upd}\n"
@@ -1928,6 +1948,93 @@ def send_alert_channels(alert, channels, red_snapshot, now, delay_s=0):
     return sent
 
 
+def partition_closing_soon(alerts):
+    """Split evaluated alerts into (closing_soon, rest). Only
+    redemption_closing_soon is ever grouped — every other type keeps
+    its one-message-per-ticker send."""
+    closing = [a for a in alerts if a["type"] == "redemption_closing_soon"]
+    rest = [a for a in alerts if a["type"] != "redemption_closing_soon"]
+    return closing, rest
+
+
+def format_grouped_closing_soon(alerts, lang="en"):
+    """One readable summary for a batch of redemption_closing_soon alerts
+    (Septian, 13 Nov 2026, opsi 1): all tickers of one issuer share one
+    window, so 13 separate messages are a wall of text. One message per
+    channel: header + close time + tickers comma-separated on one line +
+    the schedule-derived note. No per-ticker prices — the group is about
+    the window, not the tickers' prices. The close instant is shared by
+    the whole issuer window; if it ever differs between alerts, the
+    earliest is used. Raises ValueError on an empty list (caller guards)."""
+    if not alerts:
+        raise ValueError("format_grouped_closing_soon: empty batch")
+    s = BOT_STR.get(lang, BOT_STR["en"])
+    issuer = alerts[0].get("issuer") or "—"
+    closes = [a.get("next_close_at") for a in alerts if a.get("next_close_at")]
+    raw_close = min(closes) if closes else None
+    close = fmt_next_open(raw_close or (
+        s["red_batch_within24h"] if alerts[0].get("closes_within_24h") else "—"),
+        lang)
+    tickers = ", ".join(sorted(a["ticker"] for a in alerts))
+    n = len(alerts)
+    count_txt = f"{n} ticker" if (lang == "id" or n == 1) else f"{n} tickers"
+    head = s["red_closing_group_head"].format(issuer=issuer, count=count_txt)
+    body = s["red_closing_group_body"].format(
+        close=close, tickers=tickers, note=s["red_batch_note"])
+    return f"{head}\n\n{body}\n\n{TICKER_PAGE_BASE}\n\n{s['disclaimer']}"
+
+
+def send_closing_soon_group(alerts, channels, red_snapshot, now, delay_s=0):
+    """Send a batch of redemption_closing_soon alerts as ONE message per
+    channel (Septian, 13 Nov 2026, opsi 1). Invariants preserved from
+    send_alert_channels: per-ticker 24h dedup (a ticker already sent in
+    the last 24h is excluded from that channel's batch only); one
+    alert_log row PER TICKER per channel, so the F5 audit and the dedup
+    keep working per ticker; one shared alert_ts per event (S1/S5);
+    stale gate re-checked before each channel send (S2); a failed
+    channel is not recorded, so the next pass retries that channel
+    only. Returns the number of channels sent to (same contract as
+    send_alert_channels)."""
+    if not alerts:
+        return 0
+    sent = 0
+    shared_ts = None
+    for lang, cid in channels:
+        channel_key = f"{lang}:{cid}"
+        batch = [a for a in alerts
+                 if not suppression_reason(a, red_snapshot, channel=channel_key)]
+        if not batch:
+            print(f"ALERT already sent to {lang} channel, skipping: "
+                  f"redemption_closing_soon batch ({len(alerts)} tickers)")
+            continue
+        # S2: re-check the stale gate before each channel send.
+        if not data_still_fresh():
+            print("STALE GATE (re-check): data went stale mid-alert — "
+                  "stopping remaining channel sends.")
+            break
+        try:
+            send_message(cid, format_grouped_closing_soon(batch, lang))
+            if shared_ts is None:
+                shared_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            en_text = format_grouped_closing_soon(batch, "en")
+            for a in batch:
+                recorded = record_alert_safe(a, en_text, shared_ts,
+                                             channel=channel_key)
+                if not recorded:
+                    print(f"ALERT sent but NOT recorded in alert_log "
+                          f"({lang}): redemption_closing_soon {a['ticker']} — "
+                          f"feed shows it only after fallback replay.")
+            sent += 1
+            print(f"ALERT sent ({lang}): redemption_closing_soon batch "
+                  f"({len(batch)} tickers)")
+        except Exception as e:
+            print(f"ALERT send failed ({lang}): "
+                  f"redemption_closing_soon batch: {e}")
+        if delay_s:
+            time.sleep(delay_s)
+    return sent
+
+
 # --- Single-pass lock (fix ronde 7, S3) -------------------------------
 # Two overlapping bot passes (--once overlapping --live, or two --once
 # runs from a hung cron) can both observe "no prior row" and both
@@ -2091,7 +2198,9 @@ def main():
             tickers = load_live_tickers(red_snapshot)
             channels = alert_channels()
             sent = 0
-            for a in evaluate_alerts(tickers, is_market_open(now)):
+            evaluated = evaluate_alerts(tickers, is_market_open(now))
+            closing, rest = partition_closing_soon(evaluated)
+            for a in rest:
                 if not channels:
                     print(f"ALERT (no channel configured, not sent): "
                           f"{a['type']} {a['ticker']}")
@@ -2105,6 +2214,18 @@ def main():
                     break
                 if send_alert_channels(a, channels, red_snapshot, now,
                                        delay_s=SEND_DELAY_S):
+                    sent += 1
+            if closing:
+                # Opsi 1 (Septian, 13 Nov 2026): one summary message per
+                # channel instead of one message per ticker.
+                if not channels:
+                    print(f"ALERT (no channel configured, not sent): "
+                          f"redemption_closing_soon batch ({len(closing)} tickers)")
+                elif not data_still_fresh():
+                    print("STALE GATE (re-check): data went stale "
+                          "mid-pass — stopping sends.")
+                elif send_closing_soon_group(closing, channels, red_snapshot,
+                                             now, delay_s=SEND_DELAY_S):
                     sent += 1
             print(f"once done: alerts sent: {sent}")
         except Exception as e:
@@ -2162,7 +2283,9 @@ def main():
                         red_snapshot = snapshot_redemption_rows()
                         tickers = load_live_tickers(red_snapshot)
                         channels = alert_channels()
-                        for a in evaluate_alerts(tickers, is_market_open(now)):
+                        evaluated = evaluate_alerts(tickers, is_market_open(now))
+                        closing, rest = partition_closing_soon(evaluated)
+                        for a in rest:
                             if not channels:
                                 # No alert channel configured yet: log only.
                                 # Nothing is recorded in alert_log for an
@@ -2178,6 +2301,19 @@ def main():
                                 break
                             send_alert_channels(a, channels, red_snapshot,
                                                 now)
+                        if closing:
+                            # Opsi 1 (Septian, 13 Nov 2026): one summary
+                            # message per channel instead of one message
+                            # per ticker.
+                            if not channels:
+                                print(f"ALERT (no channel configured, not sent): "
+                                      f"redemption_closing_soon batch ({len(closing)} tickers)")
+                            elif not data_still_fresh():
+                                print("STALE GATE (re-check): data went "
+                                      "stale mid-pass — stopping sends.")
+                            else:
+                                send_closing_soon_group(closing, channels,
+                                                        red_snapshot, now)
                 except Exception as e:
                     print(f"evaluation error: {type(e).__name__}: {e}")
                 finally:
