@@ -43,6 +43,17 @@ function tickerFreshness(devTs) {
   };
 }
 
+// Turso returns INTEGER columns as strings over the Hrana HTTP API.
+// Coerce to a real number (or null) so API consumers never repeat the
+// bot.py INTEGER-as-string bug (Instinct review 13 Nov 2026: the API
+// itself sent exit_score_components as "2", pools_used as "6", tier as
+// "1"). Unparseable/missing -> null, never a fabricated number.
+function intOrNull(v) {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
 // Re-evaluate freshness of an already-built /api/latest payload at
 // serve time (fix ronde 7, S1): a 60 s edge-cache HIT used to return
 // the previously computed meta.fresh/meta.stale verbatim, so a
@@ -429,7 +440,7 @@ async function loadLatest(env) {
         : null;
     return {
       ticker: u.ticker_id,
-      tier: u.tier,
+      tier: intOrNull(u.tier),
       issuer: u.issuer,
       dw_price: dw,
       dev_pct: dev,
@@ -441,8 +452,8 @@ async function loadLatest(env) {
       best_dex: best ? best.dex : null,
       spread_pct: crossVenueSpread(venuesByTicker[u.ticker_id] || [], dw),
       depth_usd: d.qualifying_depth_usd ?? null,
-      pools_used: d.pools_used ?? null,
-      pools_excluded: hasExcluded ? (d.pools_excluded ?? null) : null,
+      pools_used: intOrNull(d.pools_used),
+      pools_excluded: hasExcluded ? intOrNull(d.pools_excluded) : null,
       exit_score: hasExitScore ? (d.exit_score ?? null) : null,
       exit_score_version: hasExitVersion
         ? (d.exit_score_version ?? null)
@@ -452,7 +463,7 @@ async function loadLatest(env) {
       // the exit_score_components column the migration adds). Absent
       // column -> null, never a fabricated count.
       exit_score_components: hasExitComponents
-        ? (d.exit_score_components ?? null)
+        ? intOrNull(d.exit_score_components)
         : null,
       perp_px: perp ? (perp.perp_px ?? null) : null,
       perp_dev_pct: perpDev,
@@ -736,7 +747,7 @@ async function loadTicker(env, ticker) {
     issuer: uni.issuer,
     underlying: uni.underlying,
     legal_type: uni.legal_type,
-    tier: uni.tier,
+    tier: intOrNull(uni.tier),
     dw_price: dw,
     dev_pct: dev,
     dev_bps: bps,
@@ -751,8 +762,8 @@ async function loadTicker(env, ticker) {
     best_dex: best ? best.dex : null,
     spread_pct: crossVenueSpread(venues, dw),
     depth_usd: d.qualifying_depth_usd ?? null,
-    pools_used: d.pools_used ?? null,
-    pools_excluded: hasExcluded ? (rowsOf(res2[1])[0]?.pools_excluded ?? 0) : 0,
+    pools_used: intOrNull(d.pools_used),
+    pools_excluded: hasExcluded ? (intOrNull(rowsOf(res2[1])[0]?.pools_excluded) ?? 0) : 0,
     exit_score: hasExitScore ? (d.exit_score ?? null) : null,
     exit_score_version: hasExitVersion
       ? (d.exit_score_version ?? null)
@@ -761,7 +772,7 @@ async function loadTicker(env, ticker) {
     // 0-5 from the exit_score_components column (migration by another
     // worker). Absent column -> null, never a fabricated count.
     exit_score_components: hasExitComponents
-      ? (d.exit_score_components ?? null)
+      ? intOrNull(d.exit_score_components)
       : null,
     perp_px: perp ? (perp.perp_px ?? null) : null,
     perp_dev_pct: perpDev,
