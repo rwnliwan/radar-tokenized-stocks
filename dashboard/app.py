@@ -35,10 +35,11 @@ import streamlit as st
 from i18n import (DONATE_ADDRESS, DONATE_PAY_URL, LINKEDIN_URL,
                   SIZE_BUCKETS, t)
 from logic import (best_exit_venues, build_coverage, cross_venue_spread,
-                   display_chain, display_issuer, fmt_abbr,
-                   fmt_wita, freshness_status, market_is_open, parse_ts,
-                   por_effective_age_hours)
-from risk import calibration_progress, exit_score_band, weekend_risk_score
+                   dexscreener_pair_url, display_chain, display_issuer,
+                   fmt_abbr, fmt_wita, freshness_status, market_is_open,
+                   parse_ts, perp_is_fresh, por_effective_age_hours)
+from risk import (calibration_progress, exit_score_band,
+                  exit_score_partial, weekend_risk_score)
 from trial_components import build_bars_options, build_home_grid_options
 from turso_read import (get_coverage_pools, get_latest_exit_scores,
                         get_perp_latest, insert_waitlist, query)
@@ -435,16 +436,32 @@ def get_all_venues_latest():
     return out
 
 
+# S5 (fix ronde review DeepSeek Radar, 2026-11-13): venues-live anchors
+# each ticker to ITS OWN latest snapshot (within the last 2 h) — the
+# pattern api/worker.js loadLatest fixed in ronde 8 (P2-M2). The old
+# query anchored on the single global MAX(ts): one late ticker made
+# every other venue read as dead on off-minutes. A pool counts as live
+# when it has a snapshot at its own ticker's latest ts within the
+# last 2 h; a ticker silent for > 2 h contributes no live pools.
+VENUES_LIVE_SQL = (
+    "SELECT (SELECT COUNT(*) FROM pools WHERE is_active = 1) AS total, "
+    "COUNT(DISTINCT s.pool_id) AS live FROM snapshots s "
+    "JOIN pools p ON p.pool_id = s.pool_id "
+    "JOIN (SELECT p2.ticker_id AS tid, MAX(s2.ts) AS mts "
+    "FROM pools p2 JOIN snapshots s2 ON s2.pool_id = p2.pool_id "
+    "WHERE s2.ts >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-2 hours') "
+    "GROUP BY p2.ticker_id) latest "
+    "ON latest.tid = p.ticker_id AND s.ts = latest.mts "
+    "WHERE p.is_active = 1"
+)
+
+
 @st.cache_data(ttl=300)
 def get_venues_live():
     """Pools reporting in the latest snapshot cycle vs active pools.
 
     Returns {live, total}. One query; the KPI strip's 'venues live'."""
-    rows = query(
-        "SELECT (SELECT COUNT(*) FROM pools WHERE is_active = 1) AS total, "
-        "COUNT(DISTINCT pool_id) AS live FROM snapshots "
-        "WHERE ts = (SELECT MAX(ts) FROM snapshots)"
-    )
+    rows = query(VENUES_LIVE_SQL)
     if rows:
         try:
             return {"live": int(rows[0].get("live") or 0),
@@ -1312,9 +1329,13 @@ def home_table_block(lang):
             "redemption": red_status,
             "change": change_bps, "status": status,
             "spark": series,
-            # Exit Score (exit_score_v1): the STORED score only — None
+            # Exit Score (exit_score_v2): the STORED score only — None
             # renders as "—", never as 0 (see the column note below).
+            # M5: the components count rides along so a partial score
+            # can be labelled as such in the cell below.
             "exit_score": (exit_scores.get(tid, {}) or {}).get("exit_score"),
+            "exit_score_components": (
+                (exit_scores.get(tid, {}) or {}).get("exit_score_components")),
         })
     if sort_choice == "dev":
         items.sort(key=lambda r: abs(r["dev"]) if r["dev"] is not None else -1,
@@ -1363,7 +1384,14 @@ def home_table_block(lang):
             t(lang, "col_change", window=win_label): (
                 fmt_signed1(r["change"]) if r["change"] is not None else "—"),
             t(lang, "exit_score_col"): (
-                f"{r['exit_score']:.1f}" if r["exit_score"] is not None else "—"),
+                # M5: a partial score (< 3 of 5 components, or the
+                # column not migrated yet) is labelled as such, never
+                # shown bare as if it were a full score.
+                "—" if r["exit_score"] is None
+                else f"{r['exit_score']:.1f}"
+                + ((" (parsial)" if lang == "id" else " (partial)")
+                   if exit_score_partial(r.get("exit_score_components"))
+                   else "")),
             t(lang, "col_spark"): spark_text(r["spark"]),
             t(lang, "detail_link"): f"?ticker={r['ticker']}",
         } for r in items])
@@ -1410,6 +1438,7 @@ def home_table_block(lang):
             "status": r["status"],
             "change_bps": r["change"],
             "exit_score": r["exit_score"],
+            "exit_score_components": r.get("exit_score_components"),
         } for r in items])
         st.download_button(t(lang, "download_csv"),
                            _csv.to_csv(index=False),
@@ -1757,7 +1786,11 @@ elif page == "ticker":
                     t(lang, "col_status"): status,
                     t(lang, "col_updated"): fmt_wita(v.get("ts"), lang),
                     t(lang, "dex_link_label"): (
-                        f"https://dexscreener.com/solana/{pair}" if pair else None),
+                        # M11: chain-aware link (logic.dexscreener_pair_url,
+                        # same map as web/src/lib/dexscreener.ts). Unknown
+                        # chain / missing pair -> None: no link, never a
+                        # wrong-chain link.
+                        dexscreener_pair_url(v.get("chain"), pair)),
                 })
             st.dataframe(
                 pd.DataFrame(vrows),
@@ -1815,7 +1848,7 @@ elif page == "ticker":
             else:
                 render_risk_breakdown(
                     lang, weekend_risk_score(dev_med, depth, red_status, por_age))
-        # 6a. exit score (exit_score_v1) — the STORED score only.
+        # 6a. exit score (exit_score_v2) — the STORED score only.
         # This panel never computes a score: a missing column / NULL
         # score renders "not available yet", never 0.
         st.subheader(t(lang, "exit_score_title"))
@@ -1824,10 +1857,33 @@ elif page == "ticker":
         if _es_val is None:
             st.markdown(t(lang, "exit_score_unavailable"))
         else:
-            _band = exit_score_band(_es_val)
-            _band_txt = (t(lang, "exit_score_band_" + _band)
-                         if _band else "—")
-            st.markdown(f"**{_es_val:.1f}** — {_band_txt}")
+            # M5: band only on a full score (>= 3 of 5 components).
+            # A partial score — fewer components, or the column not
+            # migrated yet (None) — shows the number with a PARTIAL
+            # label and NO firm low/medium/high band. (i18n.py is
+            # owned by another worker this round, so the short
+            # partial label is inline here, en/id.)
+            try:
+                _n_comp = (int(_es["exit_score_components"])
+                           if _es.get("exit_score_components") is not None
+                           else None)
+            except (TypeError, ValueError):
+                _n_comp = None
+            if exit_score_partial(_n_comp):
+                if _n_comp is None:
+                    _part_txt = ("parsial (komponen tak tercatat)"
+                                 if lang == "id"
+                                 else "partial (components not recorded)")
+                else:
+                    _part_txt = (f"parsial ({_n_comp}/5 komponen)"
+                                 if lang == "id"
+                                 else f"partial ({_n_comp}/5 components)")
+                st.markdown(f"**{_es_val:.1f}** — {_part_txt}")
+            else:
+                _band = exit_score_band(_es_val)
+                _band_txt = (t(lang, "exit_score_band_" + _band)
+                             if _band else "—")
+                st.markdown(f"**{_es_val:.1f}** — {_band_txt}")
             if _es.get("exit_score_version"):
                 st.markdown(t(lang, "exit_score_version",
                               v=_es["exit_score_version"]))
@@ -1837,10 +1893,14 @@ elif page == "ticker":
             st.caption(t(lang, "exit_score_note"))
         # 6b. perp 3-leg (perp_3leg_v1) — the latest stored snapshot.
         # No snapshot (table missing, never written, or no perp
-        # market) renders "not available yet", never 0.
+        # market) renders "not available yet", never 0. N2: the
+        # snapshot must also be FRESH (<= 15 min old) — a stale
+        # perp_px is shown as not available, never as a live price
+        # with a deviation computed from it.
         st.subheader(t(lang, "perp_title"))
         _perp = get_perp(ticker)
-        if not _perp or _perp.get("perp_px") is None:
+        if (not _perp or _perp.get("perp_px") is None
+                or not perp_is_fresh(_perp.get("ts"))):
             st.markdown(t(lang, "perp_unavailable"))
         else:
             _dw = latest.get("depth_weighted_price") if latest else None

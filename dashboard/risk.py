@@ -102,6 +102,31 @@ def weekend_risk_score(dev_pct, depth_usd, redemption_status, por_age_hours):
     }
 
 
+# M5 (fix ronde review DeepSeek Radar, 2026-11-13): a stored Exit Score
+# is only shown with a firm band when at least 3 of its 5 components
+# were present (deviations.exit_score_components, added by the
+# migration). Fewer than 3 — or a missing column (None, migration not
+# run yet) — means the score is PARTIAL: the number is shown with a
+# "partial" label and NO low/medium/high band, so a rescaled score
+# from 1-2 components is never read as a full verdict. Mirrors the
+# Worker's handling (api/worker.js: absent column -> null).
+EXIT_SCORE_FULL_COMPONENTS = 3
+EXIT_SCORE_TOTAL_COMPONENTS = 5
+
+
+def exit_score_partial(components_present):
+    """True when a stored exit score must be shown as partial (M5):
+    fewer than EXIT_SCORE_FULL_COMPONENTS of the 5 components present,
+    or the components column does not exist yet (None), or an
+    unparseable value. Never raises."""
+    if components_present is None:
+        return True
+    try:
+        return int(components_present) < EXIT_SCORE_FULL_COMPONENTS
+    except (TypeError, ValueError):
+        return True
+
+
 # --- Exit Score bands (design §2.3, display only) --------------------
 # The score itself is computed by the poller and stored in
 # deviations.exit_score + exit_score_version; this helper only maps a

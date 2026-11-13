@@ -1,0 +1,44 @@
+{
+  "_comment": "Shared Exit Score band fixture (N1 fix ronde review DeepSeek Radar 2026-11-13). Created by the web fix worker because the dashboard worker had not produced it yet — same structure the dashboard worker was asked for, so dashboard/risk.py exit_score_band and web/src/lib/risk.ts exitScoreBand are tested against identical cases. Bands are labels only (design §2.3): 0-39 low, 40-69 medium, 70-100 high. Labels follow the code ('low'/'medium'/'high'); the display strings live in dashboard/i18n.py + web/src/lib/i18n.ts as exit_score_band_<label>.",
+  "bands": {
+    "high": [
+      70,
+      100
+    ],
+    "low": [
+      0,
+      39
+    ],
+    "medium": [
+      40,
+      69
+    ]
+  },
+  "cases": [
+    {
+      "band": "low",
+      "score": 0
+    },
+    {
+      "band": "low",
+      "score": 39
+    },
+    {
+      "band": "medium",
+      "score": 40
+    },
+    {
+      "band": "medium",
+      "score": 69
+    },
+    {
+      "band": "high",
+      "score": 70
+    },
+    {
+      "band": "high",
+      "score": 100
+    }
+  ],
+  "source": "dashboard/risk.py:112 exit_score_band + web/src/lib/risk.ts:81 exitScoreBand"
+}

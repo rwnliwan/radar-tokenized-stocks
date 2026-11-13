@@ -9,7 +9,7 @@ forward_paper_trades.json next to this script (never to Turso).
 PRE-REGISTERED paper rules (sprint-scoped, written BEFORE the first
 observation below — they are NOT the desain §5.4 alert-accuracy rules,
 they are the paper-trade open/close rules for this sprint):
-  OPEN  a paper "would-exit" when exit_score_v1 >= 70
+  OPEN  a paper "would-exit" when exit_score_v2 >= 70
         OR |dev_perp_vs_token_pct| >= 1.0%   (same 1.0% as DESAIN §2.1)
   CLOSE an open paper trade when, in a LATER observation,
         dev_vs_median_pct (fresh spot) < 0.5% AND exit_score < 40
@@ -153,9 +153,31 @@ def observe():
     perp_data, perp_err = poller.fetch_xyz_market_data()
     ctxs, _ctx_err = poller.fetch_xyz_ctxs()
 
-    # Redemption status (1 latest-only row) + median depth from
-    # state.json (computed by the poller today; 0 Turso reads).
-    red_status, red_close_h = poller._latest_redemption_status(now)
+    # Redemption status PER ISSUER + median depth from state.json
+    # (computed by the poller today; 0 Turso reads).
+    # M4, fix ronde review DeepSeek 2026-11-13: one shared status leaks
+    # across issuers — a ticker's exit score must use ITS issuer's
+    # latest redemption_windows row. Resolved once per distinct issuer
+    # (<=4 reads) and cached; unknown issuer -> (None, None).
+    try:
+        _uni = poller.query("SELECT ticker_id, issuer FROM universe")
+        _issuer_by_ticker = {u["ticker_id"]: u["issuer"]
+                             for u in _uni if u.get("issuer")}
+    except Exception:
+        _issuer_by_ticker = {}
+    _red_by_issuer = {}
+
+    def _red_for(ticker):
+        iss = _issuer_by_ticker.get(ticker)
+        if not iss:
+            return None, None
+        if iss not in _red_by_issuer:
+            try:
+                _red_by_issuer[iss] = poller._latest_redemption_status(now, iss)
+            except Exception:
+                _red_by_issuer[iss] = (None, None)
+        return _red_by_issuer[iss]
+
     try:
         with open(os.path.join(BASE, "state.json")) as f:
             state = json.load(f)
@@ -187,7 +209,8 @@ def observe():
                     oi_chg = (p["oi_usd"] - old) / old * 100.0
             except Exception:
                 oi_chg = None
-        sc = poller.exit_score_v1(s["dev_vs_median_pct"], s["depth_usd"],
+        red_status, red_close_h = _red_for(ticker)
+        sc = poller.exit_score_v2(s["dev_vs_median_pct"], s["depth_usd"],
                                   median7d.get(ticker), red_status,
                                   red_close_h, funding, oi_chg)
         # Liquidation guard from live mark vs oracle.
@@ -219,7 +242,8 @@ def observe():
         "weekday": now.strftime("%A"),
         "dex_fallback_tokens": fallback_used,
         "perp_error": perp_err,
-        "redemption_status": red_status,
+        "redemption_status_by_issuer": {iss: _red_by_issuer[iss][0]
+                                        for iss in sorted(_red_by_issuer)},
         "median_depth_7d_date": state.get("median_depth_7d_date"),
         "monday_gap": {"status": "not_due",
                        "reason": "prediction fires Sunday >=22:00 UTC, "

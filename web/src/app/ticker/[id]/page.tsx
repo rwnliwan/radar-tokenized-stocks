@@ -30,6 +30,7 @@ import {
 } from "../../../lib/format";
 import { t, u, type Lang } from "../../../lib/i18n";
 import { exitScoreBand, weekendRiskScore } from "../../../lib/risk";
+import { dexScreenerPairUrl } from "../../../lib/dexscreener";
 
 // PoR v2 numbers: API publishes them as strings; format locale-aware,
 // falling back to the raw string when unparseable (never invent a value).
@@ -183,6 +184,16 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
     detail != null
       ? weekendRiskScore(detail.dev_pct, detail.depth_usd, detail.redemption_status, detail.por_age_hours)
       : null;
+  // M5 (fix ronde review DeepSeek Radar): the Exit Score band is only
+  // shown when >= 3 of its 5 components were present. A missing field
+  // (Worker payload before the migration, or null) counts as partial:
+  // the score is shown with a clear PARTIAL label and NO firm band,
+  // never presented as if it were a full score.
+  const exitComponents = detail?.exit_score_components ?? null;
+  const exitPartial =
+    detail?.exit_score != null && (exitComponents == null || exitComponents < 3);
+  const exitBand =
+    !exitPartial && detail?.exit_score != null ? exitScoreBand(detail.exit_score) : null;
   const marketOpen = marketIsOpen();
   // Coverage for THIS ticker, from its own venues (never a hardcoded
   // "DEX Solana" — that string was wrong the moment a second chain
@@ -423,17 +434,22 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
                         </td>
                         <td className="hide-s">{fmtWITA(v.ts, lang)}</td>
                         <td>
-                          {v.pair_address ? (
-                            <a
-                              href={`https://dexscreener.com/solana/${v.pair_address}`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {t(lang, "dex_link_label")}
-                            </a>
-                          ) : (
-                            "—"
-                          )}
+                          {(() => {
+                            // M11 (fix ronde review DeepSeek Radar):
+                            // chain-aware DexScreener link from the
+                            // pool's own chain — never a hardcoded
+                            // /solana/ link. A chain with no
+                            // DexScreener page (e.g. elysium) renders
+                            // "—" instead of a wrong-chain link.
+                            const url = dexScreenerPairUrl(v.chain, v.pair_address);
+                            return url ? (
+                              <a href={url} target="_blank" rel="noreferrer">
+                                {t(lang, "dex_link_label")}
+                              </a>
+                            ) : (
+                              "—"
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}
@@ -530,7 +546,7 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
             </>
           )}
 
-          {/* Exit Score (exit_score_v1) — the STORED score only. A
+          {/* Exit Score (exit_score_v2) — the STORED score only. A
               missing score renders "not available yet", never 0. */}
           <h2 className="sec">{t(lang, "exit_score_title")}</h2>
           {detail.exit_score == null ? (
@@ -540,10 +556,13 @@ export default function TickerPage({ params }: { params: Promise<{ id: string }>
               <p>
                 <b>
                   {detail.exit_score.toFixed(1)} —{" "}
-                  {(() => {
-                    const b = exitScoreBand(detail.exit_score);
-                    return b ? t(lang, "exit_score_band_" + b) : "—";
-                  })()}
+                  {exitPartial
+                    ? exitComponents != null
+                      ? t(lang, "exit_score_partial", { n: exitComponents })
+                      : t(lang, "exit_score_partial_nocount")
+                    : exitBand
+                      ? t(lang, "exit_score_band_" + exitBand)
+                      : "—"}
                 </b>
               </p>
               {detail.exit_score_version && (

@@ -71,9 +71,28 @@ CREATE TABLE IF NOT EXISTS deviations (
   -- migrations/2026-11-12-penambahan.sql (check PRAGMA first).
   exit_score REAL,
   exit_score_version TEXT,
+  -- M5 (fix ronde review DeepSeek Radar, 2026-11-13): components_present
+  -- (how many of the 5 exit-score components were computable) is
+  -- computed by the poller but was never stored, so a partial score
+  -- of 100.0 could not be told apart from a full one (DESAIN §2.3
+  -- requires the components to be stored/displayed). NULL = score
+  -- not computed. Live ALTER via migrations/2026-11-13-radar-fix.sql.
+  exit_score_components INTEGER,
   method_version TEXT NOT NULL DEFAULT 'v1-median-only'
 );
 CREATE INDEX IF NOT EXISTS idx_deviations_ticker_ts ON deviations(ticker_id, ts);
+-- M8 (fix ronde review DeepSeek Radar, 2026-11-13): ORDER BY ts DESC
+-- without WHERE (worker loadLatest, dashboard) scanned + sorted the
+-- whole table — only idx_deviations_ticker_ts existed.
+CREATE INDEX IF NOT EXISTS idx_deviations_ts ON deviations(ts);
+-- S9 follow-up (fix ronde review DeepSeek Radar, 2026-11-13): worker.js
+-- per-ticker queries use `ticker_id = ? COLLATE NOCASE`, which cannot
+-- use the BINARY (ticker_id, ts) index above (bare SCAN + temp B-tree
+-- proven by qa/test_no_fullscan.py). NOCASE index keeps query behavior
+-- identical (no code change); the BINARY index stays for poller.py's
+-- plain `ticker_id = ?` queries. Cost: one more index to maintain per
+-- deviations row — see migration header for the trade-off note.
+CREATE INDEX IF NOT EXISTS idx_deviations_ticker_nocase_ts ON deviations(ticker_id COLLATE NOCASE, ts);
 
 -- F1 (penambahan 2026-11-12, DESAIN §3.1): Hyperliquid XYZ perp snapshots,
 -- one row per ticker per 5-min cycle. Only the 10 tickers with a live XYZ
@@ -84,11 +103,25 @@ CREATE TABLE IF NOT EXISTS perp_snapshots (
   ticker_id TEXT NOT NULL REFERENCES universe(ticker_id),
   ts TEXT NOT NULL,
   perp_px REAL,
+  -- S2 (fix ronde review DeepSeek Radar, 2026-11-13): perp_px is
+  -- documented as the mark price, but the poller falls back to the
+  -- mid price when mark is unavailable — with no per-row marker.
+  -- 'mark' | 'mid'; NULL = recorded before the column existed.
+  -- Live ALTER via migrations/2026-11-13-radar-fix.sql.
+  perp_px_source TEXT,
   funding REAL,
   oi REAL,
   dex TEXT NOT NULL DEFAULT 'xyz'
 );
 CREATE INDEX IF NOT EXISTS idx_perp_ticker_ts ON perp_snapshots(ticker_id, ts);
+-- S9 follow-up (fix ronde review DeepSeek Radar, 2026-11-13): worker.js
+-- :359 perp latest (`ORDER BY ts DESC LIMIT 200`) scanned + sorted the
+-- whole table (no ts index); per-ticker queries use COLLATE NOCASE,
+-- which cannot use the BINARY index above. Both proven by
+-- qa/test_no_fullscan.py. Same trade-off note as the deviations
+-- NOCASE index (see migration header).
+CREATE INDEX IF NOT EXISTS idx_perp_snapshots_ts ON perp_snapshots(ts);
+CREATE INDEX IF NOT EXISTS idx_perp_ticker_nocase_ts ON perp_snapshots(ticker_id COLLATE NOCASE, ts);
 
 -- F4 (penambahan 2026-11-12, DESAIN §3.2): Liquidation Guard, one row per
 -- ticker per hour (extra 5-min rows only while warning/critical).
@@ -118,7 +151,13 @@ CREATE TABLE IF NOT EXISTS monday_gap (
   confidence REAL NOT NULL,
   method_version TEXT NOT NULL DEFAULT 'monday_gap_v1',
   outcome_gap_pct REAL,
-  outcome TEXT,
+  -- N4 (fix ronde review DeepSeek Radar, 2026-11-13): CHECK locks the
+  -- only values the poller writes ('pending' on insert, 'accurate' /
+  -- 'inaccurate' on Monday fill — poller.py _monday_gap_fill_outcomes).
+  -- SQLite cannot ADD a CHECK to an existing table via ALTER TABLE,
+  -- so live DBs get this only on rebuild / fresh schema; until then
+  -- enforcement is the poller's fixed value set (see migration header).
+  outcome TEXT CHECK (outcome IN ('pending', 'accurate', 'inaccurate')),
   outcome_ts TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_monday_gap_ticker_week ON monday_gap(ticker_id, week_start);
@@ -190,6 +229,10 @@ CREATE TABLE IF NOT EXISTS poller_health (
   failed_sources TEXT,
   gap_note TEXT
 );
+-- M7 (fix ronde review DeepSeek Radar, 2026-11-13): the poller's
+-- per-cycle idempotency check (COUNT(*) WHERE cycle_ts = ?) scanned
+-- the whole table — no index on poller_health existed.
+CREATE INDEX IF NOT EXISTS idx_poller_health_cycle_ts ON poller_health(cycle_ts);
 
 CREATE TABLE IF NOT EXISTS waitlist (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

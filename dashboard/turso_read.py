@@ -271,14 +271,19 @@ def get_latest_exit_scores():
     """Latest exit_score per ticker, or {} when the columns do not
     exist yet (migration not run) or no score has ever been stored.
 
-    Returns {ticker: {exit_score, exit_score_version, ts}}. A stored
-    NULL score is returned as None (caller shows "not available"),
-    never coerced to 0.
+    Returns {ticker: {exit_score, exit_score_version,
+    exit_score_components, ts}}. A stored NULL score is returned as
+    None (caller shows "not available"), never coerced to 0. The
+    components count is None when the exit_score_components column
+    does not exist yet (M5: the caller treats that as a PARTIAL
+    score, never as a full one, and never crashes).
     """
     cols = _pragma_table_info("deviations")
     if "exit_score" not in cols:
         return {}
     select_extra = ", exit_score_version" if "exit_score_version" in cols else ""
+    if "exit_score_components" in cols:
+        select_extra += ", exit_score_components"
     try:
         rows = query(
             "SELECT ticker_id, ts, exit_score" + select_extra +
@@ -292,6 +297,7 @@ def get_latest_exit_scores():
             out[r["ticker_id"]] = {
                 "exit_score": r.get("exit_score"),
                 "exit_score_version": r.get("exit_score_version"),
+                "exit_score_components": r.get("exit_score_components"),
                 "ts": r.get("ts"),
             }
     return out

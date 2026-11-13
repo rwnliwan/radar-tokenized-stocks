@@ -78,6 +78,27 @@ def parse_ts(iso):
     return dt.astimezone(timezone.utc)
 
 
+# N2 (fix ronde review DeepSeek Radar, 2026-11-13): freshness gate for
+# a stored perp snapshot. The poller filters stale perp data, but the
+# dashboard used to render perp_px with no age check at all — a
+# 3-hour-old price read as live. A snapshot counts as fresh only when
+# its timestamp is 0-15 minutes old; future-dated or unparseable
+# timestamps are stale, never fresh (same rule as freshness_status
+# GG-15: a negative age must not pass the gate).
+PERP_FRESH_MINUTES = 15.0
+
+
+def perp_is_fresh(ts, now=None, max_age_minutes=PERP_FRESH_MINUTES):
+    """True when a perp snapshot timestamp is at most max_age_minutes
+    old relative to `now` (default: now, UTC). Never raises."""
+    dt = parse_ts(ts)
+    if dt is None:
+        return False
+    now_utc = now if now is not None else datetime.now(timezone.utc)
+    age_min = (now_utc - dt).total_seconds() / 60.0
+    return 0.0 <= age_min <= max_age_minutes
+
+
 def fmt_wita(iso, lang="en"):
     """'24 Oct 2026 19:11 WITA' (en) / '24 Okt 2026 19:11 WITA' (id).
 
@@ -360,6 +381,40 @@ def display_issuer(issuer):
         return "—"
     return DISPLAY_ISSUERS.get(str(issuer).strip().lower(),
                                str(issuer).strip().title())
+
+
+# M11 (fix ronde review DeepSeek Radar, 2026-11-13): DexScreener
+# pair-page links, chain-aware. The ticker page used to hardcode
+# `dexscreener.com/solana/<pair>` for every venue — 71/106 pools are
+# not Solana, so 67% of the links opened the wrong chain. The slug now
+# comes from the pool's own `chain` value (the DexScreener `chainId`
+# stored in `pools.chain`). Mirror of web/src/lib/dexscreener.ts —
+# keep the two maps identical; both were verified 13 Nov 2026
+# (dexscreener.com/robinhood is a live chain page, 24h volume
+# $736.5M, incl. Robinhood Token pairs).
+# Chains with NO DexScreener page (e.g. elysium — not live, 0 pools —
+# or any future unknown slug) return None: the caller renders "—"
+# instead of a wrong-chain link. Never guess a slug.
+DEXSCREENER_CHAIN_SLUGS = {
+    "solana": "solana",
+    "base": "base",
+    "bsc": "bsc",
+    "bnb": "bsc",  # alias: coverage rows spell it "bnb", pools carry "bsc"
+    "ethereum": "ethereum",
+    "hyperliquid": "hyperliquid",
+    "robinhood": "robinhood",
+}
+
+
+def dexscreener_pair_url(chain, pair_address):
+    """Pair-page URL for a pool, or None when the chain has no
+    DexScreener page (or the pair address is missing). Never raises."""
+    if not chain or not pair_address:
+        return None
+    slug = DEXSCREENER_CHAIN_SLUGS.get(str(chain).strip().lower())
+    if not slug:
+        return None
+    return f"https://dexscreener.com/{slug}/{pair_address}"
 
 
 def build_coverage(pool_rows):

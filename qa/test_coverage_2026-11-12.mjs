@@ -9,7 +9,10 @@
 //
 // - /api/coverage 200: live groups are DERIVED from the pools rows
 //   (Solana-only today: 13 tickers, 35 pools, only_solana_xstocks
-//   true); the pending list is the 6 dated 12 Nov 2026 verdicts.
+//   true); the pending list is the 6 dated 12 Nov 2026 verdicts,
+//   MINUS any chain that already has live tickers (M12, fix ronde
+//   review DeepSeek 2026-11-13: live and pending must never list the
+//   same chain — seeded Base drops the base verdict row).
 // - Seeded Base pools flip only_solana_xstocks to false and add a
 //   second live group — the banner must never be hardcoded.
 // - Pending rows match dashboard/logic.py PENDING_COVERAGE
@@ -130,8 +133,16 @@ check("seeded Base: 2 live groups, Base has NVDAc",
       && g.issuer === "coinbase"
       && g.tickers.join(",") === "NVDAc" && g.pools === 2),
   JSON.stringify(cov2.body.live.map((g) => [g.chain, g.tickers, g.pools])));
-check("seeded Base: pending list unchanged",
-  cov2.body.pending.length === 6);
+check("seeded Base: pending drops the now-live base verdict (M12)",
+  cov2.body.pending.length === 5
+    && !cov2.body.pending.some((p) => p.chain === "base")
+    && EXPECTED_PENDING.filter(([c]) => c !== "base").every(
+      ([chain, issuer, verdict, reason_key], i) => {
+        const p = cov2.body.pending[i];
+        return p.chain === chain && p.issuer === issuer
+          && p.verdict === verdict && p.reason_key === reason_key;
+      }),
+  JSON.stringify(cov2.body.pending.map((p) => [p.chain, p.verdict])));
 
 // --- Anti full-scan guard (§6.3) ---------------------------------------
 const src = readFileSync(new URL("../api/worker.js", import.meta.url), "utf8");

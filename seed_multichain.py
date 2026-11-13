@@ -3,8 +3,11 @@
 Reads the LIVE verification output of verify_multichain.py and builds the
 INSERTs for the three new issuer groups (Coinbase/Base, bStocks/BNB,
 Robinhood/Robinhood Chain). Follows seed_universe.py (Solana xStocks)
-conventions: idempotent DELETE-then-INSERT per ticker, only pools with
-liquidity >= $100,000 at verification time are tracked (design §5.2).
+conventions, EXCEPT the write pattern: UPSERT, never DELETE (fix
+ronde review DeepSeek Radar 2026-11-13, M9 — the old DELETE-then-
+INSERT per ticker wiped/orphaned history on every weekly re-seed).
+Only pools with liquidity >= $100,000 at verification time are
+tracked (design §5.2).
 
 Rules (design §1.1/§1.3, DESAIN_PENAMBAHAN_2026-11-12 §1.2):
 - Only tickers with tier 1 or 2 (total >= $500k + >= 2 venues).
@@ -24,6 +27,23 @@ Rules (design §1.1/§1.3, DESAIN_PENAMBAHAN_2026-11-12 §1.2):
 - Redemption / PoR rows are DOCUMENTATION, not live observation
   (design §3.5): all three issuers get status "unknown" with a note of
   the documented mechanism. No PoR feed is claimed for any of them.
+
+UPSERT semantics (M9):
+- universe / pools: INSERT ... ON CONFLICT DO UPDATE (created_at is
+  preserved on conflict; a re-seeded ticker is re-activated, never
+  re-created). NOT INSERT OR REPLACE — REPLACE deletes the conflicting
+  row first, which is the history loss this fix removes.
+- A ticker of a seed-managed issuer (coinbase/bstocks/robinhood) that
+  is absent from the new seed is marked status='inactive' (NOT
+  deleted); its pools get is_active=0. History rows (deviations,
+  snapshots) keep pointing at the ticker.
+- redemption_windows: UPDATE the existing (issuer, 'ALL') row if
+  present, else INSERT ... WHERE NOT EXISTS; an issuer that drops
+  out of the seed gets status='inactive' with its observed_at
+  UNTOUCHED (so it never becomes the "latest" row for the poller's
+  global latest-redemption read) and the marking time written into
+  the note text instead. Only the three seed-managed issuers are
+  ever touched — xStocks rows are owned by seed_universe.py/poller.
 
 SAFETY: --dry-run is the DEFAULT. It prints the SQL + summary and writes
 nothing to Turso. --live executes via turso_client.pipeline ONLY when the
@@ -51,6 +71,13 @@ ISSUER_META = {
             "for authorised participants only; retail via secondary "
             "market. No public PoR found — backing via Alpaca custody + "
             "Chainlink price feeds (UNVERIFIED beyond that)."),
+        # S13: EN twin of redemption_note (window_note_en) — direct
+        # translation, no status invented beyond the ID note.
+        "redemption_note_en": (
+            "Documented (research 12 Nov): mint/redeem in-kind "
+            "near-instant for authorised participants only; retail via "
+            "secondary market. No public PoR found — backing via Alpaca "
+            "custody + Chainlink price feeds (UNVERIFIED beyond that)."),
         "por_note": "unknown — no public PoR found (riset 12 Nov 2026).",
     },
     "bstocks": {
@@ -60,6 +87,11 @@ ISSUER_META = {
             "<-> bStock 1:1, zero fee, <1s (eligible users); on-chain "
             "mint/burn on deposit/redemption. Attestation published "
             "(detail UNVERIFIED)."),
+        "redemption_note_en": (
+            "Documented (research 12 Nov): convert Binance brokerage "
+            "share <-> bStock 1:1, zero fee, <1s (eligible users); "
+            "on-chain mint/burn on deposit/redemption. Attestation "
+            "published (detail UNVERIFIED)."),
         "por_note": ("unknown — attestation published per tracker "
                      "(detail UNVERIFIED); no live PoR feed checked."),
     },
@@ -69,6 +101,10 @@ ISSUER_META = {
             "Documented (riset 12 Nov): redeemable for cash via "
             "authorised participants; redemption in underlying securities "
             "is roadmap / future date. No public PoR found."),
+        "redemption_note_en": (
+            "Documented (research 12 Nov): redeemable for cash via "
+            "authorised participants; redemption in underlying "
+            "securities is roadmap / future date. No public PoR found."),
         "por_note": "unknown — no public PoR found (riset 12 Nov 2026).",
     },
 }
@@ -105,7 +141,9 @@ def build_statements(data, max_pools=None):
             by_issuer.setdefault(c["issuer"], []).append(c)
     stmts = []
     report = {"seeded": [], "cap_excluded": [], "failed": [],
-              "dropped_pools": [], "issuers": sorted(by_issuer)}
+              "dropped_pools": [], "issuers": sorted(by_issuer),
+              "inactive_issuers": []}
+    seeded_tickers, seeded_pool_ids = [], []
     for issuer, cands in sorted(by_issuer.items()):
         cands.sort(key=lambda x: -x["total_liquidity_usd"])
         for c in cands[:CAP_PER_ISSUER]:
@@ -122,12 +160,20 @@ def build_statements(data, max_pools=None):
             if c.get("truncated"):
                 notes += (" NOTE: token-pairs hit the 30-pair API cap — "
                           "total is a lower bound.")
-            stmts.append(("DELETE FROM pools WHERE ticker_id = ?", [sym]))
-            stmts.append(("DELETE FROM universe WHERE ticker_id = ?", [sym]))
+            seeded_tickers.append(sym)
+            # M9: UPSERT, never DELETE. On conflict the row is updated
+            # in place (status back to 'active', notes refreshed);
+            # created_at is preserved, so history keeps its anchor.
             stmts.append((
                 "INSERT INTO universe (ticker_id, underlying, issuer, "
                 "legal_type, tier, status, token_addresses, notes, "
-                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(ticker_id) DO UPDATE SET "
+                "underlying=excluded.underlying, "
+                "issuer=excluded.issuer, legal_type=excluded.legal_type, "
+                "tier=excluded.tier, status='active', "
+                "token_addresses=excluded.token_addresses, "
+                "notes=excluded.notes, updated_at=excluded.updated_at",
                 [sym, c["underlying"], issuer, "wrapper", c["tier"],
                  "active", token_json, notes, now, now],
             ))
@@ -139,10 +185,19 @@ def build_statements(data, max_pools=None):
             n_pools = 0
             for p in clean:
                 pool_id = f"{p['chain']}:{p['pair_address']}"
+                seeded_pool_ids.append(pool_id)
+                # M9: UPSERT; a pool that returns to the seed is
+                # re-activated (is_active=1), never re-created.
                 stmts.append((
                     "INSERT INTO pools (pool_id, ticker_id, chain, dex, "
                     "pair_address, quote_token, is_active, "
-                    "min_liquidity_usd) VALUES (?,?,?,?,?,?,?,?)",
+                    "min_liquidity_usd) VALUES (?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(pool_id) DO UPDATE SET "
+                    "ticker_id=excluded.ticker_id, chain=excluded.chain, "
+                    "dex=excluded.dex, "
+                    "pair_address=excluded.pair_address, "
+                    "quote_token=excluded.quote_token, is_active=1, "
+                    "min_liquidity_usd=excluded.min_liquidity_usd",
                     [pool_id, sym, p["chain"], p["dex"], p["pair_address"],
                      p["quote"], 1, LIQ_MIN],
                 ))
@@ -162,24 +217,76 @@ def build_statements(data, max_pools=None):
                 (c.get("ticker_id") or c["symbol"], c.get("issuer", "?"),
                  "; ".join(c.get("fail_reasons",
                                  [c.get("reason", "?")]))))
+    # M9: tickers / pools of the three seed-managed issuers that are
+    # NOT in this seed are deactivated, never deleted — history rows
+    # (deviations, snapshots) keep pointing at them. Only emitted
+    # when this seed actually seeded something: an empty seed (total
+    # verification failure) must not mass-deactivate on its own.
+    if seeded_tickers:
+        tick_ph = ",".join("?" for _ in seeded_tickers)
+        stmts.append((
+            "UPDATE universe SET status='inactive', updated_at=? "
+            "WHERE issuer IN ('coinbase','bstocks','robinhood') "
+            f"AND ticker_id NOT IN ({tick_ph}) AND status <> 'inactive'",
+            [now] + seeded_tickers,
+        ))
+    if seeded_pool_ids:
+        pool_ph = ",".join("?" for _ in seeded_pool_ids)
+        stmts.append((
+            "UPDATE pools SET is_active=0 "
+            f"WHERE pool_id NOT IN ({pool_ph}) AND ticker_id IN "
+            "(SELECT ticker_id FROM universe "
+            "WHERE issuer IN ('coinbase','bstocks','robinhood'))",
+            seeded_pool_ids,
+        ))
     # Documented (not live-observed) redemption + PoR rows per new issuer.
     for issuer in sorted(by_issuer):
         meta = ISSUER_META[issuer]
-        stmts.append(
-            ("DELETE FROM redemption_windows WHERE issuer = ?", [issuer]))
+        # M9: UPDATE the existing (issuer, 'ALL') row if present,
+        # INSERT only if absent — the old DELETE+INSERT destroyed the
+        # row's history on every re-seed. S13: window_note_en included.
+        stmts.append((
+            "UPDATE redemption_windows SET status=?, window_note=?, "
+            "window_note_en=?, observed_at=?, source=?, next_open_at=? "
+            "WHERE issuer=? AND asset='ALL'",
+            ["unknown", meta["redemption_note"],
+             meta["redemption_note_en"], now,
+             "DESAIN §3.5 / riset 12 Nov (dokumentasi, bukan observasi live)",
+             None, issuer],
+        ))
         stmts.append((
             "INSERT INTO redemption_windows (issuer, asset, status, "
-            "window_note, observed_at, source, next_open_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            [issuer, "ALL", "unknown", meta["redemption_note"], now,
+            "window_note, window_note_en, observed_at, source, "
+            "next_open_at) SELECT ?, 'ALL', ?, ?, ?, ?, ?, ? "
+            "WHERE NOT EXISTS (SELECT 1 FROM redemption_windows "
+            "WHERE issuer=? AND asset='ALL')",
+            [issuer, "unknown", meta["redemption_note"],
+             meta["redemption_note_en"], now,
              "DESAIN §3.5 / riset 12 Nov (dokumentasi, bukan observasi live)",
-             None],
+             None, issuer],
         ))
         stmts.append((
             "INSERT INTO por_feeds (issuer, feed_address, last_update_ts, "
             "age_hours, reserves_vs_supply_note, checked_at) "
             "VALUES (?,?,?,?,?,?)",
             [issuer, None, None, None, meta["por_note"], now],
+        ))
+    # M9: a seed-managed issuer that drops out of this seed entirely
+    # gets its redemption row marked inactive — NOT deleted. Its
+    # observed_at is deliberately UNTOUCHED so the row never becomes
+    # the "latest" row for the poller's global latest-redemption
+    # read; the marking time goes into the note text instead.
+    for issuer in sorted(set(ISSUER_META) - set(by_issuer)):
+        report["inactive_issuers"].append(issuer)
+        stmts.append((
+            "UPDATE redemption_windows SET status='inactive', "
+            "window_note=?, window_note_en=? "
+            "WHERE issuer=? AND asset='ALL' AND status <> 'inactive'",
+            [f"Issuer tidak lagi masuk seed multichain "
+             f"(ditandai inactive {now}); baris dipertahankan untuk riwayat.",
+             f"Issuer no longer in the multichain seed "
+             f"(marked inactive {now}); row retained for history.",
+             issuer],
         ))
     return stmts, report
 
@@ -242,6 +349,13 @@ def main():
     for sym, issuer, tier, tot, why in report["cap_excluded"]:
         print(f"  CAP-EXCLUDE {sym:8s} {issuer:10s} T{tier} "
               f"total=${tot:>12,} — {why}")
+    for issuer in report["inactive_issuers"]:
+        print(f"  INACTIVE-ISSUER {issuer}: no longer in this seed — "
+              f"its redemption_windows row will be marked "
+              f"status='inactive' (not deleted)")
+    if n_tickers:
+        print(f"  DEACTIVATE: managed-issuer tickers/pools absent from "
+              f"this seed will be marked inactive (not deleted)")
     for sym, dex, pair, liq, why in report["dropped_pools"]:
         print(f"  DROP-POOL {sym:8s} {dex} {pair[:12]}… "
               f"${liq:>10,} — {why}")

@@ -245,22 +245,25 @@ async function loadLatest(env) {
   // is declared in schema.sql since fix ronde 9, P1-4 — the probe
   // keeps a fresh DB without it from failing the whole endpoint).
   // Same probe pattern covers the 2026-11-12 additions: exit_score /
-  // exit_score_version columns on deviations and the perp_snapshots
-  // table. While the migration has not run, both read as null and the
-  // frontends render "not available yet" — never 0.
+  // exit_score_version / exit_score_components columns on deviations
+  // and the perp_snapshots table. While the migration has not run, both
+  // read as null and the frontends render "not available yet" — never 0.
   let hasExcluded = false;
   let hasExitScore = false;
   let hasExitVersion = false;
+  let hasExitComponents = false;
   try {
     const [pragma] = await pipeline(env, [["PRAGMA table_info(deviations)"]]);
     const cols = rowsOf(pragma).map((c) => c.name);
     hasExcluded = cols.includes("pools_excluded");
     hasExitScore = cols.includes("exit_score");
     hasExitVersion = cols.includes("exit_score_version");
+    hasExitComponents = cols.includes("exit_score_components");
   } catch {
     hasExcluded = false;
     hasExitScore = false;
     hasExitVersion = false;
+    hasExitComponents = false;
   }
   // Separate probe (separate try): a failure here must never poison
   // the column flags above — a missing/unreadable perp table only
@@ -281,6 +284,7 @@ async function loadLatest(env) {
     (hasExcluded ? ", pools_excluded" : "") +
     (hasExitScore ? ", exit_score" : "") +
     (hasExitVersion ? ", exit_score_version" : "") +
+    (hasExitComponents ? ", exit_score_components" : "") +
     " FROM deviations " +
     // LIMIT 500 capacity (fix ronde 5, N5): 13 tickers x ~38 cycles
     // (~3.2h at the 5-min cadence) — the newest row per ticker
@@ -443,6 +447,13 @@ async function loadLatest(env) {
       exit_score_version: hasExitVersion
         ? (d.exit_score_version ?? null)
         : null,
+      // M5 (fix ronde review DeepSeek): how many of the 5 Exit Score
+      // components the row's score is built from (INTEGER 0-5, from
+      // the exit_score_components column the migration adds). Absent
+      // column -> null, never a fabricated count.
+      exit_score_components: hasExitComponents
+        ? (d.exit_score_components ?? null)
+        : null,
       perp_px: perp ? (perp.perp_px ?? null) : null,
       perp_dev_pct: perpDev,
       perp_funding: perp ? (perp.funding ?? null) : null,
@@ -549,20 +560,24 @@ async function loadTicker(env, ticker) {
   // first so a fresh DB without the column cannot fail the main
   // pipeline. Same probe covers the 2026-11-12 additions: the
   // exit_score columns and the perp_snapshots table — absent means
-  // null fields, never a fabricated score.
+  // null fields, never a fabricated score. Same probe covers the
+  // exit_score_components column (M5, fix ronde review DeepSeek).
   let hasExcluded = false;
   let hasExitScore = false;
   let hasExitVersion = false;
+  let hasExitComponents = false;
   try {
     const [pragma] = await pipeline(env, [["PRAGMA table_info(deviations)"]]);
     const cols = rowsOf(pragma).map((c) => c.name);
     hasExcluded = cols.includes("pools_excluded");
     hasExitScore = cols.includes("exit_score");
     hasExitVersion = cols.includes("exit_score_version");
+    hasExitComponents = cols.includes("exit_score_components");
   } catch {
     hasExcluded = false;
     hasExitScore = false;
     hasExitVersion = false;
+    hasExitComponents = false;
   }
   // Separate probe (separate try): a failure here must never poison
   // the column flags above (see loadLatest).
@@ -595,6 +610,7 @@ async function loadTicker(env, ticker) {
         "pools_used" +
         (hasExitScore ? ", exit_score" : "") +
         (hasExitVersion ? ", exit_score_version" : "") +
+        (hasExitComponents ? ", exit_score_components" : "") +
         " FROM deviations WHERE ticker_id = ? COLLATE NOCASE " +
         "ORDER BY ts DESC, id DESC LIMIT 1",
       [ticker],
@@ -740,6 +756,12 @@ async function loadTicker(env, ticker) {
     exit_score: hasExitScore ? (d.exit_score ?? null) : null,
     exit_score_version: hasExitVersion
       ? (d.exit_score_version ?? null)
+      : null,
+    // M5 (fix ronde review DeepSeek): components present, INTEGER
+    // 0-5 from the exit_score_components column (migration by another
+    // worker). Absent column -> null, never a fabricated count.
+    exit_score_components: hasExitComponents
+      ? (d.exit_score_components ?? null)
       : null,
     perp_px: perp ? (perp.perp_px ?? null) : null,
     perp_dev_pct: perpDev,
@@ -957,6 +979,16 @@ const PENDING_COVERAGE = [
   },
 ];
 
+// M12 (fix ronde review DeepSeek): the seed writes the bStocks chain
+// as "bsc" (seed_multichain.py) while the 12 Nov verdict table below
+// calls the same chain "bnb" — one chain, two spellings. Canonicalize
+// before comparing, or the BNB pending row survives the filter even
+// though BNB Chain is already live.
+function canonicalChain(chain) {
+  const c = String(chain || "").trim().toLowerCase();
+  return c === "bsc" ? "bnb" : c;
+}
+
 async function loadCoverage(env) {
   // The pools table is tiny (35 rows live): one grouped read, no
   // big-table scan (the §6.3 read-burn rule).
@@ -1008,9 +1040,18 @@ async function loadCoverage(env) {
     );
   const chains = new Set(live.map((g) => g.chain));
   const issuers = new Set(live.map((g) => g.issuer));
+  // M12 (fix ronde review DeepSeek): a chain that already has live
+  // tickers must NOT also appear in `pending` — the two lists
+  // contradicted each other live (base/bnb/robinhood "verified" in
+  // both). Only chains with no live ticker stay pending. Response
+  // shape is unchanged; the pending list just gets shorter as chains
+  // go live.
+  const liveChains = new Set(live.map((g) => canonicalChain(g.chain)));
   return {
     live,
-    pending: PENDING_COVERAGE.map((p) => ({
+    pending: PENDING_COVERAGE.filter(
+      (p) => !liveChains.has(canonicalChain(p.chain)),
+    ).map((p) => ({
       ...p,
       chain_display: DISPLAY_CHAINS[p.chain] || p.chain,
       issuer_display: DISPLAY_ISSUERS[p.issuer] || p.issuer,
@@ -1126,7 +1167,7 @@ export default {
       if (url.pathname === "/api/history") {
         const ticker = (url.searchParams.get("ticker") || "").toUpperCase();
         const window = url.searchParams.get("window") || "1h";
-        if (!ticker || !/^[A-Z0-9]+X$/.test(ticker))
+        if (!ticker || !/^[A-Z0-9]+[XCBR]$/.test(ticker))
           return json({ error: "ticker required, e.g. ?ticker=TSLAx" }, 400);
         if (!["1h", "24h", "7d"].includes(window))
           return json({ error: "window must be 1h, 24h or 7d" }, 400);
@@ -1134,7 +1175,7 @@ export default {
       }
       if (url.pathname === "/api/ticker") {
         const ticker = (url.searchParams.get("ticker") || "").toUpperCase();
-        if (!ticker || !/^[A-Z0-9]+X$/.test(ticker))
+        if (!ticker || !/^[A-Z0-9]+[XCBR]$/.test(ticker))
           return json({ error: "ticker required, e.g. ?ticker=TSLAx" }, 400);
         const detail = await loadTicker(env, ticker);
         if (!detail) return json({ error: "ticker not found" }, 404);

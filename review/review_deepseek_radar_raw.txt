@@ -1,0 +1,358 @@
+# REVIEW PAKET PENAMBAHAN RADAR TOKENIZED STOCKS — 12 Nov 2026
+
+## 1. SKOR & VONIS
+
+**Skor keseluruhan: 5/10 — REVISE** (tidak perlu rollback; perbaikan bedah, tapi 4 di antaranya menyangkut data/UX yang sudah tayang live hari ini).
+
+| Area | Skor | Alasan satu baris |
+|---|---|---|
+| (a) Kebenaran rumus & ambang | **5** | Bobot 100+100 benar; tapi funding 8× terlalu ketat, kalibrasi Monday Gap 5× terlalu cepat, komponen redemption bocor antar-issuer, jumlah komponen tidak disimpan. |
+| (b) Skema & migrasi | **6** | Skema cocok dengan desain, NULL jujur; tapi migrasi tidak self-idempotent, seed pakai DELETE meski ada riwayat, tidak ada indeks `deviations(ts)`. |
+| (c) Kuota & performa | **4** | Tiga dokumen tiga angka, tak satu pun memasukkan jendela rapat (356 vs 288 siklus/hari); dua pemindaian penuh `poller_health` + satu pemindaian penuh `deviations` di jalur panas. |
+| (d) Kejujuran web/banner | **5** | Banner live diturunkan dari data (bagus), tapi tabel pending bertentangan dengan tabel live, link DEX hardcode `solana`, skor parsial tampil sebagai skor penuh. |
+| (e) Testing & bukti | **4** | Backtest jujur tapi hanya menguji kaki spread hari kerja; 7 dari 8 guard QA §5.4 tidak ada; guard anti-full-scan lolos justru saat ada full-scan nyata. |
+
+**Koreksi premis yang saya pakai:** status live (43 ticker, 106 pool, 4 issuer, perp 190 baris, liquidation 20 baris) adalah kebenaran. Klaim paket "hanya Solana live" sudah **basi** — dan itulah yang bocor ke dua tempat di kode (M11, M12).
+
+---
+
+## 2. TEMUAN
+
+### MUST-FIX
+
+**M1 — Regex ticker di Worker menolak SEMUA ticker multichain (halaman per-ticker 30/43 rusak)**
+- **Kategori:** inkonsistensi desain-vs-kode / UX
+- **Bukti:** `api/worker.js`, route `/api/history` dan `/api/ticker`:
+  ```js
+  if (!ticker || !/^[A-Z0-9]+X$/.test(ticker)) return json({ error: ... }, 400);
+  ```
+  Regex mensyaratkan akhiran `X`. `TSLAr`.toUpperCase() = `TSLAR` → **tidak match** → 400. Sama untuk `NVDAc` (`NVDAC`), `TSLAB` (`TSLAB`), `SPYr` (`SPYR`). Hitung ulang: 43 ticker live − 13 xStocks = **30 dari 43 ticker** mengembalikan 400. `fetchTicker` melempar `API HTTP 400` → `web/src/app/ticker/[id]/page.tsx` menampilkan `load_error`. Home table (`/api/latest`, tanpa validasi) tetap jalan — jadi kerusakan tidak terlihat dari beranda.
+- **Perbaikan:** ganti ke `^[A-Z0-9]{2,12}$` dan validasi keberadaan lewat `universe` (sudah ada di `loadTicker`), bukan lewat bentuk string. Tambah fixture QA: untuk tiap ticker di `universe`, `/api/ticker` harus 200.
+
+**M2 — Outcome Monday Gap memakai 13:30 UTC hardcode; di EST bursa buka 14:30 UTC**
+- **Kategori:** rumus/ambang
+- **Bukti:** `poller.py`, `_monday_gap_fill_outcomes`:
+  ```python
+  mon_open = mon.strftime("%Y-%m-%dT13:30:00Z")
+  ```
+  13:30 UTC = 09:30 ET **hanya saat EDT**. DST AS 2026 berakhir 1 Nov; prediksi pertama jatuh Minggu 16 Nov (EST) → NYSE buka **14:30 UTC**. Kode mengambil `depth_weighted_price` pertama ≥ 13:30 UTC, yaitu harga ~08:30 ET — **satu jam sebelum open**. Definisi "gap aktual" yang di-pre-register §2.2 dilanggar sistematis sepanjang Nov–Mar.
+- **Perbaikan:** hitung `mon_open` dari `ZoneInfo("America/New_York")` seperti helper lain di file yang sama (`in_tight_window`, `next_schedule_close_utc`) — konsisten, tidak perlu tabel DST.
+
+**M3 — Confidence Monday Gap menghitung baris, bukan akhir pekan → saturasi +25 setelah SATU akhir pekan**
+- **Kategori:** rumus/ambang
+- **Bukti:** `poller.py`, `_monday_gap_predict`:
+  ```python
+  _c = query("SELECT COUNT(*) AS n FROM monday_gap WHERE outcome IN ('accurate','inaccurate')")
+  calibrated = int(_c[0]["n"]) if _c else 0
+  ```
+  lalu `calib = 5 * max(0, min(int(calibrated_weekends or 0), 5))`.
+  Desain §2.2: "+5 per **akhir pekan** terkalibrasi, maks 25 setelah **5 akhir pekan**". `COUNT(*)` menghitung baris ticker-minggu. Dengan 43 ticker, satu akhir pekan yang menghasilkan ≥5 baris langsung memberi `calib = 25` (maksimum). Bahkan harness (2 prediksi) memberi `calib = 10` setelah 1 akhir pekan. Hitung ulang: seharusnya `COUNT(DISTINCT week_start)` → 1.
+- **Perbaikan:** `SELECT COUNT(DISTINCT week_start) AS n FROM monday_gap WHERE outcome IN ('accurate','inaccurate')`. Tambah guard: `calib == 5 * distinct_weekends`.
+
+**M4 — Komponen redemption Exit Score tidak difilter per issuer (bocor lintas issuer)**
+- **Kategori:** rumus/ambang + keamanan data
+- **Bukti:** `poller.py`, `_latest_redemption_status`:
+  ```python
+  rows = query("SELECT status FROM redemption_windows ORDER BY observed_at DESC LIMIT 1")
+  ```
+  Tanpa `WHERE issuer = ?`. Lalu di `run_cycle` status itu dipakai untuk **semua** ticker: `_sc = exit_score_v1(dev_med, depth, median7d.get(ticker), red_status, ...)`. Setelah `seed_multichain.py` menulis baris `redemption_windows` issuer `coinbase`/`bstocks`/`robinhood` berstatus `unknown`, baris terbaru bisa berasal dari issuer mana pun → `NVDAc` memakai status redemption **xStocks**, atau seluruh universe kehilangan komponen redemption (`unknown` → tidak dihitung) sampai job hourly xStocks menulis lagi (hingga 55 menit). Setiap re-seed mingguan (E4) mengulang kontaminasi ini.
+- **Perbaikan:** `WHERE issuer = 'xStocks'` (atau map issuer per ticker dari `universe`). Ini juga menutup `dashboard/app.py::get_redemption_latest` yang berasumsi "satu aturan xStocks untuk semua produk" — asumsi itu sudah tidak benar.
+
+**M5 — `components_present` tidak disimpan → skor parsial ditampilkan & diband sebagai skor penuh (melanggar §2.3)**
+- **Kategori:** rumus/ambang + kejujuran tampilan
+- **Bukti:** `poller.py`, `run_cycle`:
+  ```python
+  _exit = _sc["score_100"]
+  _exit_ver = _sc["method_version"] if _exit is not None else None
+  ```
+  Hanya dua nilai ditulis. `schema.sql` `deviations` hanya punya `exit_score` + `exit_score_version`. Desain §2.3 eksplisit: *"Jumlah komponen tersedia + versinya selalu **disimpan**/ditampilkan bersama skor"*. Konsekuensi terukur: harness mencatat **"parsial 1 komponen → 25/25 = 100,0 parsial"**. Nilai 100,0 itu:
+  - `dashboard/risk.py::exit_score_band(100.0)` → `"high"` → teks "Tekanan keluar tinggi";
+  - `web/src/app/HomeClient.tsx` merender `r.exit_score.toFixed(1)` tanpa penyebut;
+  - aturan alert §2.3 (`exit_score ≥ 70`) tidak punya syarat jumlah komponen.
+  Dashboard sudah punya mitigasi untuk skor risiko lama (`ranked = [... if kv[1]["components_present"] >= 2]`) tapi **tidak** untuk Exit Score.
+- **Perbaikan:** tambah kolom `exit_score_components INTEGER` (migrasi baru, bukan edit migrasi lama) + isi dari `_sc["components_present"]`; `exit_score_band(score, components)` kembalikan `None` bila `components < 3`; alert `exit_high` syaratkan `components >= 3`. Tanpa ini, klaim "normalisasi parsial jujur" tidak terpenuhi di permukaan.
+
+**M6 — Ambang funding 8× terlalu ketat: komponen praktis selalu 0**
+- **Kategori:** rumus/ambang
+- **Bukti:** `poller.py`, `exit_score_v1`:
+  ```python
+  pct = abs(funding) * 100.0
+  if pct <= 0.01: comps["funding"] = 0.0
+  elif pct >= 0.10: comps["funding"] = 15.0
+  ```
+  `funding` adalah rate **per interval (hourly)** apa adanya dari API (komentar kode sendiri mengakui: *"Hyperliquid publishes the rate per funding interval (hourly), while the design labels the component 'funding 8 jam'; no silent x8 scaling is applied"*). Hitung ulang: ambang desain 0,01%–0,10% **per 8 jam** setara **0,00125%–0,0125% per jam**. Dengan rate hourly, `pct = 0.00125` → **0 poin** (di bawah 0,01). Untuk mencapai 15 poin perlu funding 0,10%/jam = **2,4%/hari ≈ 876%/tahun** — praktis tidak pernah terjadi. Jadi komponen 15 poin itu mati, dan Exit Score maksimum realistis turun dari 100 ke 85 (atau bobot efektifnya 0).
+- **Perbaikan:** revisi tertulis bertanggal (bukan penalaan diam-diam): kalikan ambang dengan 1/8 → `≤0,00125% → 0`, `≥0,0125% → 15`; **atau** pertahankan angka dan ubah label menjadi "per interval" dengan penjelasan eksplisit bahwa nilainya 8× lebih ketat dari maksud desain. Mana pun, harus ada catatan revisi — bukan komentar kode.
+
+**M7 — `poller_health` dipindai penuh setiap siklus dan setiap 5 menit (tanpa indeks)**
+- **Kategori:** kuota/reads
+- **Bukti 1:** `poller.py`, `run_cycle` awal:
+  ```python
+  done = query("SELECT COUNT(*) AS n FROM poller_health WHERE cycle_ts = ? AND cycles_ok = 1", [cycle_ts])
+  ```
+  `schema.sql` tidak punya indeks pada `poller_health`. `WHERE cycle_ts = ?` tanpa indeks = **full scan**. Hitung ulang: 6.079 baris × ~356 siklus/hari = **2,16 jt reads/hari = 65 jt reads/bulan (13% dari 500 jt)** — dari satu query guard. Tumbuh linear: 1 tahun (130 rb baris) → 46 jt reads/hari.
+- **Bukti 2:** `dashboard/app.py`, `get_observed_dates`:
+  ```python
+  "SELECT DISTINCT substr(cycle_ts,1,10) AS d FROM poller_health WHERE cycles_ok = 1 AND cycle_ts >= '2026-10-24'"
+  ```
+  `@st.cache_data(ttl=300)` → 288 scan/hari × 6.079 baris = **1,75 jt reads/hari per proses dashboard (52 jt/bulan)**. Query ini lolos guard §6.3 karena larangan hanya menyebut `snapshots`/`deviations`/`perp_snapshots`/`liquidation_watch`.
+- **Perbaikan:** `CREATE INDEX idx_health_cycle ON poller_health(cycle_ts)` dan `idx_health_ok_cycle ON poller_health(cycles_ok, cycle_ts)`; atau ganti cek idempotensi dengan `SELECT 1 ... LIMIT 1` (masih scan, jadi indeks tetap perlu). Perluas larangan §6.3 ke `poller_health`.
+
+**M8 — `deviations` tidak punya indeks `(ts)`; semua query "latest N lintas ticker" jadi full scan**
+- **Kategori:** kuota/reads
+- **Bukti:** `schema.sql` hanya `CREATE INDEX idx_deviations_ticker_ts ON deviations(ticker_id, ts)`. Query tanpa filter ticker:
+  - `api/worker.js` `loadLatest`: `"SELECT ticker_id, ts, ... FROM deviations ORDER BY ts DESC, id DESC LIMIT 500"` — tanpa WHERE;
+  - `dashboard/turso_read.py::get_latest_exit_scores`, `dashboard/app.py::get_latest_deviations` dan `get_pools_excluded` — pola sama.
+
+  `ORDER BY ts DESC` tanpa indeks pada `ts` tidak bisa memakai `(ticker_id, ts)` (kolom pertama tidak dikonstrain) → SQLite memindai tabel + sort. Hitung ulang: 76.767 baris sekarang → **~77 rb reads per pemanggilan**. Dengan 4 pemanggil × 288/hari = **88 jt reads/hari** bila cache selalu dingin. Ini kandidat terkuat penyebab burst +14,19 jt (lihat Q12).
+- **Perbaikan:** `CREATE INDEX idx_deviations_ts ON deviations(ts)`; ganti `ORDER BY ts DESC, id DESC` → `ORDER BY ts DESC` (id hanya tiebreak, bisa diselesaikan dalam grup ts). Verifikasi dengan `EXPLAIN QUERY PLAN` → tidak boleh ada `SCAN deviations`.
+
+**M9 — `seed_multichain.py` melakukan `DELETE FROM universe/pools` meski ticker sudah punya riwayat**
+- **Kategori:** skema/migrasi + keamanan data
+- **Bukti:** `seed_multichain.py::build_statements`:
+  ```python
+  stmts.append(("DELETE FROM pools WHERE ticker_id = ?", [sym]))
+  stmts.append(("DELETE FROM universe WHERE ticker_id = ?", [sym]))
+  ```
+  Ticker yang sudah live 3 hari punya baris di `deviations`, `perp_snapshots`, `liquidation_watch`, `monday_gap`, `alert_log`. `deviations.ticker_id REFERENCES universe(ticker_id)`. Dua kemungkinan, keduanya buruk: FK aktif → DELETE gagal → seluruh seed gagal; FK tidak aktif → **riwayat yatim** (deviations tanpa universe → `JOIN universe` di dashboard/worker menghilangkan ticker dari semua tampilan, padahal datanya ada). E4 menjadikan seed ulang mingguan sebagai mekanisme verifikasi — jadi ini pasti terpicu.
+- **Perbaikan:** jangan DELETE. `UPDATE universe SET status='inactive', updated_at=?` lalu `UPDATE pools SET is_active=0`; INSERT/UPDATE ticker yang lolos. Seed harus idempotent lewat UPSERT, bukan hapus-lalu-tulis.
+
+**M10 — Urutan deploy tidak ditegakkan secara mekanis (sudah menyebabkan P0 12 Nov)**
+- **Kategori:** skema/migrasi
+- **Bukti:** `poller.py` INSERT `deviations` 14 kolom menyebut `exit_score`/`exit_score_version`. Pada DB tanpa kolom itu, `pipeline(stmts)` melempar → ditangkap → heartbeat `cycles_ok=0`. Itulah yang terjadi 20:46–21:21 WITA. Header migrasi sudah memperingatkan; peringatan teks tidak cukup.
+- **Perbaikan:** guard startup di `poller.py::main()` sebelum siklus pertama: `PRAGMA table_info(deviations)` + `sqlite_master` untuk 3 tabel baru; bila kurang → `log()` + `sys.exit(2)` dengan pesan "jalankan migrasi 2026-11-12 dulu". Gagal cepat dan berisik, bukan gagal 35 menit senyap per siklus.
+
+**M11 — Link DEX hardcode `dexscreener.com/solana/` untuk semua chain**
+- **Kategori:** kejujuran web / UX
+- **Bukti:** `web/src/app/ticker/[id]/page.tsx`:
+  ```jsx
+  href={`https://dexscreener.com/solana/${v.pair_address}`}
+  ```
+  dan `dashboard/app.py`, tabel venue:
+  ```python
+  f"https://dexscreener.com/solana/{pair}"
+  ```
+  Live: 106 pool, 35 Solana, 71 Base/BSC/Robinhood → **67% link mengarah ke chain yang salah**. Klik link untuk `NVDAc` membuka halaman DexScreener Solana yang tidak ada.
+- **Perbaikan:** pakai `v.chain` (sudah tersedia di `venues`) → `https://dexscreener.com/${chain}/${pair}`. Tambah test yang memastikan host path == `pool.chain` untuk tiap venue.
+
+**M12 — Tabel "pending" menampilkan Base/BNB/Robinhood sebagai "terverifikasi, belum di-poll" padahal sudah live di halaman yang sama**
+- **Kategori:** kejujuran web
+- **Bukti:** `dashboard/logic.py::PENDING_COVERAGE` dan `api/worker.js::PENDING_COVERAGE` berisi tiga baris `verdict: "verified"` dengan teks:
+  - `"NVDAc (verified); MSTRc, SNDKc + 10 more (to verify)"` — padahal 9 ticker Coinbase sudah di-seed;
+  - `"TSLA, NVDA, SPY (verified); 10 more (to verify)"` — padahal 13 sudah di-seed.
+
+  `build_coverage`/`loadCoverage` menurunkan baris `live` dari `pools` tapi **tidak pernah menghapus** baris pending untuk chain yang sudah live. Hasilnya halaman menampilkan dua tabel yang saling menyangkal: "Base — Coinbase — 9 ticker — LIVE" dan "Base — Coinbase — verified, belum di-poll".
+- **Perbaikan:** filter `pending` di `build_coverage`/`loadCoverage` dengan `chain not in {g["chain"] for g in live}`. Perbarui teks token agar sesuai jumlah yang benar-benar di-seed.
+
+**M13 — Lisensi DexScreener belum dicek, padahal data multichain sudah tayang publik**
+- **Kategori:** lisensi
+- **Bukti:** `CHECKLIST_QA.md` F5: "BELUM DILAKUKAN"; `VERIFIKASI_MULTICHAIN_2026-11-12.md` §9 dan `SEED_MULTICHAIN_2026-11-12.md` §7 mencatat larangan resale/redistribusi + "produk kompetitor". Desain §7.2 butir 7 menetapkannya sebagai tugas minggu pertama **sebelum** display publik chain baru. Deploy sudah terjadi.
+- **Perbaikan:** keputusan tertulis sebelum ekspansi berikutnya: (a) cek ToS primer, (b) bila ambigu — sembunyikan chain baru di balik flag, atau (c) tampilkan hanya agregat turunan (deviasi, kedalaman) tanpa data mentah per-pair. Ini keputusan Septian, bukan Chief.
+
+---
+
+### SHOULD-FIX
+
+**S1 — Migrasi tidak self-idempotent (klaim "idempotent" hanya benar untuk 3 dari 5 statement)**
+- **Bukti:** `migrations/2026-11-12-penambahan.sql` akhir file:
+  ```sql
+  ALTER TABLE deviations ADD COLUMN exit_score REAL;
+  ALTER TABLE deviations ADD COLUMN exit_score_version TEXT;
+  ```
+  Tanpa guard. Jalan kedua → `duplicate column name`. Header memerintahkan cek `PRAGMA` manual. `DIFF_RINGKAS.md` §3.3 menyebut "Satu file migrasi idempotent (klaim)"; `CHECKLIST_QA.md` B2 "TERUJI di sqlite lokal" — yang teruji adalah harness yang memeriksa dulu, bukan file migrasinya.
+- **Perbaikan:** bungkus dua ALTER dalam runner Python kecil yang membaca `pragma_table_info` (pola `migrations/2026-11-09-pools-excluded.sql`), atau beri nama file `*.sql` + `apply_migration.py` yang idempotent. Jangan biarkan file bernama "migration" yang tidak bisa dijalankan dua kali.
+
+**S2 — `perp_px` bisa berisi mid, bukan mark, tanpa penanda di baris**
+- **Bukti:** `poller.py::fetch_xyz_market_data`:
+  ```python
+  perp = c.get("mark_px") if c.get("mark_px") is not None else mids.get(ticker)
+  ```
+  `perp_snapshots.perp_px` didokumentasikan sebagai "harga mark Hyperliquid XYZ" (`schema.sql`, migrasi). Saat `metaAndAssetCtxs` gagal, nilai mid ditulis ke kolom yang sama; satu-satunya jejak adalah `gap_note` di `poller_health` — yang tidak dibaca konsumen `perp_snapshots`. `dev_perp_vs_token_pct` lalu dihitung dari besaran yang berbeda.
+- **Perbaikan:** tambah kolom `px_source TEXT` (`mark`/`mid`) dan tulis; atau jangan fallback (tulis baris dengan `perp_px NULL`, funding/OI NULL).
+
+**S3 — Komentar `funding` salah satuan di dua tempat**
+- **Bukti:** `schema.sql`: `funding REAL, -- funding rate per interval 8 jam, apa adanya dari API`; idem di migrasi. API Hyperliquid menerbitkan rate **per jam**. Data dictionary yang salah akan menyesatkan siapa pun yang membaca DB (termasuk reviewer berikutnya).
+- **Perbaikan:** ubah komentar menjadi "per funding interval (hourly) sebagaimana diterbitkan API".
+
+**S4 — Ambang lag 120/600 detik inert tanpa revisi tertulis**
+- **Bukti:** `migrations/...penambahan.sql` tidak punya kolom `oracle_lag_s`; `poller.py::run_hourly_liquidation` memanggil `liquidation_status(div, None, None)` — argumen lag selalu `None`. `CHECKLIST_QA.md` D5: "BELUM ADA" revisi. Desain §2.4 masih menyatakan tiga ambang berlaku.
+- **Perbaikan:** revisi desain bertanggal yang mencabut ambang lag, **dan** kalimat di web: "v1 mengukur divergensi mark-vs-oracle saja; umur oracle tidak terukur dari endpoint publik". Label "eksperimental" + admin-only tidak menutupi klaim yang tidak berlaku.
+
+**S5 — Dashboard `get_venues_live` masih memakai pola global `MAX(ts)` yang sudah diperbaiki di Worker**
+- **Bukti:** `dashboard/app.py`:
+  ```python
+  "COUNT(DISTINCT pool_id) ... FROM snapshots WHERE ts = (SELECT MAX(ts) FROM snapshots)"
+  ```
+  `api/worker.js` sudah memperbaikinya (P2-M2) dengan komentar eksplisit: *"the old COUNT at the single global MAX(ts) dipped to ~25/35 on off-minutes because Tier 2 pools had no snapshot at that minute"*. Jadi dua permukaan memberi angka "venues live" yang berbeda untuk data yang sama. Dengan 106 pool / 43 ticker kadens campuran, selisihnya lebih besar.
+- **Perbaikan:** port pola per-ticker anchor dari `worker.js` ke `get_venues_live`, atau hapus KPI itu dari dashboard dan ambil dari `/api/health`.
+
+**S6 — `liquidation_alert_tickers` tidak direset saat job gagal**
+- **Bukti:** `poller.py::run_hourly_liquidation` — pada `if not ctxs: return frag` dan `if not rows: return frag`, fungsi kembali **sebelum** `state["liquidation_alert_tickers"] = alert_now`. State lama bertahan → cabang follow-up 5-menit (`if state.get("liquidation_alert_tickers") ...`) terus menulis baris tambahan meski kondisi sudah reda.
+- **Perbaikan:** set `state["liquidation_alert_tickers"] = {}` di setiap jalur gagal, atau simpan `{"tickers": {...}, "ts": ...}` dan perlakukan sebagai kosong bila `ts` lebih tua dari 2 jam.
+
+**S7 — Monday Gap: run Minggu yang terlewat hilang tanpa catatan; outcome `pending` tak pernah kedaluwarsa**
+- **Bukti:** `run_weekly_monday_gap` hanya memprediksi bila `wd == 6 and hour >= 22`; bila poller mati 22:00–24:00 Minggu (riwayat: outage 44 jam 30 Okt–1 Nov), minggu itu hilang tanpa `gap_note`. `_monday_gap_fill_outcomes` membaca **semua** baris `pending` tanpa batas umur — baris yang tak pernah dapat harga Monday tetap `pending` selamanya.
+- **Perbaikan:** pada cabang `wd == 0`, bila `last_monday_gap_week != sabtu-lalu`, tulis `gap_note` "monday_gap terlewat minggu X". Tandai `outcome='unvaluable'` setelah 7 hari.
+
+**S8 — Komponen redemption konstan 20 sepanjang akhir pekan (tidak mendiskriminasi)**
+- **Bukti:** `_exit_redemption_component`: `if s == "closed": return 20.0`. Saat akhir pekan, `redemption_schedule_status` = `"closed"` untuk semua ticker → semua dapat 20/20. Variasi Exit Score di akhir pekan (justru jendela yang dipantau) hanya datang dari deviasi/depth/funding/OI, sementara komponen berbobot 20 itu memberi nilai penuh seragam.
+- **Perbaikan:** dokumentasikan sebagai keterbatasan v1 (komponen ini mengukur "pintu tertutup", bukan gradien), atau bedakan `closed` dengan `close_in_hours` yang tersisa (mis. `closed` + 60 jam sampai Senin → 10).
+
+**S9 — Guard anti-full-scan memberi rasa aman palsu**
+- **Bukti:** `qa/test_coverage_2026-11-12.mjs` hanya grep `SELECT *`/`COUNT(*)` pada 4 tabel besar. Yang lolos: full scan `poller_health` (M7), full scan `deviations` tanpa `WHERE` (M8) — keduanya bukan `SELECT *`/`COUNT(*)` dan keduanya nyata.
+- **Perbaikan:** guard harus menjalankan `EXPLAIN QUERY PLAN` untuk tiap query baru pada DB salinan dan **gagal bila ada `SCAN <tabel>`** tanpa `USING INDEX`. Itu satu-satunya bentuk guard yang menangkap kelas bug ini.
+
+**S10 — Harness bukti ada di `/tmp`, bukan di repo**
+- **Bukti:** `HASIL_TEST.md` §3.2: "84 PASS" dari `/tmp/test_penambahan.py`, diakui "ephemeral, bukan file repo, tidak di-commit". Tidak ada yang bisa menjalankannya ulang. Guard repo baru hanya 1 file, dan `CHECKLIST_QA.md` C2/C3/C6/C7/C8/C9 = "BELUM ADA di repo" (7 dari 8 butir §5.4).
+- **Perbaikan:** promosikan harness ke `qa/test_penambahan_2026-11-12.py` sebelum ronde fix berikutnya. Tanpa itu, klaim "84 PASS" tidak dapat diaudit.
+
+**S11 — Backtest tidak menguji apa pun tentang F1/F3 dan kaki akhir pekan**
+- **Bukti:** `BACKTEST_ALERT_2026-11-12.md` §3: semua 37 event adalah tipe `spread` hari kerja; `deviation_high` = 0; `dev_vs_close_pct` NULL 100%. Tidak ada backtest `perp_deviation` atau `exit_high` — keduanya belum ada di `bot.py` saat backtest dibuat. Desain §5.1 mengizinkan perp dinyatakan "forward-only" bila histori publik tidak ada — pernyataan itu belum ditulis.
+- **Perbaikan:** satu paragraf tertulis: "backtest ini hanya menguji alert spread hari kerja; F1/F3 dan kaki akhir pekan = forward-only, n=0 per 12 Nov". Tanpa itu, angka 100% mudah dibaca sebagai akurasi paket.
+
+**S12 — Tiga estimasi kuota, tak satu pun memasukkan jendela rapat**
+- **Bukti:** desain §6.2 "+2,1 jt → 3,4 jt (34%)"; `KUOTA_PENAMBAHAN` "(a)+(b)+(c) 5,32 jt (53,2%)"; `SEED_MULTICHAIN` §4 "±4,8 jt (48%)". Ketiganya memakai 288 siklus/hari. Ground truth dari backtest §1: hari kerja 381–385 baris/ticker, akhir pekan 288 → rata-rata **~356 siklus/hari** (6.079 siklus / 17,2 hari efektif). Semua estimasi **understate 23,6%**. `KUOTA_PENAMBAHAN` §1 bahkan mengakui: *"Jendela rapat 1-menit belum dihitung di skenario bawah"*.
+- **Perbaikan:** hitung ulang dengan 356 (tabel §4 di bawah). Lihat Q5.
+
+**S13 — Seed menulis `redemption_windows` tanpa `window_note_en`**
+- **Bukti:** `seed_multichain.py::build_statements`:
+  ```python
+  "INSERT INTO redemption_windows (issuer, asset, status, window_note, observed_at, source, next_open_at) VALUES (?,?,?,?,?,?,?)"
+  ```
+  Kolom `window_note_en` tidak diisi. `web/src/app/ticker/[id]/page.tsx` merender `lang === "en" ? detail.redemption_note_en : detail.redemption_note` → untuk 3 issuer baru, pengguna EN tidak melihat catatan sama sekali. Padahal `app.py` punya komentar eksplisit "falling back to the Indonesian text would reintroduce the leak" — di sini hasilnya catatan kosong.
+- **Perbaikan:** isi `window_note_en` dari `ISSUER_META[...]["redemption_note"]` versi EN, atau tambah pasangan EN di `ISSUER_META`.
+
+**S14 — `_oi_24h_ago` = 1 round-trip HTTP per ticker per siklus, serial**
+- **Bukti:** `poller.py::run_cycle`, di dalam loop `for ticker, lst in per_ticker.items()`: `_oi_old = _oi_24h_ago(ticker, cycle_dt)` → `query()` = satu POST Hrana. 10 ticker × 356 siklus = **3.560 round-trip/hari** di jalur kritis, ditambah `_latest_redemption_status` (1) dan DexScreener (4 batch). Pada jendela rapat (60 detik/siklus) ini menambah latensi serial.
+- **Perbaikan:** satu query gabungan `SELECT ticker_id, oi FROM perp_snapshots WHERE (ticker_id, ts) IN (...)` untuk semua ticker, atau cache OI-24h di `state.json` sekali per jam.
+
+---
+
+### NIT
+
+**N1 — Batas band 40/70 diduplikasi di 3 tempat tanpa fixture bersama:** `dashboard/risk.py::exit_score_band`, `web/src/lib/risk.ts::exitScoreBand`, dan (menurut desain §2.3) ambang alert 70 di `bot.py`. Tidak ada tes yang mengunci ketiganya sama. Tambah fixture string-lock.
+
+**N2 — Panel perp menghitung `dev_perp_vs_token_pct` di UI tanpa gate kesegaran 15 menit:** `app.py` (`_dev_pt = (_perp["perp_px"] - _dw) / _dw * 100`) dan `page.tsx` melakukan hal sama, sementara `_latest_perp_by_ticker` di poller menyaring 15 menit. Baris perp berumur 3 hari tetap merender deviasi seolah terkini (timestamp ditampilkan, tapi angka tidak diberi label basi). Tambah label "basi" bila `perp_ts` > 15 menit.
+
+**N3 — `refresh_median_depth_7d` hanya memperbarui ticker yang punya data siklus itu:** `refresh_median_depth_7d(state, cycle_dt, list(per_ticker.keys()))`. Ticker yang absen satu siklus memakai median lama tanpa batas umur. Tambah `median_depth_7d_date` per ticker, atau hitung ulang semua ticker universe sekali sehari.
+
+**N4 — `monday_gap.outcome` tanpa CHECK:** nilai sah hanya `pending/accurate/inaccurate` tapi tidak ditegakkan skema. Tambah `CHECK (outcome IN (...))` di migrasi berikutnya.
+
+**N5 — `coverage_live_line` (i18n) tidak ada di paket → tidak bisa diverifikasi:** `app.py` merender `st.markdown(t(lang, "coverage_live_line"))` **di atas** baris dinamis `coverageShort`. Bila string itu masih menyebut "Solana + xStocks" secara hardcode, ia sekarang salah. Minta isi `dashboard/i18n.py` dan `web/src/lib/i18n.ts` untuk kata kunci `coverage_live_line`, `coverage_short`, `coverage_banner_only`.
+
+---
+
+### Yang saya periksa dan TIDAK laporkan sebagai temuan (benar)
+
+- Bobot Exit Score 30+25+20+15+10 = **100** ✓; confidence Monday Gap 30+25+20+25 = **100** ✓.
+- Normalisasi parsial `total/max_possible×100` **secara matematis** benar dan tidak menyamarkan penyebut nol (`max_possible == 0 → None`) ✓. Masalahnya di persistensi (M5), bukan di rumus.
+- `liq_px_estimate` dan `distance_pct` selalu NULL; SPY/QQQ/GLD tidak punya baris perp (`continue` bila `perp is None`) — **tidak ada fabrikasi** ✓.
+- `oi_usd = oi_base × markPx` benar (Hyperliquid menerbitkan `openInterest` dalam satuan base) ✓.
+- `INSERT ... SELECT ... WHERE (SELECT COUNT(*)...) < ? AND NOT EXISTS (...)` di Worker dan `turso_read.py` menegakkan cap 500/jam secara atomik ✓.
+- `query()` di `turso_read.py` menolak non-SELECT; token tidak pernah dicetak/ditulis ✓.
+- `seed_multichain.py --live` menolak tanpa `RADAR_SEED_CONFIRM` (exit 2) ✓.
+- Aritmetika backtest konsisten internal: 97 baris = 90 event (7 ganda) ✓; 52+1+44 = 97 ✓; 32/37 = 86,49% ✓; 11×6.079 + 2×4.949 = 76.767 ✓.
+- `only_solana_xstocks` diturunkan dari data, tidak hardcode ✓ (yang hardcode adalah tabel pending — M12).
+
+---
+
+## 3. HAL YANG DIMINTA DIPERIKSA
+
+### (1) Rumus Exit Score & confidence Monday Gap
+Bobot **masuk akal secara struktur** dan jumlahnya benar. Dua cacat substantif:
+- **Exit Score**: normalisasi parsial jujur di rumus, **tidak jujur di penyimpanan/tampilan** (M5). Skor 1-komponen = 100,0 → band "tinggi" → berpotensi memicu `exit_high`. Desain mewajibkan jumlah komponen disimpan; kode tidak.
+- **Funding**: satuan salah 8× (M6) — komponen praktis mati.
+- **Redemption**: komponen konstan 20 sepanjang akhir pekan (S8) dan bocor antar-issuer (M4).
+- **Monday Gap confidence**: kalibrasi saturasi setelah 1 akhir pekan (M3) — 5× lebih cepat dari desain.
+
+### (2) Ambang 120/600 detik & 1%/3% oracle Hyperliquid
+- 120/600 detik: **inert**. Tidak ada kolom, tidak ada sumber. Bukan salah angka — tidak terukur. Wajib revisi tertulis (S4).
+- 1%/3% divergensi mark-vs-oracle: **plausibel tapi nol observasi**. Pada Hyperliquid, mark–oracle biasanya basis poin; 1% adalah kejadian besar, 3% ekstrem. Karena belum ada satu pun baris PERINGATAN/KRITIS (liquidation_watch 20 baris, semua `ok`), ambang ini belum bisa dinilai. Bukan must-fix; catat sebagai "belum teruji, forward-only".
+- Kesimpulan: **F4 v1 secara efektif hanya satu ukuran** (divergensi). Label "eksperimental" + admin-only cukup untuk risiko pengguna, **tidak cukup** untuk klaim metodologi — web harus menyatakan dua dari tiga ukuran tidak tersedia.
+
+### (3) Estimasi kuota: mana yang benar
+**Tidak ada yang benar sepenuhnya; `SEED_MULTICHAIN` §4 paling dekat.** Lihat tabel §4. Penyebab selisih: (a) desain memakai 2,5 pool/ticker dan melewatkan Robinhood sama sekali; (b) KUOTA menghitung `perp_snapshots` **per chain** (2× lipat) padahal perp hanya 10 ticker total; (c) ketiganya memakai 288 siklus/hari vs 356 aktual. Setelah dikoreksi: **≈4,7 jt writes/bulan (47%)**, bukan 3,4 / 5,3 / 4,8.
+
+### (4) Skema & migrasi
+- Idempotensi: **tidak** untuk dua ALTER (S1); ya untuk CREATE (3 tabel + 3 indeks).
+- Urutan migrasi-dulu-baru-poller: **dilanggar** 12 Nov (P0), dan **tidak ada guard mekanis** — hanya komentar (M10).
+- Fabrikasi: **tidak ditemukan**. Satu-satunya masalah provenance adalah `perp_px` fallback mark→mid tanpa penanda baris (S2).
+- Dua cacat skema tambahan: `deviations` tanpa indeks `(ts)` (M8), `poller_health` tanpa indeks apa pun (M7).
+
+### (5) Kejujuran tampilan terhadap status live INI
+Campuran:
+- **Jujur & otomatis:** banner `only_solana_xstocks` turun sendiri saat pool Base/BNB/Robinhood masuk; `NULL` dirender "—"/"tidak tersedia" di semua permukaan; `exit_score_col_note` hilang otomatis saat skor terisi; label "eksperimental" ada di judul seksi.
+- **Tidak jujur:** tabel pending menyangkal tabel live (M12); link DEX menunjuk chain salah untuk 67% pool (M11); skor parsial tampil sebagai skor penuh (M5); halaman per-ticker 30/43 ticker error 400 (M1) — pengguna yang mengklik `TSLAr` dari beranda mendapat "load error", bukan data.
+- **Tidak terverifikasi:** string i18n `coverage_live_line`/`coverage_short` tidak ada di paket (N5) — minta isinya.
+
+### (6) Testing
+- Backtest membuktikan **hanya** satu hal: alert `spread` hari kerja menutup < 0,5% dalam 24 jam pada 32/37 event. Itu pun dengan caveat yang ditulis jujur (2 tick buruk, 5 GOOGLx keluar penyebut, rekonstruksi tanpa price-guard). **Tidak membuktikan** kaki akhir pekan (0/0), perp (0), exit_high (0).
+- Forward test: 1 trade HOODx terbuka, 0 tertutup — **belum ada bukti**, dan desain minta ≥4 akhir pekan (baru mulai 12 Nov, akhir pekan pertama 16 Nov).
+- Guard QA: 1 dari 8 butir §5.4 ada di repo, dan butir yang ada (anti-full-scan) **tidak menangkap** full-scan nyata (S9).
+- **Kesimpulan:** paket ini belum punya bukti untuk 3 dari 5 fitur. Yang ada bukan salah — hanya belum cukup.
+
+### (7) Jawaban PERTANYAAN_TERBUKA
+
+| Q | Vonis | Jawaban ringkas |
+|---|---|---|
+| **Q1** funding | **Terjawab** | Satuan benar = **per interval (hourly)**, dan kode menyimpan apa adanya (jujur). Ambang 0,01%/0,10% **salah 8× terlalu ketat** → komponen praktis selalu 0 (M6). Perbaikan: (b)+(c) — koreksi ke 0,00125%/0,0125% **atau** relabel "per interval", keduanya lewat revisi tertulis. |
+| **Q2** oracle lag | **Terjawab** | Guard v1 = **satu ukuran saja** (divergensi); jarak likuidasi NULL, lag tak terukur. Tidak ada sumber publik lain di endpoint info (tidak ada timestamp oracle di `metaAndAssetCtxs`/`allMids`). Label + admin-only **tidak cukup** — web harus menyatakan "dua dari tiga ukuran belum tersedia" sampai revisi desain bertanggal (S4). |
+| **Q3** duplikasi Exit Score | **Terjawab** | **Bukan** duplikasi berbahaya: rumus hanya di `poller.py`; `risk.py` hanya band; `risk.ts` hanya band. Pemisahan sah. Yang perlu dikunci: batas 40/70 ada di 3 bahasa tanpa fixture bersama (N1). Batas 70 = alert 70 **konsisten** — bukan bug. |
+| **Q4** sufiks `r` vs `TSLA-RH` | **Terjawab — dan ini memunculkan bug** | Sufiks 1 huruf (`c`/`B`/`r`) **sudah live**; mengganti ke `TSLA-RH` akan merusak lebih banyak (validasi regex M1, parsing `ticker_id`). **Pertahankan `r`.** Tapi regex Worker harus diperbaiki dulu (M1) — saat ini ketiga sufiks ditolak. |
+| **Q5** selisih kuota | **Terjawab dengan hitung ulang** | `SEED` §4 paling dekat. Angka benar ≈ **4,7 jt/bln (47%)** untuk 106 pool/43 ticker/356 siklus. Skenario (c) **belum "AMAN BERSYARAT"**: retensi+agregasi belum terbukti (storage +4,7 MB/hari tanpa penahan), dan reads 3,7× proyeksi dokumen. `--max-pools-per-ticker 3` (71 pool) → ≈**3,6 jt (36%)** — **ya, lebih tepat sebagai default**. |
+| **Q6** TSLAon 10× | **Butuh verifikasi live** | "Salah baca desimal" **plausibel** (2 pool persis 10×, pool ketiga cocok) tapi tidak terbukti. Tidak mengubah vonis GAGAL (gagal karena **venue**, bukan total). Guard yang disarankan: bandingkan halaman pair vs API (sudah dilakukan) + tolak bila `liq` berubah >5× antar tarikan tanpa perubahan `volume`. Tidak relevan untuk paket ini (Ondo tidak masuk universe). |
+| **Q7** CRCLc $221rb→$12,7rb | **Terjawab** | Bukti kuat bahwa verifikasi satu tarikan **tidak cukup** untuk ticker dekat garis. Live sekarang: TSLAc $533rb (+6,7%), MSFTc $582rb, AAPLc $727rb — semuanya **1 pool** ≥ $100rb. Verifikasi mingguan tidak cukup; ticker dalam +20% dari ambang butuh cek harian. Dan mekanisme seed saat ini (DELETE+INSERT, M9) akan **menghapus riwayat** bila ticker gugur. |
+| **Q8** communityV3 | **Terjawab** | Bukti on-chain cukup untuk vonis final sekarang: factory klon, `owner()=0x0`, fee 2%/1,5%, tidak ada merek/router/dokumen, DexScreener sendiri label "Unknown DEX". Syarat buka ulang di §9 sudah jelas (frontend bernama + bukti on-chain router→pool). Satu tambahan: **jangan** hitung pool `communityV3` dalam `qualifying_depth` meski ticker lolos lewat venue lain — konsisten dengan aturan seed yang men-drop `dexId` berupa alamat `0x…`. |
+| **Q9** turnover Robinhood | **Terjawab** | Turnover >10× pada satu pair (NVDA/WETH $11,9 jt vol vs $1,13 jt liq) adalah **flag, bukan gate**. Aturan §1.1 (likuiditas + venue) sudah benar dan tidak boleh diubah. Tambahkan kolom "vol/liq" di laporan seed dengan tanda "perlu pantau" untuk rasio >10. Tidak mengubah frekuensi polling 5 menit. |
+| **Q10** lisensi DexScreener | **Tidak bisa dijawab dari data ini — dan sekarang mendesak** | Tidak ada teks ToS di paket. Batas "analisis internal" vs "redistribusi" tidak bisa saya simpulkan tanpa membaca ToS primer. Fakta yang relevan: penyimpanan 5-menit ke Turso **sudah berjalan sejak 24 Okt** untuk Solana, dan **sekarang** juga untuk Base/BNB/Robinhood yang tayang publik. Ini keputusan Septian sebelum ekspansi berikutnya (M13). |
+| **Q11** metodologi web | **Terjawab — melanggar §4.5** | `methodology/page.tsx` +2 baris; `SECTIONS` hanya `exit_score` + `perp`; **tidak ada** seksi `monday_gap_v1`/`liq_guard_v1`. Isi string i18n tidak ada di paket → tidak bisa saya nilai apakah memuat rumus+bobot. Banner: **ya, bisa disalahbaca** — M12 (pending "verified" berdampingan dengan live). |
+| **Q12** lonjakan reads +14,19 jt | **Butuh verifikasi live, tapi ada kandidat kuat** | Kandidat #1: **tombol Refresh dashboard memanggil `st.cache_data.clear()`** (`app.py`), yang menginvalidasi *semua* cache → `get_latest_deviations`, `get_latest_exit_scores`, `get_pools_excluded`, `get_spark_data`, `get_weekly_top`, `get_all_venues_latest`, `get_venues_live`, `get_observed_dates` semuanya jalan ulang; 4 di antaranya **full scan `deviations`** (M8, ~77 rb baris). ~50 klik ≈ 14 jt reads. Kandidat #2: full scan `poller_health` per siklus (M7). Tindakan sebelum ekspansi: tambah `idx_deviations_ts` + `idx_health_cycle`, ganti `st.cache_data.clear()` menjadi clear terarah, lalu cek `usage-api-log.md` pada menit burst. **Jangan tahan deploy** (sudah live) tapi **tahan ekspansi** sampai teratribusi. |
+| **Q13** F1/F3 alert & poller multichain | **Terjawab — D5 selesai, D4 belum** | **D5 (poller multichain) SELESAI** — bukti: `poller.py` punya `fetch_dex_batches_by_chain`, `MULTICHAIN_SEED`, batch per chain; live 106 snapshot/43 deviasi. **D4 (`bot.py`) tidak terbukti** — `bot.py` tidak ada di paket, `CHECKLIST_QA.md` D1 "BELUM ADA", dan tidak ada laporan deploy. Jadi F1/F3 **dihitung + ditampilkan, jalur alert-nya belum terbukti**. Ini harus ditutup dengan salah satu: (a) bukti `bot.py` berubah + tes `evaluate_alerts` 0,99/1,00 dan 69/70, atau (b) pernyataan tertulis "F1/F3 v1 display-only, alert menyusul". Tanpa itu, klaim "5 fitur selesai" menyesatkan. |
+| **Q14** Monday Gap 2/13 | **Terjawab — dan lebih buruk dari yang ditanyakan** | F2 memang dirancang hanya untuk ticker dengan `dev_vs_median` (≥2 pool lolos). Itu **tidak dikomunikasikan** di web. Dengan universe 43 ticker, ~9 ticker (semua yang 1-pool: AAPLc, AMZNc, SNDKc, MSFTc, TSLAc, BABAB, COINx, HOODx, METAx) **selalu** NULL. Prediksi realistis ≈ 2–5/minggu, bukan "~26 baris/minggu" (desain §3.4). Target "8 akhir pekan" → **~16–40 prediksi total**, cukup untuk kalibrasi arah tapi tidak untuk per-ticker. Perbaikan: (i) tampilkan "F2 tidak berlaku: butuh ≥2 pool" per ticker; (ii) perbaiki estimasi baris di desain; (iii) definisi D alternatif **tidak** diusulkan (di luar scope 5 fitur). |
+
+---
+
+## 4. RINGKASAN ANGKA YANG DIHITUNG ULANG
+
+| # | Angka | Klaim di paket | Hitung ulang saya | Cocok? |
+|---|---|---|---|---|
+| 1 | Bobot Exit Score | 30+25+20+15+10 | 100 | ✅ |
+| 2 | Bobot confidence Monday Gap | 30+25+20+25 | 100 | ✅ |
+| 3 | Akurasi backtest | 32/32 = 100%; 32/37 = 86,5% | 100,0%; 86,49% | ✅ |
+| 4 | Baris vs event alert_log | 97 baris = 90 event | 52+1+44 = 97; 97−7 = 90 | ✅ |
+| 5 | Baris `deviations` | 76.767 (13 ticker) | 11×6.079 + 2×4.949 = 76.767 | ✅ |
+| 6 | Siklus poller/hari | 288 (semua estimasi kuota) | 6.079 / 17,2 hari efektif ≈ **356** | ❌ **understate 23,6%** |
+| 7 | Writes/bulan skenario live | desain 3,4 jt (34%) / KUOTA 5,32 jt (53,2%) / SEED 4,8 jt (48%) | **≈4,7 jt (47%)** untuk 106 pool, 43 ticker, 10 perp, 356 siklus | ⚠️ SEED paling dekat |
+| 8 | Writes `perp_snapshots` di KUOTA (b)+(c) | 336.960 × 2 = 673.920 | 10 ticker × 356 × 30 × 3 = **320.400** (perp tidak per-chain) | ❌ **2× lipat** |
+| 9 | Reads/bulan (rate-basis) | ~52 jt (10,4%) | 77,7 jt / 12 hari = 6,475 jt/hari = **194 jt (38,8%)** | ❌ **3,7× lebih tinggi** |
+| 10 | Reads dari cek idempotensi `poller_health` | tidak dihitung | 6.079 × 356 = 2,16 jt/hari = **65 jt/bln (13%)** | ❌ tidak teranggarkan |
+| 11 | Reads `get_observed_dates` | tidak dihitung | 6.079 × 288 = 1,75 jt/hari = **52 jt/bln** per proses dashboard | ❌ tidak teranggarkan |
+| 12 | Reads satu `/api/latest` (miss cache) | "beberapa query latest-only" | full scan 76.767 baris + sort (tanpa indeks `ts`) | ❌ bukan latest-only |
+| 13 | Kalibrasi Monday Gap setelah 1 akhir pekan | +5 per akhir pekan, maks 25 setelah 5 | `COUNT(*)` = jumlah ticker → `min(43,5)×5` = **25** setelah 1 akhir pekan | ❌ **5× terlalu cepat** |
+| 14 | Ambang funding efektif | 0,01%–0,10% (label "8 jam") | per jam: **0,00125%–0,0125%**; kode pakai 0,01–0,10 → 8× terlalu ketat | ❌ |
+| 15 | Gap aktual Monday (EST) | 13:30 UTC | NYSE buka 16 Nov 2026 = **14:30 UTC** | ❌ **1 jam terlalu awal** |
+| 16 | Ticker multichain yang lolos validasi Worker | (tidak diklaim) | 43 − 13 = **30 ditolak 400** oleh `^[A-Z0-9]+X$` | ❌ |
+| 17 | Link DEX benar | (tidak diklaim) | 35/106 = **33%** (semua hardcode `/solana/`) | ❌ |
+| 18 | Pool live vs seed | seed dry-run 115 pool | live **106** (9 pool hilang antara verifikasi 12:50Z dan seed) | ⚠️ selisih tak dijelaskan |
+| 19 | Prediksi Monday Gap/minggu | desain §3.4 "~26 baris/minggu sesudah multichain" | universe live **43**; realistis **2–5** | ❌ |
+| 20 | Guard QA §5.4 ada di repo | 8 butir | **1** (butir 4) | ❌ |
+| 21 | Snapshot/cycle live | 106 pool | log poller 12 Nov: `snapshots=35` sebelum seed; live 106 | ✅ (naik sesuai seed) |
+| 22 | `liquidation_watch` 20 baris | 10 ticker × per jam | 10 × 2 jam sejak deploy = 20 | ✅ |
+| 23 | TSLAon 10× | $0,77 jt → $6,96 jt | 5,01+1,89 = 6,90 jt vs 0,50+0,19 = 0,69 jt → **10,0×**; Uniswap 0,07 vs 0,06 cocok | ✅ pola konsisten salah-desimal |
+| 24 | Biaya backtest | ±220 rb rows | 19,6k + 153k + 53.170 + 15k ≈ **241 rb (0,05%)** | ✅ orde benar |
+
+---
+
+## 5. URUTAN PERBAIKAN YANG SAYA SARANKAN (satu ronde)
+
+1. **M1** (regex ticker) — 3 baris, membuka 30 halaman ticker yang sekarang rusak.
+2. **M4** (redemption `WHERE issuer`) + **M2** (13:30→ET) + **M3** (`COUNT(DISTINCT week_start)`) — tiga perbaikan satu baris, masing-masing menutup pelanggaran pre-registered.
+3. **M5** (kolom `exit_score_components` + gate band/alert) — migrasi kecil + 3 permukaan.
+4. **M7/M8** (dua indeks) + **S9** (`EXPLAIN QUERY PLAN` guard) — menutup kelas bug kuota yang paling mahal, sekaligus menjawab Q12 secara mekanis.
+5. **M9** (seed UPSERT, bukan DELETE) — mencegah kehilangan riwayat pada re-verify mingguan pertama.
+6. **M10** (startup guard) + **S1** (migrasi re-runnable) — menutup penyebab P0.
+7. **M11** (link chain) + **M12** (filter pending) — dua perbaikan kejujuran yang terlihat pengguna.
+8. **M6** (funding) + **S4** (lag) — dua revisi desain bertanggal; ini keputusan Chief + Septian, bukan patch kode diam-diam.
+9. **M13** (lisensi) — keputusan Septian sebelum ekspansi berikutnya.
+10. **S10/S11** (harness → repo; pernyataan forward-only) — menutup celah bukti.
+
+Tidak ada satu pun dari 13 MUST-FIX yang memerlukan rollback deploy. Empat (M1, M11, M12, M5) berdampak langsung ke pengguna hari ini dan sebaiknya masuk sebelum akhir pekan 16 Nov — karena 16 Nov adalah kali pertama Monday Gap benar-benar menulis baris, dan M2/M3 akan langsung mencemari outcome pertamanya.

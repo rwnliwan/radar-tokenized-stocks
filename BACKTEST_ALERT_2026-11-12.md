@@ -21,6 +21,17 @@ target akurasi awal ≥ 60%).
 | Pangsa TEPAT dari semua alert deviasi | 32/37 = **86,5%** |
 | Target §5.4 (≥ 60%) | **TERPENUHI** di antara yang bisa dinilai — dengan caveat di §4 |
 
+**Batas backtest ini (revisi 13 Nov 2026, temuan S11 review DeepSeek —
+terverifikasi Chief): Backtest ini hanya menguji alert spread hari kerja;
+F1 (perp) / F3 (Exit Score) dan kaki akhir pekan = forward-only, n=0 per
+12 Nov 2026.** Ke-37 event di atas semuanya tipe `spread` pada hari kerja
+saat bursa buka; `deviation_high` = 0 — tidak ada satu pun alert akhir
+pekan, tidak ada alert `perp_deviation`, tidak ada alert `exit_high` yang
+teruji di sini. Angka 100% (32/32) di atas TIDAK BOLEH dibaca sebagai
+akurasi alert perp, alert Exit Score, atau alert akhir pekan — ketiganya
+belum punya satu pun observasi (n=0) dan dinilai ke depan lewat forward
+test (§5.2 desain; `FORWARD_TEST_2026-11-12.md`), bukan dari backtest ini.
+
 **Catatan paling penting (baca dulu):** §5.4 **tidak bisa diterapkan apa adanya dari
 tabel `deviations` saja** — `dev_vs_close_pct` NULL di 100% baris (76.767/76.767),
 dan `dev_vs_median_pct` < 0,5% di 99,97% siklus sehingga uji proxy-nya vakum

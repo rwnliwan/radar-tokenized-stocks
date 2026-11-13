@@ -20,8 +20,8 @@ ambang lama TIDAK diubah; fitur yang ada TIDAK dihapus.
 |---|---|---|
 | F1 | **Perp 3-leg** (`perp_3leg_v1`, Hyperliquid XYZ) | Kaki ketiga: harga perp Hyperliquid XYZ vs harga spot tokenized (Radar) vs acuan saham. Alert bila perp menyimpang dari tokenized ≥ 1,0%. Perp adalah DATA, bukan tempat trading — tidak ada order, tidak ada posisi. Hanya 10 dari 13 ticker lama yang punya perp live (SPY/QQQ/GLD tidak ada → ditampilkan "tidak ada perp", bukan nol). |
 | F2 | **Monday Gap Predictor** (`monday_gap_v1`) — label "eksperimental" | Prediksi gap buka Senin + skor confidence 0–100, dihitung tiap Minggu malam. Rumus: `gap_pred_pct = 0,6 × D + 0,4 × R` (dibatasi ±10%), D = deviasi akhir pekan terakhir Minggu, R = drift harga token Jumat tutup → Minggu malam. Tepat bila arah benar DAN \|gap aktual − prediksi\| ≤ 1,0 poin persen. Target arah benar ≥ 50% (lebih rendah dari 60% karena ini prakiraan, bukan deteksi — dikunci di muka). |
-| F3 | **Exit Score 0–100** (`exit_score_v1`) | Satu angka per ticker per siklus dari 5 komponen (total 100). Disimpan sebagai KOLOM di `deviations`, bukan tabel baru (+0 writes). Band tampilan: 0–39 "Tekanan keluar rendah", 40–69 "sedang", 70–100 "tinggi". Bahasa faktual — tidak ada kata "jual"/"keluar sekarang". Alert `exit_high` bila skor ≥ 70 (1×/ticker/24 jam). |
-| F4 | **Liquidation Guard** (`liq_guard_v1`) — label "eksperimental" | Monitor oracle lag + divergensi mark-vs-oracle + jarak ke harga likuidasi acuan, per jam (bukan per 5 menit). PERINGATAN bila `oracle_lag_s` > 120 dtk ATAU divergensi ≥ 1,0% ATAU `distance_pct` ≤ 10%; KRITIS bila > 600 dtk / ≥ 3,0% / ≤ 5%. v1 admin-only (tidak ada alert Telegram publik). `liq_px_estimate` NULL sampai sumber level likuidasi terverifikasi — tidak pernah difabrikasi. |
+| F3 | **Exit Score 0–100** (`exit_score_v2`) | Satu angka per ticker per siklus dari 5 komponen (total 100). Disimpan sebagai KOLOM di `deviations`, bukan tabel baru (+0 writes). Band tampilan: 0–39 "Tekanan keluar rendah", 40–69 "sedang", 70–100 "tinggi". Bahasa faktual — tidak ada kata "jual"/"keluar sekarang". Alert `exit_high` bila skor ≥ 70 (1×/ticker/24 jam). |
+| F4 | **Liquidation Guard** (`liq_guard_v1`) — label "eksperimental" | Monitor divergensi mark-vs-oracle + jarak ke harga likuidasi acuan, per jam (bukan per 5 menit). PERINGATAN bila divergensi ≥ 1,0% ATAU `distance_pct` ≤ 10%; KRITIS bila ≥ 3,0% / ≤ 5%. Ambang lag oracle DICABUT (revisi 13 Nov 2026): endpoint publik Hyperliquid tidak mempublikasikan timestamp oracle, jadi lag tidak terukur — cabang lag tidak pernah menyala. v1 admin-only (tidak ada alert Telegram publik). `liq_px_estimate` NULL sampai sumber level likuidasi terverifikasi — tidak pernah difabrikasi. |
 | F5 | **Bukti nilai** (alert-accuracy audit) | Penilaian hasil alert otomatis + publik dari `alert_log` + replay akhir pekan lama. Definisi "alert tepat" §5.4 dipertahankan (deviasi kembali < 0,5% sebelum bursa AS buka Senin berikutnya untuk alert akhir pekan, atau dalam 24 jam untuk alert hari kerja). Target akurasi awal ≥ 60% untuk alert deviasi/perp/exit. Bukti ditampilkan publik per ticker + halaman metodologi (n, n tepat, % — dapat dihitung ulang dari `alert_log`). |
 
 ---
@@ -61,7 +61,7 @@ Label confidence: Rendah < 40 · Sedang 40–69 · Tinggi ≥ 70. Label
 | 1 | Deviasi | 30 | \|dev_vs_median_pct\| × 10 poin per 1%, dibatasi 30 (≥ 3% → 30) |
 | 2 | Depth menipis | 25 | r = `qualifying_depth_usd / median_depth_7hari`; r ≥ 1,0 → 0; r ≤ 0,5 → 25; di antaranya linear `25 × (1,0 − r) / 0,5` |
 | 3 | Redemption window | 20 | Tutup ≤ 24 jam → 20; ≤ 72 jam → 10; gated → 10; buka → 0; unknown → komponen TIDAK dihitung |
-| 4 | Funding ekstrem | 15 | \|funding 8 jam\|: ≤ 0,01% → 0; ≥ 0,10% → 15; di antaranya linear. Ticker tanpa perp → TIDAK dihitung |
+| 4 | Funding ekstrem | 15 | \|funding per jam\|: ≤ 0,00125% → 0; ≥ 0,0125% → 15; di antaranya linear. Ticker tanpa perp → TIDAK dihitung |
 | 5 | OI melonjak | 10 | Kenaikan OI 24 jam: ≤ 0% → 0; ≥ +20% → 10; linear. Ticker tanpa perp → TIDAK dihitung |
 
 **Normalisasi (mengikuti pola `risk.py` `weekend_risk_score` v3.2):**
@@ -71,6 +71,16 @@ dibulatkan 1 desimal. Jumlah komponen tersedia + versinya selalu
 disimpan/ditampilkan bersama skor (skor parsial harus kelihatan parsial).
 Perubahan rumus menaikkan versi (`exit_score_v2`, dst.); skor lama tidak
 ditulis ulang.
+
+**Revisi 13 Nov 2026 (`exit_score_v2`, review DeepSeek M6):** ambang
+funding ditulis untuk rate per-8-jam padahal Hyperliquid
+mempublikasikan rate PER JAM — ambang lama (0,01%/0,10% per jam) ~8×
+terlalu ketat, komponen praktis selalu 0. Ambang baru adalah setara
+per-8-jam: |funding| per jam ≤ 0,00125% → 0; ≥ 0,0125% → 15; linear
+di antaranya. Kalibrasi live 13 Nov 2026 (235 pasar perp Hyperliquid):
+median |funding|/jam = 0,00125%, hanya 2/235 ≥ 0,0125%. Ambang lag
+oracle DICABUT pada revisi yang sama (S4): tidak ada timestamp oracle
+di endpoint publik, jadi lag tidak terukur.
 
 ### 2.5 F4 — Liquidation Guard
 Lihat §1 F4 di atas. Guard TIDAK tahu posisi pengguna — ia memonitor
@@ -121,9 +131,9 @@ issuer), 115 pool ≥ $100 rb**, kedalaman terlacak ±$76,9 jt
 
 | Objek | Isi |
 |---|---|
-| Tabel baru `perp_snapshots` | 1 baris/ticker/siklus 5 menit: `perp_px`, `funding` (rate per interval 8 jam, apa adanya dari API), `oi` (USD), `dex` default `'xyz'`. Retensi mentah 30 hari → agregasi per jam. Indeks `(ticker_id, ts)` |
+| Tabel baru `perp_snapshots` | 1 baris/ticker/siklus 5 menit: `perp_px`, `funding` (rate per interval — per jam, apa adanya dari API), `oi` (USD), `dex` default `'xyz'`. Retensi mentah 30 hari → agregasi per jam. Indeks `(ticker_id, ts)` |
 | Tabel baru `liquidation_watch` | 1 baris/ticker/jam normal; tambahan per 5 menit HANYA selama PERINGATAN/KRITIS. `oracle_px`, `mark_px`, `liq_px_estimate` (NULL sampai sumber terverifikasi), `distance_pct` (NULL bila liq NULL), `source`. Indeks `(ticker_id, ts)` |
-| Kolom baru di `deviations` | `exit_score REAL` + `exit_score_version TEXT` ('exit_score_v1'). +0 writes — ikut INSERT `deviations` yang sudah ada |
+| Kolom baru di `deviations` | `exit_score REAL` + `exit_score_version TEXT` (saat ini `exit_score_v2`, sejak revisi 13 Nov 2026). +0 writes — ikut INSERT `deviations` yang sudah ada |
 | Tabel baru `monday_gap` | 1 baris/ticker/minggu (`week_start` = Sabtu): `gap_pred_pct`, `confidence`, `method_version` default `'monday_gap_v1'`, `outcome_gap_pct`, `outcome` (pending/accurate/inaccurate), `outcome_ts`. Indeks `(ticker_id, week_start)` |
 
 Tidak berubah: `snapshots`, `equity_refs`, `redemption_windows`,
@@ -162,7 +172,7 @@ Web (`web/` + `dashboard/app.py`) WAJIB menjelaskan:
   tanpa gas, tanpa uang real. Minimal 4 minggu (ideal 8 minggu),
   ≥ 4 akhir pekan. Setiap kondisi "would exit" dicatat sebagai kertas.
   Penilaian pre-registered: akurasi alert ≥ 60%; Monday Gap arah benar
-  ≥ 50%; Liquidation Guard: NOL alert KRITIS dari data oracle basi
+  ≥ 50%; Liquidation Guard: NOL alert KRITIS palsu dari data basi
   (bila ada = bug, bukan sinyal). Selama forward test, alert
   `liquidation_watch` admin-only; alert publik baru tayang dengan label
   eksperimental sampai kalibrasi selesai.

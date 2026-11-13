@@ -188,8 +188,12 @@ def main():
         ("poller.py", "py:parse_por_ts"): "definition; caller filters future (dt <= now_utc)",
         ("poller.py", "py:run_hourly_por"): "future tokens excluded before oldest() (dt <= now_utc); max(0,..) unreachable for future",
         ("poller.py", "py:_hourly_due"): "future last/failed stamp -> DUE (never suppresses the slot)",
+        ("poller.py", "py:_perp_due"): "future last/failed stamp -> DUE (never suppresses the slot); docstring states it",
+        ("poller.py", "py:_pruned_median_depth"): "future stamp dropped like an over-age one (dt > cycle_dt -> continue, GG-15 direction)",
+        ("poller.py", "py:_latest_redemption_status"): "close_dt/open_dt are scheduled FUTURE times by design; close_h is hours-until-event, not an age",
         ("poller.py", "py:main"): "test fixture (in_tight_window) + sleep clamp; not a freshness verdict",
         ("dashboard/logic.py", "py:parse_ts"): "definition only; callers decide",
+        ("dashboard/logic.py", "py:perp_is_fresh"): "future perp ts -> not fresh (age_min < 0, fail-closed)",
         ("dashboard/logic.py", "py:freshness_status"): "future last success -> stale (age_min < 0)",
         ("dashboard/logic.py", "py:por_effective_age_hours"): "future last_update ignored; stored age stands",
         ("dashboard/risk.py", "py:por_component"): "stored age_hours only; negative age cannot trip >=72h",
@@ -478,6 +482,17 @@ def main():
         return declared
 
     DECLARED = parse_schema()
+    # SQLite system catalogs / pragma table-valued functions — not
+    # application tables. The M10 startup guard (poller.py
+    # check_startup_schema, fix ronde review DeepSeek Radar) reads
+    # sqlite_master + pragma_table_info by design; GG34 must not
+    # demand those names in schema.sql/migrations.
+    SYSTEM_TABLES = {
+        "sqlite_master", "sqlite_schema", "sqlite_temp_master",
+        "sqlite_temp_schema", "pragma_table_info", "pragma_index_list",
+        "pragma_index_info", "pragma_foreign_key_list",
+        "pragma_table_list",
+    }
     SQL_KW = {
         "select", "from", "where", "and", "or", "not", "null", "true", "false",
         "as", "on", "join", "left", "right", "inner", "outer", "group", "by",
@@ -588,6 +603,9 @@ def main():
             # SELECT columns: union over the statement's tables.
             tables, taliases = stmt_tables_and_aliases(sql)
             if not tables:
+                continue
+            # System catalogs only (M10 guard) — not application tables.
+            if all(t in SYSTEM_TABLES for t in tables):
                 continue
             cols, saliases = select_columns(sql)
             have = set()

@@ -20,11 +20,17 @@ export type TickerRow = {
   // Gap R9: the Worker returns pools_excluded per row (loadLatest);
   // null when the column is absent from the DB.
   pools_excluded: number | null;
-  // Exit Score (exit_score_v1) + perp 3-leg (perp_3leg_v1), 2026-11-12.
+  // Exit Score (exit_score_v2) + perp 3-leg (perp_3leg_v1), 2026-11-12.
   // All null until the migration/poller writes the data — null means
   // "not available yet", never 0.
   exit_score: number | null;
   exit_score_version: string | null;
+  // M5 (fix ronde review DeepSeek Radar): how many of the 5 Exit Score
+  // components were present when the stored score was computed (new
+  // deviations.exit_score_components column; the Worker includes it in
+  // the payload). Null/absent = unknown → the page treats the score as
+  // partial and shows no firm band.
+  exit_score_components: number | null;
   perp_px: number | null;
   perp_dev_pct: number | null;
   perp_funding: number | null;
@@ -147,11 +153,17 @@ export type TickerDetail = {
   depth_usd: number | null;
   pools_used: number | null;
   pools_excluded: number;
-  // Exit Score (exit_score_v1) + perp 3-leg (perp_3leg_v1), 2026-11-12.
+  // Exit Score (exit_score_v2) + perp 3-leg (perp_3leg_v1), 2026-11-12.
   // All null until the migration/poller writes the data — null means
   // "not available yet", never 0.
   exit_score: number | null;
   exit_score_version: string | null;
+  // M5 (fix ronde review DeepSeek Radar): how many of the 5 Exit Score
+  // components were present when the stored score was computed (new
+  // deviations.exit_score_components column; the Worker includes it in
+  // the payload). Null/absent = unknown → the page treats the score as
+  // partial and shows no firm band. (Same field on TickerRow.)
+  exit_score_components: number | null;
   perp_px: number | null;
   perp_dev_pct: number | null;
   perp_funding: number | null;

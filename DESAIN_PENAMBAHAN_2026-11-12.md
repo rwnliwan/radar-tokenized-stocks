@@ -745,3 +745,149 @@ untuk tabel baru berindeks tunggal — angka kasar, ditandai [estimasi].
 *Dokumen ini DESAIN. Perubahan apa pun sesudah penilaian Septian dicatat
 sebagai revisi bertanggal di bawah baris ini, bukan dengan mengedit diam-diam
 bagian yang sudah dinilai.*
+
+---
+
+## Revisi 13 Nov 2026 — ronde fix review DeepSeek Radar (temuan M6 + S4, terverifikasi Chief)
+
+Temuan DeepSeek M6 dan S4 keduanya BENAR (verifikasi Chief di
+`review/REVIEW-DEEPSEEK-RADAR.md`). Revisi ini memperbaiki DOKUMEN — angka
+di kode (`poller.py`) TIDAK diubah: bukan penalaan diam-diam. Bila suatu hari
+ambang di bawah ini memang diubah, itu revisi tertulis baru + versi skor baru.
+
+### M6 — Ambang funding Exit Score adalah ambang PER-JAM, bukan per 8 jam
+
+**Yang salah di dokumen ini:** §2.3 komponen 4 menulis "`|funding 8 jam|`"
+dan §3.1 memberi komentar skema "`funding rate per interval 8 jam`". Kedua
+label itu SALAH.
+
+**Fakta (sumber: `poller.py:633-640` docstring `exit_score_v1`,
+`:665-671`, dan `:536-538` docstring `fetch_xyz_ctxs`):** `funding` yang
+disimpan di `perp_snapshots` adalah rate desimal **apa adanya dari API
+Hyperliquid (metaAndAssetCtxs), yaitu rate per funding interval — per jam**.
+Ambang §2.3 (≤ 0,01% → 0; ≥ 0,10% → 15; linear di antaranya) diterapkan
+pada `|funding| × 100` **tanpa pengali ×8** — kode tidak pernah mengalikan 8,
+dan komentar kode sendiri mencatat pemetaan ini sebagai pertanyaan
+interpretasi terbuka, bukan sesuatu yang diselesaikan diam-diam dengan
+aritmetika.
+
+**Koreksi yang berlaku mulai revisi ini:**
+
+1. Ambang 0,01%/0,10% adalah ambang **per jam** (per-interval sebagaimana
+   dilaporkan API). Ambang per 8 jam yang setara — 0,00125%/0,0125% per jam —
+   **TIDAK dipakai** dan tidak boleh dipakai diam-diam.
+2. **Konsekuensi jujur:** funding hourly biasa (≈ 0,0001 desimal = 0,01%
+   per jam, atau lebih kecil) memberi komponen 0,0. Hanya funding hourly
+   ≥ 0,10% (0,001 desimal — rate satu jam yang sangat ekstrem) yang memberi
+   15 penuh. **Dalam praktiknya komponen funding hampir selalu 0** — skor
+   Exit Score hampir tidak pernah mendapat poin dari funding. Ini sifat
+   ambang yang kini didokumentasikan apa adanya, bukan bug yang diperbaiki
+   diam-diam.
+3. Label "funding 8 jam" di §2.3 dan komentar skema §3.1 dicabut oleh revisi
+   ini (teks lama di atas TIDAK diedit diam-diam — koreksi ini yang berlaku).
+
+**Kalimat web (diterapkan 13 Nov 2026 ke string i18n `methodology_exit_score`
+di `web/src/lib/i18n.ts` dan `dashboard/i18n.py`, EN + ID, sebagai kalimat
+koreksi yang ditambahkan di akhir string — bukan edit diam-diam):**
+
+- EN: "Correction 13 Nov 2026: the funding thresholds (0.01% → 0; 0.10% →
+  15) apply to the HOURLY rate exactly as published by the Hyperliquid API,
+  not to an 8-hour rate — the design's '8h funding' label was wrong. The
+  equivalent 8-hour thresholds (0.00125%/0.0125% per hour) are NOT used. In
+  practice the funding component is almost always 0 at ordinary hourly
+  rates."
+- ID: "Koreksi 13 Nov 2026: ambang funding (0,01% → 0; 0,10% → 15) berlaku
+  atas rate PER JAM apa adanya dari API Hyperliquid, bukan rate 8 jam —
+  label 'funding 8 jam' di desain salah. Ambang setara per 8 jam
+  (0,00125%/0,0125% per jam) TIDAK dipakai. Dalam praktik komponen funding
+  hampir selalu 0 pada rate hourly biasa."
+
+Label penampil nilai funding (`perp_funding`, tampil sebagai persen dari
+nilai apa adanya tanpa pengali — `page.tsx:613` `perp_funding * 100`,
+`dashboard/app.py:1922` `{_fund:.4%}`) ikut dikoreksi dari "Funding (8h)" /
+"Funding (8 jam)" menjadi "Funding (hourly)" / "Funding (per jam)".
+
+### Revisi 13 Nov 2026 (2) — ambang funding setara per-8-jam + exit_score_v2
+(keputusan Septian 08:27 WITA, mengikuti rekomendasi Chief; kalibrasi live
+Chief 13 Nov 2026 ~08:30 WITA)
+
+Revisi ini MENGGANTIKAN butir 1–2 koreksi M6 pada revisi di atas (ambang
+per-jam 0,01%/0,10% + "komponen funding hampir selalu 0"). Ambang lama
+tersebut terbukti ~8× terlalu ketat: rate yang dilaporkan API Hyperliquid
+adalah rate PER JAM, sementara ambang 0,01%/0,10% dirancang untuk rate
+per 8 jam.
+
+**Kalibrasi (Chief, 13 Nov 2026, 235 pasar perp Hyperliquid via
+metaAndAssetCtxs):** median |funding| per jam = 0,00125%; hanya 2 dari 235
+pasar ≥ 0,0125% per jam. Ambang baru di bawah ini menempatkan median tepat
+di kaki bawah (0 poin) dan hanya ~1% pasar di plafon (15 poin) —
+terkalibrasi wajar, sementara ambang lama (0,01%/0,10% per jam) memberi 0
+pada hampir semua pasar.
+
+**Yang berlaku mulai revisi ini (`exit_score_v2`):**
+
+1. Ambang komponen funding: |funding| per jam ≤ 0,00125% → 0 poin;
+   ≥ 0,0125% → 15 poin; di antaranya linear
+   `15 × (pct − 0,00125) / 0,01125`. Bobot komponen tetap 15; rumus
+   komponen lain TIDAK berubah.
+2. Versi skor naik ke `exit_score_v2` (`poller.py: EXIT_SCORE_VERSION`,
+   fungsi `exit_score_v2`). Skor v1 yang sudah tersimpan TIDAK ditulis
+   ulang — versi selalu ditampilkan bersama skor, jadi v1 dan v2 tetap
+   bisa dibedakan di riwayat.
+3. Kalimat metodologi di web/dashboard diperbarui ke ambang + kalibrasi
+   baru (string i18n `methodology_exit_score`, EN + ID).
+4. Label nilai funding tetap "Funding (hourly)" / "Funding (per jam)" —
+   rate-nya memang per jam; yang berubah hanya ambangnya.
+
+### S4 — Ambang oracle lag 120/600 detik DICABUT dari guard v1
+
+**Yang salah di dokumen ini:** §2.4 menetapkan ambang PERINGATAN
+"`oracle_lag_s` > 120 detik" dan KRITIS "`oracle_lag_s` > 600 detik".
+
+**Fakta (sumber: `poller.py:730-745` `liquidation_status`,
+`:943` `liquidation_status(div, None, None)`, dan komentar migrasi
+`migrations/2026-11-12-penambahan.sql`):** `liquidation_status()` memang
+menerima `oracle_lag_s`, tetapi satu-satunya pemanggil,
+`run_hourly_liquidation`, selalu memanggilnya dengan lag `None` — karena
+endpoint publik Hyperliquid (metaAndAssetCtxs) **tidak mempublikasikan
+timestamp oracle**, sehingga umur data oracle tidak bisa diukur dari
+endpoint publik. Migrasi sengaja TIDAK membuat kolom `oracle_lag_s`
+("There is deliberately NO oracle_lag_s column").
+
+**Koreksi yang berlaku mulai revisi ini:**
+
+1. Ambang lag 120/600 detik **DICABUT dari guard v1** — keduanya inert
+   (tidak pernah bisa terpicu karena lag selalu `None`) dan tidak boleh
+   tampil sebagai ambang aktif di permukaan mana pun.
+2. Guard v1 = **divergensi mark-vs-oracle saja**: PERINGATAN bila divergensi
+   ≥ 1,0%, KRITIS bila divergensi ≥ 3,0% — ditambah `distance_pct`
+   (PERINGATAN ≤ 10%, KRITIS ≤ 5%) **bila** sumber level likuidasi
+   terverifikasi; saat ini `liq_px_estimate`/`distance_pct` NULL (sumber
+   belum terverifikasi, §2.4) sehingga guard v1 efektif hanya divergensi.
+3. Bila suatu hari sumber timestamp oracle terverifikasi, ambang lag dapat
+   dihidupkan kembali lewat revisi tertulis baru — bukan dengan mengisi lag
+   karangan.
+
+**Kalimat web (disetujui 13 Nov 2026, BELUM diterapkan — tidak ada slot
+i18n-nya):** tidak ada string metodologi `monday_gap_v1`/`liq_guard_v1` di
+`web/src/lib/i18n.ts` maupun `dashboard/i18n.py` (verifikasi: grep
+`monday_gap|liq_guard|liquidation` di kedua file = 0 hasil; sama dengan
+jawaban Q11 review). Kalimat di bawah ini adalah teks yang disetujui untuk
+dipakai saat slot metodologi itu dibuat; TIDAK diterapkan ke string mana pun
+dalam ronde ini karena slotnya tidak ada — jangan mengarang slot baru.
+
+- EN: "Liquidation Guard (liq_guard_v1). The v1 guard watches the
+  mark-vs-oracle divergence only: warning at 1.0%, critical at 3.0%. The
+  120/600-second oracle-lag thresholds from the 12 Nov design were removed
+  on 13 Nov 2026: the public Hyperliquid endpoints publish no oracle
+  timestamp, so oracle lag cannot be measured and the thresholds could
+  never fire. Distance to the liquidation level is shown only if a verified
+  public liquidation-level source exists; until then it stays empty, never
+  invented."
+- ID: "Liquidation Guard (liq_guard_v1). Guard v1 hanya memantau divergensi
+  mark-vs-oracle: peringatan pada 1,0%, kritis pada 3,0%. Ambang oracle-lag
+  120/600 detik dari desain 12 Nov DICABUT pada 13 Nov 2026: endpoint publik
+  Hyperliquid tidak mempublikasikan timestamp oracle sehingga lag oracle
+  tidak bisa diukur dan ambang itu tidak pernah bisa terpicu. Jarak ke harga
+  likuidasi hanya ditampilkan bila ada sumber level likuidasi publik yang
+  terverifikasi; sampai saat itu kolomnya kosong, tidak pernah dikarang."

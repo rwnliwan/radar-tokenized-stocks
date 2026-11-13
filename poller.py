@@ -47,7 +47,7 @@ PRE-REGISTERED, unchanged):
   freshness contract in bot.py/api/worker.js counts consecutive failed
   rows, so a perp row would mark Radar stale) and never breaks the
   DexScreener cycle.
-- F3 Exit Score (exit_score_v1): computed per ticker in run_cycle() and
+- F3 Exit Score (exit_score_v2): computed per ticker in run_cycle() and
   stored as deviations.exit_score + exit_score_version (+0 writes).
   Partial normalization follows dashboard/risk.py: a component without
   data is NOT counted and NOT zeroed.
@@ -67,6 +67,19 @@ PRE-REGISTERED, unchanged):
 Deploy order: apply migrations/2026-11-12-penambahan.sql to live Turso
 BEFORE deploying this poller — the deviations INSERT now references
 exit_score, and every cycle would fail on a DB without the column.
+
+Fix ronde review DeepSeek 2026-11-13 (REVIEW-DEEPSEEK-RADAR.md, Chief-
+verified): M2 Monday open 14:30 UTC (EST) + dated comment; M3
+calibration counts DISTINCT week_start; M4 redemption status per
+issuer (WHERE issuer = ?); M5 deviations.exit_score_components
+written; S2 perp_px_source ('mark'|'mid'); S6 liquidation state
+refreshed on every exit; S7 missed-week MISSED fragment + 8-week
+pending bound; S8 closed redemption scaled by hours to next open;
+S14 one batched OI 24h-ago query per cycle; N3 7-day median age
+bound; M10 startup schema guard (exit 2). Thresholds UNCHANGED
+(alert 1.0%, pool >= $100k, universe >= $500k + >= 2 venue).
+Deploy order: apply migrations/2026-11-13-radar-fix.sql to live Turso
+BEFORE restarting this poller (guarded by the M10 check in main()).
 
 Multichain 2026-11-12 (SEED_MULTICHAIN_2026-11-12.md; thresholds
 PRE-REGISTERED, unchanged — LIQ_MIN $100k, depth gate $250k, alert 1.0%):
@@ -476,8 +489,14 @@ def run_hourly_por(cycle_dt, state, dry_run=False):
 # ======================================================================
 
 HL_INFO_URL = "https://api.hyperliquid.xyz/info"
-EXIT_SCORE_VERSION = "exit_score_v1"
+EXIT_SCORE_VERSION = "exit_score_v2"
 MONDAY_GAP_VERSION = "monday_gap_v1"
+# S7 (fix ronde review DeepSeek 2026-11-13): fill_outcomes only looks
+# at pending rows from the last 8 weeks. Older rows can never be
+# filled honestly — their Monday passed 8+ Mondays ago, and filling
+# them now would count stale outcomes into calibration (M3) while
+# re-scanning unbounded history every Monday.
+MONDAY_GAP_PENDING_MAX_AGE_WEEKS = 8
 
 # Radar ticker_id -> Hyperliquid xyz market symbol. Verified live
 # 2026-11-12: all 10 present in allMids/metaAndAssetCtxs dex xyz;
@@ -607,17 +626,31 @@ def fetch_xyz_market_data():
 
 # --- F3 Exit Score (pure, no I/O — mirrors dashboard/risk.py style) ---
 def _exit_redemption_component(status, close_in_hours):
-    """Redemption window component (max 20). 'closed' = redemption
-    unavailable now -> 20. 'open' scores by time until the schedule-
+    """Redemption window component (max 20). 'open' scores by time until the schedule-
     derived close (next_schedule_close_utc): <=24h -> 20, <=72h -> 10,
-    else 0. 'paused'/'gated' -> 10. Unknown/None -> NOT counted."""
+    else 0. 'closed' scores by time until the NEXT OPEN
+    (next_nyse_open_utc, passed in as close_in_hours by
+    _latest_redemption_status) on the SAME scale: <=24h -> 20, <=72h ->
+    10, else 0 — so a Sunday-night close (open in ~2h) scores 20 while
+    a Friday close (open ~55h away) scores 10 and a long-holiday close
+    (>72h) scores 0. The old code returned a constant 20.0 for every
+    'closed', which did not discriminate at all across the weekend
+    (fix ronde review DeepSeek 2026-11-13, S8). 'paused'/'gated' -> 10.
+    Unknown/None, or a closed status with unknown hours-to-open ->
+    NOT counted."""
     if status is None:
         return None
     s = str(status).strip().lower()
     if s in ("paused", "gated"):
         return 10.0
     if s == "closed":
-        return 20.0
+        if close_in_hours is None:
+            return None
+        if close_in_hours <= 24.0:
+            return 20.0
+        if close_in_hours <= 72.0:
+            return 10.0
+        return 0.0
     if s == "open":
         if close_in_hours is None:
             return None
@@ -629,15 +662,17 @@ def _exit_redemption_component(status, close_in_hours):
     return None
 
 
-def exit_score_v1(dev_pct, depth_usd, median_depth_7d, redemption_status,
+def exit_score_v2(dev_pct, depth_usd, median_depth_7d, redemption_status,
                   redemption_close_in_hours, funding, oi_change_24h_pct):
-    """Exit Score v1 (DESAIN §2.3, total 100). Pure function.
+    """Exit Score v2 (DESAIN §2.3 + Revisi 13 Nov 2026 (2), total 100). Pure function.
     funding is the published decimal fraction (per funding interval);
     the design thresholds apply to |funding| x 100 as a percent —
-    NOTE: Hyperliquid publishes the rate per funding interval (hourly),
-    while the design labels the component 'funding 8 jam'; no silent
-    x8 scaling is applied — that mapping is an open interpretation
-    question for Chief, not something to resolve by arithmetic here.
+    NOTE: Hyperliquid publishes the rate per funding interval (hourly).
+    The thresholds below are the per-8-hour-equivalent rates expressed
+    per hour (0.00125% -> 0; 0.0125% -> 15), adopted by written revision
+    13 Nov 2026 (2): the per-hour reading (0.01%/0.10%) proved ~8x too
+    strict — calibrated on 235 live Hyperliquid perp markets 13 Nov 2026,
+    median |funding|/hour = 0.00125%, only 2/235 at or above 0.0125%.
     Components without data are NOT counted and NOT zeroed (same
     partial normalization as weekend_risk_score v3.2): score_100 =
     total / max_possible x 100 over available components only.
@@ -663,12 +698,12 @@ def exit_score_v1(dev_pct, depth_usd, median_depth_7d, redemption_status,
         comps["funding"] = None
     else:
         pct = abs(funding) * 100.0
-        if pct <= 0.01:
+        if pct <= 0.00125:
             comps["funding"] = 0.0
-        elif pct >= 0.10:
+        elif pct >= 0.0125:
             comps["funding"] = 15.0
         else:
-            comps["funding"] = round(15.0 * (pct - 0.01) / 0.09, 1)
+            comps["funding"] = round(15.0 * (pct - 0.00125) / 0.01125, 1)
     if oi_change_24h_pct is None:
         comps["oi"] = None
     else:
@@ -743,25 +778,41 @@ def liquidation_status(divergence_pct, distance_pct, oracle_lag_s=None):
 
 
 # --- F3 cycle inputs (latest-only, bounded reads; never raise) ---
-def _latest_redemption_status(cycle_dt):
+def _latest_redemption_status(cycle_dt, issuer):
     """(status_or_None, close_in_hours_or_None) from the latest
-    redemption_windows row (1 row). close hours come from the pure
-    schedule helper when status is 'open'."""
+    redemption_windows row FOR THIS ISSUER (1 row). issuer is REQUIRED:
+    the old query had no WHERE clause, so every ticker (including
+    bstocks/robinhood) silently used the latest xStocks row (fix ronde
+    review DeepSeek 2026-11-13, M4). close hours come from the pure
+    schedule helpers: when status is 'open', hours until the
+    schedule-derived close (next_schedule_close_utc); when 'closed',
+    hours until the next NYSE open (next_nyse_open_utc) — the S8 scale
+    for the closed component. Other statuses -> None (not counted)."""
     try:
         rows = query("SELECT status FROM redemption_windows "
-                     "ORDER BY observed_at DESC LIMIT 1")
+                     "WHERE issuer = ? "
+                     "ORDER BY observed_at DESC LIMIT 1", [issuer])
     except Exception:
         return None, None
     if not rows:
         return None, None
     status = rows[0].get("status")
     close_h = None
-    if isinstance(status, str) and status.strip().lower() == "open":
+    s = status.strip().lower() if isinstance(status, str) else ""
+    if s == "open":
         try:
             close_dt = datetime.strptime(
                 next_schedule_close_utc(cycle_dt), "%Y-%m-%dT%H:%M:%SZ"
             ).replace(tzinfo=UTC)
             close_h = (close_dt - cycle_dt).total_seconds() / 3600.0
+        except Exception:
+            close_h = None
+    elif s == "closed":
+        try:
+            open_dt = datetime.strptime(
+                next_nyse_open_utc(cycle_dt), "%Y-%m-%dT%H:%M:%SZ"
+            ).replace(tzinfo=UTC)
+            close_h = (open_dt - cycle_dt).total_seconds() / 3600.0
         except Exception:
             close_h = None
     return status, close_h
@@ -785,18 +836,92 @@ def _latest_perp_by_ticker(cycle_dt):
     return out
 
 
-def _oi_24h_ago(ticker, cycle_dt):
-    """OI (USD) at/before 24h ago — latest row, 1 row — or None when no
-    such row exists (component then not counted, not zeroed)."""
+def _oi_24h_ago_batch(tickers, cycle_dt):
+    """{ticker: OI (USD) at/before 24h ago} for ALL given tickers in ONE
+    query (fix ronde review DeepSeek 2026-11-13, S14). The old code did
+    one round-trip per ticker per cycle, serial (10 tickers x 356
+    cycles/day = 3.560 reads/day). One JOIN against the per-ticker
+    MAX(ts) <= cutoff, served by idx_perp_ticker_ts (ticker_id, ts);
+    tickers with no row at/before the cutoff are simply absent (their
+    OI component is then not counted, not zeroed). Never raises."""
+    tickers = sorted(set(tickers))
+    if not tickers:
+        return {}
     cutoff = (cycle_dt - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        rows = query("SELECT oi FROM perp_snapshots WHERE ticker_id = ? "
-                     "AND ts <= ? ORDER BY ts DESC LIMIT 1", [ticker, cutoff])
+        rows = query(
+            "SELECT p.ticker_id, p.oi FROM perp_snapshots p JOIN "
+            "(SELECT ticker_id, MAX(ts) AS mts FROM perp_snapshots "
+            "WHERE ticker_id IN (%s) AND ts <= ? GROUP BY ticker_id) m "
+            "ON m.ticker_id = p.ticker_id AND m.mts = p.ts"
+            % ",".join("?" * len(tickers)),
+            tickers + [cutoff])
     except Exception:
-        return None
-    if rows and rows[0].get("oi") is not None:
-        return rows[0]["oi"]
-    return None
+        return {}
+    out = {}
+    for r in rows:
+        t = r.get("ticker_id")
+        if t and t not in out and r.get("oi") is not None:
+            out[t] = r["oi"]
+    return out
+
+
+def _oi_24h_ago(ticker, cycle_dt):
+    """OI (USD) at/before 24h ago — latest row, 1 row — or None when no
+    such row exists (component then not counted, not zeroed).
+    Single-ticker wrapper around _oi_24h_ago_batch; kept for callers
+    that observe one ticker at a time (forward_paper.py). The cycle
+    itself uses the batch version."""
+    return _oi_24h_ago_batch([ticker], cycle_dt).get(ticker)
+
+
+# N3 (fix ronde review DeepSeek 2026-11-13): a 7-day median is only
+# trusted for 7 days. A ticker absent from recent cycles used to keep
+# contributing its old median with no age bound at all; medians older
+# than this are dropped (depth component then not counted) and must be
+# recomputed from fresh deviations rows.
+MEDIAN_DEPTH_MAX_AGE_DAYS = 7
+
+
+def _pruned_median_depth(state, cycle_dt):
+    """(median_dict, ts_dict) with entries older than
+    MEDIAN_DEPTH_MAX_AGE_DAYS dropped. Pure: does not mutate state.
+    Per-ticker refresh stamps live in state['median_depth_7d_ts'];
+    entries written before those stamps existed fall back to
+    state['median_depth_7d_date'] (00:00 UTC that day); entries with
+    neither a stamp nor a date are treated as stale and dropped."""
+    med = dict(state.get("median_depth_7d") or {})
+    stamps = state.get("median_depth_7d_ts") or {}
+    base_date = state.get("median_depth_7d_date")
+    base_dt = None
+    if base_date:
+        try:
+            base_dt = datetime.strptime(base_date, "%Y-%m-%d").replace(tzinfo=UTC)
+        except (TypeError, ValueError):
+            base_dt = None
+    cutoff = cycle_dt - timedelta(days=MEDIAN_DEPTH_MAX_AGE_DAYS)
+    kept, kept_ts = {}, {}
+    for t, v in med.items():
+        dt = None
+        raw = stamps.get(t)
+        if raw:
+            try:
+                dt = datetime.fromisoformat(raw)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=UTC)
+            except (TypeError, ValueError):
+                dt = None
+        if dt is None:
+            dt = base_dt
+        # GG-15 direction (fix ronde 9): a stamp in the FUTURE is
+        # stale, never fresh — a future-dated median cannot be
+        # trusted and is dropped like an over-age one.
+        if dt is None or dt < cutoff or dt > cycle_dt:
+            continue
+        kept[t] = v
+        kept_ts[t] = (raw if raw else
+                      dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return kept, kept_ts
 
 
 def refresh_median_depth_7d(state, cycle_dt, tickers, dry_run=False):
@@ -804,12 +929,24 @@ def refresh_median_depth_7d(state, cycle_dt, tickers, dry_run=False):
     Bounded: <=2016 latest rows per ticker (~7 days at the 5-min
     baseline cadence; tight-window bursts shorten the window a little).
     On failure the old cache is kept (or stays absent — the depth
-    component is then not counted). Never raises; dry_run prints."""
+    component is then not counted). Never raises; dry_run prints.
+    N3 (fix ronde review DeepSeek 2026-11-13): medians older than
+    MEDIAN_DEPTH_MAX_AGE_DAYS (7 days) are dropped, never served — a
+    ticker absent from recent cycles keeps its median only while it is
+    fresh; once stale it is recomputed from deviations rows (or the
+    depth component is not counted until it reappears). Fresh medians
+    for tickers absent from THIS cycle are kept (a tight-window
+    Tier-1-only cycle must not wipe Tier-2 medians)."""
     today = cycle_dt.strftime("%Y-%m-%d")
-    if state.get("median_depth_7d_date") == today and state.get("median_depth_7d"):
-        return state.get("median_depth_7d") or {}
+    pruned, pruned_ts = _pruned_median_depth(state, cycle_dt)
+    if state.get("median_depth_7d_date") == today and pruned:
+        if not dry_run:
+            state["median_depth_7d"] = pruned
+            state["median_depth_7d_ts"] = pruned_ts
+        return pruned
     since = (cycle_dt - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    med = {}
+    med = dict(pruned)
+    med_ts = dict(pruned_ts)
     for t in tickers:
         try:
             rows = query("SELECT qualifying_depth_usd FROM deviations "
@@ -823,11 +960,13 @@ def refresh_median_depth_7d(state, cycle_dt, tickers, dry_run=False):
                 if r.get("qualifying_depth_usd") is not None]
         if vals:
             med[t] = round(statistics.median(vals), 2)
+            med_ts[t] = cycle_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     if dry_run:
         print(f"DRY-RUN median_depth_7d date={today} tickers={len(med)} {med}")
         return med
     if med:
         state["median_depth_7d"] = med
+        state["median_depth_7d_ts"] = med_ts
         state["median_depth_7d_date"] = today
         log(f"MEDIAN-DEPTH refreshed {len(med)} tickers for {today}")
     return med
@@ -882,7 +1021,14 @@ def run_cycle_perp(cycle_dt, state, dry_run=False):
         state["last_perp_failed_at"] = cycle_dt.isoformat()
         log(f"PERP {cycle_ts} {frag}")
         return frag
-    rows = [[t, cycle_ts, d["perp_px"], d.get("funding"), d.get("oi_usd"), "xyz"]
+    # S2 (fix ronde review DeepSeek 2026-11-13): perp_px is the MARK
+    # price when metaAndAssetCtxs published one, else the allMids MID
+    # as fallback (see fetch_xyz_market_data) — the two are no longer
+    # written indistinguishably. perp_px_source tags every row
+    # ('mark' | 'mid'); column added by
+    # migrations/2026-11-13-radar-fix.sql.
+    rows = [[t, cycle_ts, d["perp_px"], d.get("funding"), d.get("oi_usd"),
+             "xyz", "mark" if d.get("mark_px") is not None else "mid"]
             for t, d in sorted(data.items())]
     if dry_run:
         print(f"DRY-RUN perp tickers={len(rows)}/10 err={err or '-'}")
@@ -892,7 +1038,7 @@ def run_cycle_perp(cycle_dt, state, dry_run=False):
     try:
         pipeline([(
             "INSERT INTO perp_snapshots (ticker_id, ts, perp_px, funding,"
-            " oi, dex) VALUES (?,?,?,?,?,?)",
+            " oi, dex, perp_px_source) VALUES (?,?,?,?,?,?,?)",
             r,
         ) for r in rows])
     except Exception as e:
@@ -925,6 +1071,28 @@ def run_hourly_liquidation(cycle_dt, state, dry_run=False):
     liquidation outage never holds back the shared hourly clock in
     run_cycle (redemption/PoR are the clock's owners). Never raises."""
     cycle_ts = cycle_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # S6 (fix ronde review DeepSeek 2026-11-13): state
+    # ['liquidation_alert_tickers'] is refreshed on EVERY exit path,
+    # via the finally below — the old code returned early (no ctxs /
+    # no rows / write failure) before the assignment, so a stale
+    # warning/critical set survived indefinitely and kept triggering
+    # the 5-min follow-up in run_cycle. On a failed observation the
+    # set is cleared ({}): an unobserved condition must not keep
+    # alerting. Dry-run never touches state.
+    alert_now = {}
+    try:
+        return _run_hourly_liquidation_inner(cycle_dt, state, alert_now,
+                                             cycle_ts, dry_run)
+    finally:
+        if not dry_run:
+            state["liquidation_alert_tickers"] = alert_now
+
+
+def _run_hourly_liquidation_inner(cycle_dt, state, alert_now, cycle_ts,
+                                  dry_run=False):
+    """Body of run_hourly_liquidation (see its docstring). Mutates the
+    alert_now dict in place; the caller (finally) writes it to state
+    on every exit. Returns a gap fragment ('' when quiet)."""
     ctxs, err = fetch_xyz_ctxs()
     if not ctxs:
         frag = f"hourly liquidation unavailable: hyperliquid ctxs error ({err or 'empty'})"
@@ -933,7 +1101,7 @@ def run_hourly_liquidation(cycle_dt, state, dry_run=False):
             return frag
         log(f"HOURLY liquidation {frag}")
         return frag
-    rows, alert_now = [], {}
+    rows = []
     for ticker in sorted(XYZ_PERP):
         d = ctxs.get(ticker)
         if not d or d.get("mark_px") is None or d.get("oracle_px") is None:
@@ -965,7 +1133,8 @@ def run_hourly_liquidation(cycle_dt, state, dry_run=False):
     except Exception as e:
         log(f"HOURLY liquidation write FAILED: {e}")
         return f"hourly liquidation write unavailable: {e}"
-    state["liquidation_alert_tickers"] = alert_now
+    # (No state write here: the caller's finally assigns alert_now on
+    # every exit, including this success path.)
     log(f"HOURLY liquidation tickers={len(rows)} alert={alert_now or '-'}")
     return ""
 
@@ -1032,7 +1201,12 @@ def _monday_gap_predict(cycle_dt, state, dry_run=False):
     fri_start = (sat - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
     fri_end = sat.strftime("%Y-%m-%dT00:00:00Z")
     try:
-        _c = query("SELECT COUNT(*) AS n FROM monday_gap "
+        # M3 (fix ronde review DeepSeek 2026-11-13): count WEEKENDS,
+        # not rows — with 43 tickers one weekend produces up to 43
+        # judged rows, and COUNT(*) let calibration hit its 25-point
+        # maximum after a SINGLE weekend. COUNT(DISTINCT week_start)
+        # counts each judged weekend once.
+        _c = query("SELECT COUNT(DISTINCT week_start) AS n FROM monday_gap "
                    "WHERE outcome IN ('accurate','inaccurate')")
         calibrated = int(_c[0]["n"]) if _c else 0
     except Exception as e:
@@ -1093,16 +1267,51 @@ def _monday_gap_predict(cycle_dt, state, dry_run=False):
 
 def _monday_gap_fill_outcomes(cycle_dt, state, dry_run=False):
     """Monday outcome branch. For each 'pending' row: actual gap =
-    (first Monday dw at/after 13:30 UTC - Sunday-night dw) / Sunday dw.
+    (first Monday dw at/after 14:30 UTC - Sunday-night dw) / Sunday dw.
     Accurate iff the sign matches AND |actual - pred| <= 1.0 pp (§2.2).
-    A row stays 'pending' until both prices exist — never guessed."""
+    A row stays 'pending' until both prices exist — never guessed.
+    M2 (fix ronde review DeepSeek 2026-11-13): 14:30 UTC is the NYSE
+    09:30 ET open while the US is on STANDARD time (EST, UTC-5). DST
+    ended 1 Nov 2026, so from 2 Nov 2026 the open is 14:30 UTC, not
+    the 13:30 UTC this code used (EDT, UTC-4) — the old value read a
+    price ~08:30 ET, an hour before the open. When DST returns
+    (14 Mar 2027) this goes back to 13:30 UTC; that change must be
+    made as a dated edit like this one, not silently.
+    S7 (same ronde): (a) if the just-ended weekend has NO prediction
+    row at all, the week is reported MISSED (explicit WARNING log +
+    a 'MISSED' fragment, which lands in the cycle's poller_health
+    gap_note) instead of vanishing silently — that is what happened
+    when the poller was down during the Sunday >=22:00 UTC window;
+    (b) only pending rows from the last MONDAY_GAP_PENDING_MAX_AGE_WEEKS
+    weeks are considered (see the constant's comment)."""
+    # S7(a): the just-ended weekend starts on Saturday (Monday - 2d).
+    week_start = (cycle_dt.date() - timedelta(days=2)).strftime("%Y-%m-%d")
+    missed_frag = ""
+    try:
+        _n = query("SELECT COUNT(*) AS n FROM monday_gap "
+                   "WHERE week_start = ?", [week_start])
+        if _n and int(_n[0]["n"]) == 0:
+            missed_frag = (
+                f"monday gap MISSED week_start={week_start}: no prediction "
+                f"row exists (prediction window Sun >=22:00 UTC produced "
+                f"nothing — poller down or all tickers skipped); week "
+                f"excluded from calibration")
+            log(f"WARNING {missed_frag}")
+    except Exception as e:
+        missed_frag = (f"monday gap missed-check unavailable "
+                       f"week_start={week_start}: {e}")
+    # S7(b): bound the pending scan to recent weeks (see constant).
+    cutoff = (cycle_dt.date()
+              - timedelta(weeks=MONDAY_GAP_PENDING_MAX_AGE_WEEKS)
+              ).strftime("%Y-%m-%d")
     try:
         pending = query("SELECT id, ticker_id, week_start, gap_pred_pct "
-                        "FROM monday_gap WHERE outcome = 'pending'")
+                        "FROM monday_gap WHERE outcome = 'pending' "
+                        "AND week_start >= ?", [cutoff])
     except Exception as e:
         return f"monday gap outcome unavailable: pending-rows read error ({e})"
     if not pending:
-        return ""
+        return missed_frag
     filled, waiting = [], []
     for row in pending:
         try:
@@ -1113,7 +1322,7 @@ def _monday_gap_fill_outcomes(cycle_dt, state, dry_run=False):
         sun, mon = sat + timedelta(days=1), sat + timedelta(days=2)
         sun_start = sun.strftime("%Y-%m-%dT00:00:00Z")
         mon_start = mon.strftime("%Y-%m-%dT00:00:00Z")
-        mon_open = mon.strftime("%Y-%m-%dT13:30:00Z")
+        mon_open = mon.strftime("%Y-%m-%dT14:30:00Z")
         sun_row = _latest_deviations_row(row["ticker_id"], sun_start, mon_start)
         if not sun_row or sun_row.get("depth_weighted_price") is None:
             waiting.append(row["ticker_id"])
@@ -1143,7 +1352,9 @@ def _monday_gap_fill_outcomes(cycle_dt, state, dry_run=False):
               f"waiting={waiting or '-'}")
         for f in filled:
             print(f"DRY-RUN monday_gap outcome={f}")
-        return ""
+        if missed_frag:
+            print(f"DRY-RUN {missed_frag}")
+        return missed_frag
     for f in filled:
         try:
             pipeline([(
@@ -1156,7 +1367,7 @@ def _monday_gap_fill_outcomes(cycle_dt, state, dry_run=False):
     if filled:
         log(f"WEEKLY monday_gap outcomes filled={len(filled)} "
             f"waiting={waiting or '-'}")
-    return ""
+    return missed_frag
 
 
 def run_weekly_monday_gap(cycle_dt, state, dry_run=False):
@@ -1541,10 +1752,16 @@ def run_cycle(cycle_dt, extra_gap_notes=None, dry_run=False):
         pools = [p for p in pools if int(p["tier"]) == 1]
     tickers = sorted({p["ticker_id"] for p in pools})
 
-    # Token addresses for the batch call.
-    uni = query("SELECT ticker_id, token_addresses FROM universe")
+    # Token addresses for the batch call (+ issuer per ticker, for the
+    # per-issuer redemption status — M4, fix ronde review DeepSeek
+    # 2026-11-13: a ticker's exit score must use ITS issuer's latest
+    # redemption_windows row, never another issuer's).
+    uni = query("SELECT ticker_id, issuer, token_addresses FROM universe")
     addr_by_ticker = {}
+    issuer_by_ticker = {}
     for u in uni:
+        if u.get("issuer"):
+            issuer_by_ticker[u["ticker_id"]] = u["issuer"]
         try:
             addrs = json.loads(u["token_addresses"] or "{}")
         except Exception:
@@ -1646,19 +1863,45 @@ def run_cycle(cycle_dt, extra_gap_notes=None, dry_run=False):
             per_ticker.setdefault(pl["ticker_id"], []).append((price, reserve))
 
     guard_notes = []
-    # F3 (exit_score_v1, DESAIN §2.3): inputs gathered once per cycle,
+    # F3 (exit_score_v2, DESAIN §2.3): inputs gathered once per cycle,
     # latest-only, bounded reads. A failure here never breaks the cycle
     # — the affected component is simply not counted (partial score).
     # state is loaded here (earlier than the old hourly-slot load) so
     # the median-depth cache is available before the deviations loop.
     state = load_state()
+    # N3 (fix ronde review DeepSeek 2026-11-13): use the RETURN value
+    # of the refresh — it is the age-pruned median map. The old code
+    # re-read state['median_depth_7d'] here, which bypassed the prune
+    # whenever the refresh produced nothing new (stale entries stayed
+    # in state and kept feeding the depth component).
     try:
-        refresh_median_depth_7d(state, cycle_dt, list(per_ticker.keys()))
+        median7d = refresh_median_depth_7d(
+            state, cycle_dt, list(per_ticker.keys()))
     except Exception as _e:
         log(f"MEDIAN-DEPTH refresh unavailable: {_e}")
-    red_status, red_close_h = _latest_redemption_status(cycle_dt)
+        median7d = {}
+    # M4 (fix ronde review DeepSeek 2026-11-13): redemption status is
+    # resolved PER ISSUER (one latest-row read per distinct issuer in
+    # this cycle — at most 4 — not one shared status for all tickers
+    # and not one read per ticker). A ticker with no issuer in
+    # universe gets (None, None): its redemption component is not
+    # counted, never borrowed from another issuer.
+    red_by_issuer = {}
+
+    def _red_for(ticker):
+        iss = issuer_by_ticker.get(ticker)
+        if not iss:
+            return None, None
+        if iss not in red_by_issuer:
+            red_by_issuer[iss] = _latest_redemption_status(cycle_dt, iss)
+        return red_by_issuer[iss]
+
     perp_now = _latest_perp_by_ticker(cycle_dt)
-    median7d = state.get("median_depth_7d") or {}
+    # S14 (fix ronde review DeepSeek 2026-11-13): OI 24h-ago for every
+    # ticker that needs it, in ONE query (see _oi_24h_ago_batch).
+    _oi_old_map = _oi_24h_ago_batch(
+        [t for t in per_ticker
+         if (perp_now.get(t) or {}).get("oi") is not None], cycle_dt)
     for ticker, lst in per_ticker.items():
         # Price-sanity guard (2026-10-24: SPYx showed -25.9% from ONE bad
         # upstream quote, $0.10 vs ~$762 on 4 sibling pools, reserve intact).
@@ -1682,28 +1925,37 @@ def run_cycle(cycle_dt, extra_gap_notes=None, dry_run=False):
         prices = [pr for pr, _ in kept]
         median = statistics.median(prices) if len(prices) >= 2 else None
         dev_med = ((dw - median) / median * 100.0) if (median and dw) else None
-        # F3: exit_score_v1 rides this row (+0 writes). Funding/OI come
+        # F3: exit_score_v2 rides this row (+0 writes). Funding/OI come
         # from the latest fresh perp snapshot (<=15 min); OI change is
         # vs 24h ago. Missing inputs -> partial score, never zero-filled.
         _p = perp_now.get(ticker)
         _funding = _p.get("funding") if _p else None
         _oi_chg = None
         if _p and _p.get("oi") is not None:
-            _oi_old = _oi_24h_ago(ticker, cycle_dt)
+            _oi_old = _oi_old_map.get(ticker)
             if _oi_old:
                 _oi_chg = (_p["oi"] - _oi_old) / _oi_old * 100.0
-        _sc = exit_score_v1(dev_med, depth, median7d.get(ticker),
+        red_status, red_close_h = _red_for(ticker)
+        _sc = exit_score_v2(dev_med, depth, median7d.get(ticker),
                             red_status, red_close_h, _funding, _oi_chg)
         _exit = _sc["score_100"]
         _exit_ver = _sc["method_version"] if _exit is not None else None
+        # M5 (fix ronde review DeepSeek 2026-11-13): components_present
+        # is written to deviations.exit_score_components on this row
+        # (column added by migrations/2026-11-13-radar-fix.sql), so a
+        # partial score of 100.0 is distinguishable from a full one.
+        # The migration is applied before the poller restarts (guarded
+        # by the M10 startup check), so no fallback is needed here.
         stmts.append((
             "INSERT INTO deviations (ticker_id, ts, depth_weighted_price,"
             " dev_vs_close_pct, dev_vs_median_pct, qualifying_depth_usd,"
             " pools_used, pools_excluded, redemption_status, por_age_hours,"
             " weekend_risk_score, exit_score, exit_score_version,"
-            " method_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " exit_score_components,"
+            " method_version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [ticker, cycle_ts, dw, None, dev_med, depth, len(kept),
              n_excluded, None, None, None, _exit, _exit_ver,
+             _sc["components_present"],
              "v1-median-only"],
         ))
 
@@ -1882,6 +2134,57 @@ def run_cycle(cycle_dt, extra_gap_notes=None, dry_run=False):
     return True
 
 
+# --- M10 startup guard (fix ronde review DeepSeek 2026-11-13) ---
+# No startup guard was the cause of the 12 Nov P0 (20:46-21:21 WITA):
+# a poller deployed before its migration ran failed every cycle with
+# no clear message. main() now fails fast (exit 2) when the schema
+# the poller writes is incomplete. Checks use the same shapes the
+# migrations themselves document: SELECT name FROM
+# pragma_table_info('...') for columns, sqlite_master for tables and
+# indexes. A check that cannot even run (DB unreachable) also fails
+# the guard — fail-closed, never "assume the schema is fine".
+STARTUP_REQUIRED_TABLES = (
+    "deviations", "perp_snapshots", "liquidation_watch", "monday_gap",
+)
+STARTUP_REQUIRED_COLUMNS = {
+    "deviations": ("exit_score", "exit_score_version",
+                   "exit_score_components"),
+    "perp_snapshots": ("perp_px_source",),
+}
+STARTUP_REQUIRED_INDEXES = (
+    "idx_deviations_ticker_ts", "idx_perp_ticker_ts",
+    "idx_liqwatch_ticker_ts", "idx_monday_gap_ticker_week",
+    # M7/M8 (same fix round, migrations/2026-11-13-radar-fix.sql).
+    "idx_poller_health_cycle_ts", "idx_deviations_ts",
+)
+
+
+def check_startup_schema():
+    """List of missing schema objects (empty = OK). Never raises:
+    an unverifiable schema is reported as missing, not assumed OK."""
+    missing = []
+    try:
+        tables = {r["name"] for r in query(
+            "SELECT name FROM sqlite_master WHERE type = 'table'")}
+        for t in STARTUP_REQUIRED_TABLES:
+            if t not in tables:
+                missing.append(f"table {t}")
+        indexes = {r["name"] for r in query(
+            "SELECT name FROM sqlite_master WHERE type = 'index'")}
+        for ix in STARTUP_REQUIRED_INDEXES:
+            if ix not in indexes:
+                missing.append(f"index {ix}")
+        for tbl, cols in STARTUP_REQUIRED_COLUMNS.items():
+            have = {r["name"] for r in query(
+                f"SELECT name FROM pragma_table_info('{tbl}')")}
+            for c in cols:
+                if c not in have:
+                    missing.append(f"column {tbl}.{c}")
+    except Exception as e:
+        missing.append(f"schema check unavailable: {e}")
+    return missing
+
+
 def main():
     if "--dry-run-multichain" in sys.argv:
         # Multichain 2026-11-12: one live DexScreener read per NEW chain
@@ -1962,6 +2265,21 @@ def main():
         print("WINDOWS TEST:", "PASS" if ok else "FAIL")
         sys.exit(0 if ok else 1)
 
+    # M10 (fix ronde review DeepSeek 2026-11-13): startup guard — fail
+    # fast (exit 2) when the schema the poller writes is incomplete.
+    # Runs only on the live path (all --dry-run* / --test-windows
+    # branches above return first). P0 12 Nov: poller live, migration
+    # not applied, every cycle failed with no clear message.
+    _missing = check_startup_schema()
+    if _missing:
+        for _m in _missing:
+            log(f"STARTUP GUARD missing schema: {_m}")
+        print("STARTUP GUARD FAILED: poller schema incomplete — apply "
+              "migrations/2026-11-13-radar-fix.sql (and earlier "
+              "migrations) to Turso BEFORE starting the poller. "
+              f"Missing: {', '.join(_missing)}", file=sys.stderr)
+        return 2
+
     lock_f = open(LOCK_PATH, "w")
     try:
         fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1997,6 +2315,10 @@ def main():
     else:
         # F1: perp runs BEFORE the DexScreener cycle (see tight loop).
         perp_frag = _maybe_run_perp(now)
+        # GG32 (KNOWN_BARE): the outcome of this bare run_cycle() call
+        # IS the poller_health heartbeat (cycles_ok 0/1); the return
+        # value is intentionally unused, and an uncaught exception
+        # still exits 1 below.
         try:
             run_cycle(now, extra_gap_notes=[perp_frag] if perp_frag else None)
         except Exception as e:
